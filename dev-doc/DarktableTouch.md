@@ -78,7 +78,8 @@ markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 The editor places a virtualized photo filmstrip below the canvas and the
 six priority tools in a vertical panel on the right. One tool expands at a
 time; its menu contains reset and additional controls. The lower-left
-hamburger button sits above the filmstrip and opens library, export,
+hamburger button sits beside the thumbnails inside the filmstrip, outside
+the image viewport, and opens library, export,
 history, undo/redo, comparison, import, and interface-switching actions.
 Image information appears in the upper-left corner when a photo opens,
 then fades after four seconds. Tap the canvas or choose "image information"
@@ -87,6 +88,13 @@ exposure information come from the engine's metadata, with en-US numbers.
 Busy operations and errors remain visible even after transient status
 messages fade. Focus navigation scrolls tool controls and quick actions
 into view on smaller screens.
+
+Small pill handles resize the filmstrip height and module-panel width.
+Drag the filmstrip handle up or down, or the module handle left or right.
+The handles have larger touch areas, support arrow-key adjustment and
+accessibility actions, and reset to their automatic sizes on a double-tap
+or the controller's confirm button. Sizes are bounded to retain room for
+the image and controls and remain adjustable during the current session.
 
 The edit-history panel lists the current engine session, including disabled
 steps and instance labels. Selecting a step uses native history replay and

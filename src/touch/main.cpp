@@ -134,12 +134,17 @@ int main(int argc, char **argv)
         auto strip = window->findChild<QQuickItem *>(QStringLiteral("filmstripBar"));
         auto panel = window->findChild<QQuickItem *>(QStringLiteral("toolPanel"));
         auto menu = window->findChild<QQuickItem *>(QStringLiteral("editorMenuButton"));
+        auto filmstrip = window->findChild<QQuickItem *>(QStringLiteral("filmstrip"));
+        auto imageStage = window->findChild<QQuickItem *>(QStringLiteral("imageStage"));
         auto thumb = findItem(window->contentItem(), QStringLiteral("filmThumbnail-") + QString::number(controller.imageId()));
-        if(!info || !strip || !panel || !menu || !thumb || info->opacity() < 0.99
+        if(!info || !strip || !panel || !menu || !filmstrip || !imageStage || !thumb || info->opacity() < 0.99
            || thumb->property("status").toInt() != 1 || thumb->width() <= 0 || thumb->height() <= 0
            || controller.imageInformation().value(QStringLiteral("filename")).toString() != QFileInfo(testPhoto).fileName()
            || menu->height() < 64 || menu->width() < 64
-           || menu->mapToScene(QPointF(0, menu->height())).y() > strip->mapToScene(QPointF()).y()
+           || menu->mapToScene(QPointF()).y() < strip->mapToScene(QPointF()).y()
+           || menu->mapToScene(QPointF(0, menu->height())).y() > strip->mapToScene(QPointF(0, strip->height())).y()
+           || menu->mapToScene(QPointF()).y() < imageStage->mapToScene(QPointF(0, imageStage->height())).y()
+           || menu->mapToScene(QPointF(menu->width(), 0)).x() > filmstrip->mapToScene(QPointF()).x()
            || strip->mapToScene(QPointF(strip->width(), 0)).x() > panel->mapToScene(QPointF()).x() + 1)
         { QTextStream(stderr) << "editor layout or image information is invalid\n"; controller.shutdown(); return; }
         if(!screenshot.isEmpty())
@@ -149,6 +154,39 @@ int main(int argc, char **argv)
           if(!window->grabWindow().save(infoShot))
           { QTextStream(stderr) << "could not write the information screenshot\n"; controller.shutdown(); return; }
         }
+        auto filmHandle = window->findChild<QQuickItem *>(QStringLiteral("filmstripResizeHandle"));
+        auto moduleHandle = window->findChild<QQuickItem *>(QStringLiteral("moduleResizeHandle"));
+        if(!filmHandle || !moduleHandle || filmHandle->width() < 64 || filmHandle->height() < 64
+           || moduleHandle->width() < 64 || moduleHandle->height() < 64)
+        { QTextStream(stderr) << "panel resize handles are unavailable\n"; controller.shutdown(); return; }
+        const qreal originalStripHeight = strip->height(), originalPanelWidth = panel->width();
+        QMetaObject::invokeMethod(filmHandle, "adjusted", Q_ARG(double, 40));
+        QMetaObject::invokeMethod(moduleHandle, "adjusted", Q_ARG(double, 64));
+        QTimer::singleShot(150, &app, [&, strip, panel, filmHandle, moduleHandle, imageStage, menu, originalStripHeight, originalPanelWidth] {
+          if(strip->height() <= originalStripHeight || panel->width() <= originalPanelWidth)
+          { QTextStream(stderr) << "panel handles did not resize the panels\n"; controller.shutdown(); return; }
+          QMetaObject::invokeMethod(filmHandle, "adjusted", Q_ARG(double, 10000));
+          QMetaObject::invokeMethod(moduleHandle, "adjusted", Q_ARG(double, 10000));
+          QTimer::singleShot(150, &app, [&, strip, panel, filmHandle, moduleHandle, imageStage, menu] {
+            if(imageStage->width() < 399 || strip->height() > window->height() * 0.45 + 1
+               || menu->mapToScene(QPointF()).y() < imageStage->mapToScene(QPointF(0, imageStage->height())).y())
+            { QTextStream(stderr) << "resizing covered the image or moved the menu into the viewport\n"; controller.shutdown(); return; }
+            if(!screenshot.isEmpty())
+            {
+              const QFileInfo file(screenshot);
+              if(!window->grabWindow().save(file.dir().filePath(file.completeBaseName() + QStringLiteral("-resized.png"))))
+              { QTextStream(stderr) << "could not write the resized-panel screenshot\n"; controller.shutdown(); return; }
+            }
+            QMetaObject::invokeMethod(filmHandle, "adjusted", Q_ARG(double, -10000));
+            QMetaObject::invokeMethod(moduleHandle, "adjusted", Q_ARG(double, -10000));
+            QTimer::singleShot(150, &app, [&, strip, panel, filmHandle, moduleHandle] {
+              if(qAbs(strip->height() - 112) > 1 || qAbs(panel->width() - 340) > 1)
+              { QTextStream(stderr) << "panel minimum sizes were not retained\n"; controller.shutdown(); return; }
+              QMetaObject::invokeMethod(filmHandle, "resetRequested");
+              QMetaObject::invokeMethod(moduleHandle, "resetRequested");
+            });
+          });
+        });
         if(auto tool = findItem(window->contentItem(), QStringLiteral("tool-agx")))
           QMetaObject::invokeMethod(tool, "clicked");
         QTimer::singleShot(600, &app, [&] {

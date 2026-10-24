@@ -29,6 +29,19 @@ ApplicationWindow {
     property bool informationVisible: false
     property bool statusVisible: true
     readonly property bool compact: height < 650
+    property real requestedFilmstripHeight: 0
+    property real requestedModuleWidth: 0
+    readonly property real maximumFilmstripHeight: Math.min(300, height * 0.45)
+    readonly property real maximumModuleWidth: Math.min(640, width - 400)
+
+    function resizeFilmstrip(delta) {
+        requestedFilmstripHeight = Math.max(112, Math.min(maximumFilmstripHeight, filmstripBar.height + delta))
+        Qt.callLater(clampPan)
+    }
+    function resizeModules(delta) {
+        requestedModuleWidth = Math.max(340, Math.min(maximumModuleWidth, toolPanel.width + delta))
+        Qt.callLater(clampPan)
+    }
 
     function showImageInformation() {
         informationVisible = true
@@ -251,15 +264,6 @@ ApplicationWindow {
                             Label { width: parent.width; text: exposureDescription(); color: "#c0cbd0"; font.pixelSize: 12; wrapMode: Text.Wrap }
                         }
                     }
-                    TouchButton {
-                        id: menuButton
-                        objectName: "editorMenuButton"
-                        anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 16
-                        text: "\u2630"; implicitWidth: 64; font.pixelSize: 28
-                        Accessible.name: qsTr("quick actions")
-                        ToolTip.visible: hovered; ToolTip.text: qsTr("quick actions")
-                        onClicked: showQuickMenu()
-                    }
                     Rectangle {
                         anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20
                         width: 92; height: 36; radius: 8; color: "#cf101619"; visible: controller.before
@@ -267,8 +271,8 @@ ApplicationWindow {
                     }
                     Rectangle {
                         objectName: "statusOverlay"
-                        anchors.left: menuButton.right; anchors.right: parent.right; anchors.bottom: parent.bottom
-                        anchors.leftMargin: 12; anchors.rightMargin: 16; anchors.bottomMargin: 16
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                        anchors.leftMargin: 16; anchors.rightMargin: 16; anchors.bottomMargin: 16
                         height: statusLine.implicitHeight + 20; radius: 10
                         color: controller.hasError ? "#ed532d29" : "#d4101619"
                         visible: controller.busy || controller.hasError || window.statusVisible
@@ -283,13 +287,33 @@ ApplicationWindow {
                 Rectangle {
                     id: filmstripBar
                     objectName: "filmstripBar"
-                    Layout.fillWidth: true; Layout.preferredHeight: window.compact ? 98 : 122
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.max(112, Math.min(window.maximumFilmstripHeight, window.requestedFilmstripHeight || (window.compact ? 120 : 144)))
                     color: "#0e1417"
                     Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: "#283337" }
+                    PanelHandle {
+                        objectName: "filmstripResizeHandle"
+                        anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.topMargin: -26
+                        z: 2
+                        Accessible.name: qsTr("filmstrip height")
+                        panelSize: filmstripBar.height; minimumValue: 112; maximumValue: window.maximumFilmstripHeight
+                        onAdjusted: function(delta) { window.resizeFilmstrip(delta) }
+                        onResetRequested: { window.requestedFilmstripHeight = 0; Qt.callLater(clampPan) }
+                    }
+                    TouchButton {
+                        id: menuButton
+                        objectName: "editorMenuButton"
+                        anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: filmstrip.verticalCenter
+                        text: "\u2630"; implicitWidth: 64; font.pixelSize: 28
+                        Accessible.name: qsTr("quick actions")
+                        ToolTip.visible: hovered; ToolTip.text: qsTr("quick actions")
+                        onClicked: showQuickMenu()
+                    }
                     ListView {
                         id: filmstrip
                         objectName: "filmstrip"
-                        anchors.fill: parent; anchors.margins: 10
+                        anchors.left: menuButton.right; anchors.right: parent.right
+                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 10; anchors.topMargin: 36
                         orientation: ListView.Horizontal; spacing: 10; clip: true
                         boundsBehavior: Flickable.StopAtBounds
                         model: controller.images; cacheBuffer: 200
@@ -297,7 +321,7 @@ ApplicationWindow {
                         delegate: TouchButton {
                             required property var modelData
                             required property int index
-                            width: window.compact ? 132 : 164; height: filmstrip.height
+                            width: Math.max(112, filmstrip.height * 1.6); height: filmstrip.height
                             text: ""; padding: 4; checked: controller.imageId === modelData.imgid
                             Accessible.name: modelData.filename
                             onClicked: { if(controller.imageId !== modelData.imgid) { viewZoom = 1; controller.selectImage(modelData.imgid) } else showImageInformation() }
@@ -326,12 +350,21 @@ ApplicationWindow {
             Rectangle {
                 id: toolPanel
                 objectName: "toolPanel"
-                Layout.preferredWidth: Math.max(340, Math.min(420, window.width * 0.31))
+                Layout.preferredWidth: Math.max(340, Math.min(window.maximumModuleWidth, window.requestedModuleWidth || Math.min(420, window.width * 0.31)))
                 Layout.fillHeight: true; color: "#111719"
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: "#283337" }
+                PanelHandle {
+                    objectName: "moduleResizeHandle"
+                    anchors.left: parent.left; anchors.leftMargin: -24; anchors.verticalCenter: parent.verticalCenter
+                    z: 2; vertical: true
+                    Accessible.name: qsTr("module panel width")
+                    panelSize: toolPanel.width; minimumValue: 340; maximumValue: window.maximumModuleWidth
+                    onAdjusted: function(delta) { window.resizeModules(delta) }
+                    onResetRequested: { window.requestedModuleWidth = 0; Qt.callLater(clampPan) }
+                }
                 Flickable {
                     id: toolScroll
-                    anchors.fill: parent; anchors.margins: 12
+                    anchors.fill: parent; anchors.margins: 12; anchors.leftMargin: 40
                     contentWidth: width; contentHeight: toolColumn.implicitHeight
                     onContentHeightChanged: contentY = Math.max(0, Math.min(contentY, contentHeight - height))
                     clip: true; boundsBehavior: Flickable.StopAtBounds
