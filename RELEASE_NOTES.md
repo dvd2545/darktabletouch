@@ -119,6 +119,11 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Added draggable pill handles to adjust the Touch filmstrip height and
+  module-panel width, with keyboard adjustment and a quick size reset.
+  The quick-action menu now sits beside the filmstrip thumbnails, outside
+  the image viewport.
+
 - Redesigned the Touch editor with a bottom photo filmstrip, expandable
   tools on the right, and a lower-left menu for library and editing
   actions. Image information appears in the upper-left corner and fades
