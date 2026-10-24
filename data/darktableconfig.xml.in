@@ -36,6 +36,19 @@
     <section name="slideshow" title="slideshow view"/>
   </dttab>
 
+  <dtconfig>
+    <name>touch/show_rejected</name>
+    <type>bool</type>
+    <default>false</default>
+    <shortdescription>show rejected images in touch</shortdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>touch/advance_after_reject</name>
+    <type>bool</type>
+    <default>false</default>
+    <shortdescription>show the next image after rejecting in touch</shortdescription>
+  </dtconfig>
+
   <dtconfig common="yes">
     <name>themes/usercss</name>
     <type>bool</type>

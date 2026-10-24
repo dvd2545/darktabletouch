@@ -109,6 +109,10 @@ int main(int argc, char **argv)
   bool startedImport = false, startedImage = false, finished = false;
   int stage = 0;
   int libraryStage = -1;
+  int rejectedTestId = 0;
+  QImage cropBaseline;
+  QVariantMap batchSettings;
+  QByteArray batchOriginal;
   QTimer libraryTest;
   libraryTest.setInterval(180);
   const auto libraryScreenshot = [&](const QString &suffix) {
@@ -119,7 +123,7 @@ int main(int argc, char **argv)
   QObject::connect(&libraryTest, &QTimer::timeout, &app, [&] {
     if(controller.busy()) return;
     const auto fail = [&](const char *message) {
-      QTextStream(stderr) << message << '\n'; libraryTest.stop(); controller.shutdown();
+      QTextStream(stderr) << message << ": " << controller.message() << '\n'; libraryTest.stop(); controller.shutdown();
     };
     auto collectionDialog = window->findChild<QObject *>(QStringLiteral("collectionDialog"));
     auto review = window->findChild<QObject *>(QStringLiteral("importReview"));
@@ -218,42 +222,110 @@ int main(int argc, char **argv)
         { fail("Unicode import review did not identify the existing photo"); return; }
         break;
       case 11:
+      {
+        QMetaObject::invokeMethod(review, "close");
+        cropBaseline = store->requestImage(QStringLiteral("current"), nullptr, QSize()).copy();
+        controller.rememberParameter(QStringLiteral("exposure"), QStringLiteral("exposure"), 0.01);
+        const double originalValue = controller.values().value(QStringLiteral("exposure")).toDouble();
+        QMetaObject::invokeMethod(&gamepad, "action", Q_ARG(QString, QStringLiteral("increase")), Q_ARG(bool, true));
+        if(qAbs(controller.values().value(QStringLiteral("exposure")).toDouble() - originalValue - 0.01) > 0.00001) { fail("controller increase did not adjust the last focused value"); return; }
+        QMetaObject::invokeMethod(&gamepad, "action", Q_ARG(QString, QStringLiteral("decrease")), Q_ARG(bool, true));
+        controller.setEditorVisible(true); controller.selectTool(QStringLiteral("crop"));
+        break;
+      }
+      case 12:
+      {
+        auto overlay = window->findChild<QObject *>(QStringLiteral("cropOverlay"));
+        if(!controller.cropEditing() || !overlay) { fail("interactive crop did not start"); return; }
+        QMetaObject::invokeMethod(overlay, "setBounds", Q_ARG(QVariant, (QVariantList{0.1,0.1,0.9,0.9})));
+        if(!libraryScreenshot(QStringLiteral("-crop"))) { fail("crop screenshot failed"); return; }
+        controller.cropCommand(QStringLiteral("apply"), {{QStringLiteral("bounds"), QVariantList{0.1,0.1,0.9,0.9}}, {QStringLiteral("ratio_n"),0}, {QStringLiteral("ratio_d"),0}});
+        break;
+      }
+      case 13:
+        if(controller.cropEditing() || cropBaseline == store->requestImage(QStringLiteral("current"), nullptr, QSize())) { fail("applying crop did not change the preview"); return; }
+        controller.undo(); break;
+      case 14:
+        if(cropBaseline != store->requestImage(QStringLiteral("current"), nullptr, QSize())) { fail("crop undo did not restore the original preview"); return; }
+        controller.cropCommand(QStringLiteral("begin")); break;
+      case 15:
+        controller.cropCommand(QStringLiteral("auto"), {{QStringLiteral("aspect"),1.5}}); break;
+      case 16:
+        if(controller.cropBounds().size() != 4 || controller.cropBounds()[2].toDouble() <= controller.cropBounds()[0].toDouble()) { fail("automatic crop did not return a frame"); return; }
+        controller.cropCommand(QStringLiteral("cancel")); break;
+      case 17:
+      {
+        if(cropBaseline != store->requestImage(QStringLiteral("current"), nullptr, QSize())) { fail("canceling crop changed the saved preview"); return; }
+        controller.setEditorVisible(false);
+        auto dialog = window->findChild<QObject *>(QStringLiteral("batchExportDialog"));
+        if(!dialog) { fail("batch export dialog is unavailable"); return; }
+        QMetaObject::invokeMethod(dialog, "open"); break;
+      }
+      case 18:
+        if(!libraryScreenshot(QStringLiteral("-batch-export"))) { fail("batch export screenshot failed"); return; }
+        if(auto dialog = window->findChild<QObject *>(QStringLiteral("batchExportDialog"))) QMetaObject::invokeMethod(dialog, "close");
+        batchSettings = {{QStringLiteral("scope"),QStringLiteral("collection")}, {QStringLiteral("storage"),QStringLiteral("folder")},
+          {QStringLiteral("folder"), QUrl::fromLocalFile(QDir(testDirectory.path()).filePath(QString::fromUtf8("ส่งออกชุด #100%")))},
+          {QStringLiteral("pattern"),QString::fromUtf8("ภาพ_{sequence}")}, {QStringLiteral("format"),QStringLiteral("png")},
+          {QStringLiteral("bits"),16}, {QStringLiteral("width"),128}, {QStringLiteral("height"),128}};
+        controller.exportBatch(batchSettings); break;
+      case 19:
+      {
+        const QDir output(batchSettings.value(QStringLiteral("folder")).toUrl().toLocalFile());
+        if(output.entryList({QStringLiteral("*.png")}, QDir::Files).size() != 2) { fail("batch export did not write both photos"); return; }
+        QFile first(output.filePath(QString::fromUtf8("ภาพ_0001.png"))); if(!first.open(QIODevice::ReadOnly)) { fail("exported file could not be read"); return; } batchOriginal = first.readAll();
+        if(batchOriginal.size() < 25 || static_cast<unsigned char>(batchOriginal[24]) != 16) { fail("batch bit depth was not applied"); return; }
+        batchSettings.insert(QStringLiteral("collision"),QStringLiteral("skip")); controller.exportBatch(batchSettings); break;
+      }
+      case 20:
+      {
+        QFile first(QDir(batchSettings.value(QStringLiteral("folder")).toUrl().toLocalFile()).filePath(QString::fromUtf8("ภาพ_0001.png"))); if(!first.open(QIODevice::ReadOnly)) { fail("exported file could not be read"); return; }
+        if(first.readAll() != batchOriginal) { fail("skip-existing export replaced a file"); return; }
+        rejectedTestId = controller.images().first().toMap().value(QStringLiteral("imgid")).toInt();
+        controller.setAdvanceAfterReject(true); controller.selectImage(rejectedTestId);
+        break;
+      }
+      case 21:
         if(!libraryScreenshot(QStringLiteral("-import-review"))) { fail("import review screenshot failed"); return; }
         QMetaObject::invokeMethod(review, "close");
         QMetaObject::invokeMethod(window, "showImageActions", Q_ARG(QVariant, controller.images().first()));
         break;
-      case 12:
+      case 22:
         if(!libraryScreenshot(QStringLiteral("-image-actions"))) { fail("image actions screenshot failed"); return; }
         QMetaObject::invokeMethod(window, "chooseImageAction", Q_ARG(QVariant, QStringLiteral("remove")));
         break;
-      case 13:
+      case 23:
         if(!libraryScreenshot(QStringLiteral("-remove-confirmation"))) { fail("confirmation screenshot failed"); return; }
         if(auto confirmation = window->findChild<QObject *>(QStringLiteral("confirmImageAction"))) QMetaObject::invokeMethod(confirmation, "close");
         if(controller.images().size() != 2) { fail("canceling image removal changed the collection"); return; }
+        controller.setShowRejected(true);
         controller.libraryCommand(QStringLiteral("reject"), {}, controller.imageId());
         break;
-      case 14:
+      case 24:
       {
         bool rejected = false;
         for(const auto &image : controller.images())
-          if(image.toMap().value(QStringLiteral("imgid")).toInt() == controller.imageId()) rejected = image.toMap().value(QStringLiteral("rejected")).toBool();
-        if(!rejected) { fail("reject did not update the library"); return; }
-        controller.libraryCommand(QStringLiteral("unrate"), {}, controller.imageId());
+          if(image.toMap().value(QStringLiteral("imgid")).toInt() == rejectedTestId) rejected = image.toMap().value(QStringLiteral("rejected")).toBool();
+        if(!rejected || controller.imageId() == rejectedTestId) { fail("reject did not advance to the next image"); return; }
+        controller.setShowRejected(false);
+        if(controller.images().size() != 1) { fail("quick rejected filter did not hide the image"); return; }
+        controller.setShowRejected(true); controller.setAdvanceAfterReject(false);
+        controller.libraryCommand(QStringLiteral("unrate"), {}, rejectedTestId);
         break;
       }
-      case 15:
+      case 25:
         for(const auto &image : controller.images())
-          if(image.toMap().value(QStringLiteral("imgid")).toInt() == controller.imageId() && image.toMap().value(QStringLiteral("rejected")).toBool())
+          if(image.toMap().value(QStringLiteral("imgid")).toInt() == rejectedTestId && image.toMap().value(QStringLiteral("rejected")).toBool())
           { fail("unreject did not update the library"); return; }
         controller.libraryCommand(QStringLiteral("remove"), {}, controller.imageId());
         break;
-      case 16:
+      case 26:
         if(controller.imageId() != 0 || controller.editorVisible() || controller.images().size() != 1 || !QFile::exists(testPhoto))
         { fail("catalog removal did not release the editing session or preserve the file"); return; }
-        controller.libraryCommand(QStringLiteral("trash"), {}, controller.images().first().toMap().value(QStringLiteral("imgid")).toInt());
+        controller.libraryCommand(QStringLiteral("remove-folder"), {{QStringLiteral("folder"), QFileInfo(testNeighbor).absolutePath()}});
         break;
-      case 17:
-        if(!controller.images().isEmpty() || QFile::exists(testNeighbor)) { fail("disk deletion did not update the source and catalog"); return; }
+      case 27:
+        if(!controller.images().isEmpty() || !QFile::exists(testNeighbor)) { fail("folder removal did not preserve the source and update the catalog"); return; }
         libraryTest.stop(); finished = true;
         QTextStream(stdout) << "passed: Touch RAW editing/export, layout, collections, filters, selection, sorting, and Unicode import review\n";
         controller.shutdown();
@@ -443,6 +515,7 @@ int main(int argc, char **argv)
     {
       baseline = frame.copy(); stage = 1;
       controller.setParameter(QStringLiteral("exposure"), 0.5, true);
+      if(controller.values().value(QStringLiteral("exposure")).toDouble() != 0.5) { QTextStream(stderr) << "pending exposure value did not remain visible\n"; controller.shutdown(); return; }
     }
     else if(stage == 1)
     {
@@ -529,7 +602,7 @@ int main(int argc, char **argv)
     }
   });
   if(!selfTest.isEmpty())
-    QTimer::singleShot(90000, &app, [&] {
+    QTimer::singleShot(150000, &app, [&] {
       if(!finished) { QTextStream(stderr) << "Touch workflow self-test timed out: " << controller.message() << '\n'; controller.shutdown(); }
     });
   else if(!screenshot.isEmpty())

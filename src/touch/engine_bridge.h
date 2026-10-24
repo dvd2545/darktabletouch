@@ -23,6 +23,10 @@ char *dt_touch_images(char **error);
 char *dt_touch_library(void);
 char *dt_touch_collection_values(int property);
 int dt_touch_image_action(const char *action, int image_id, char **error);
+void dt_touch_settings_set(int show_rejected, int advance_after_reject);
+char *dt_touch_image_path(int image_id);
+char *dt_touch_folder_images(const char *folder);
+int dt_touch_export_image(int image_id, const char *path, const char *format, int width, int height, int quality, int bits, int upscale, int high_quality, int srgb, char **error);
 int dt_touch_image_exists(int image_id);
 int dt_touch_collection_set(const char *json, char **error);
 int dt_touch_selection(const char *action, int image_id, char **error);
@@ -45,6 +49,11 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
 int dt_touch_editor_enable(dt_touch_editor_t *editor, const char *operation,
                            int enabled, char **error);
 int dt_touch_editor_reset(dt_touch_editor_t *editor, const char *operation, char **error);
+int dt_touch_editor_enabled(dt_touch_editor_t *editor, const char *operation);
+void dt_touch_editor_crop_original(dt_touch_editor_t *editor, int size[2]);
+int dt_touch_editor_crop_bounds(dt_touch_editor_t *editor, float bounds[4], char **error);
+int dt_touch_editor_crop_apply(dt_touch_editor_t *editor, const float bounds[4], int ratio_n, int ratio_d, char **error);
+int dt_touch_editor_auto_crop(dt_touch_editor_t *editor, double aspect, float bounds[4], char **error);
 int dt_touch_editor_save(dt_touch_editor_t *editor, char **error);
 dt_touch_state_t *dt_touch_editor_capture(dt_touch_editor_t *editor);
 int dt_touch_editor_restore(dt_touch_editor_t *editor, const dt_touch_state_t *state, char **error);

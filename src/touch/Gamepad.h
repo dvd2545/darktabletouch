@@ -14,6 +14,8 @@
 class Gamepad final : public QObject
 {
   Q_OBJECT
+  Q_PROPERTY(int choicesOpen MEMBER m_choicesOpen)
+  Q_PROPERTY(bool editing MEMBER m_editing)
   Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
 public:
   explicit Gamepad(QObject *parent = nullptr);
@@ -33,4 +35,6 @@ private:
   quint16 m_buttons = 0;
   quint16 m_repeatButtons = 0;
   bool m_connected = false;
+  bool m_editing = false;
+  int m_choicesOpen = 0;
 };

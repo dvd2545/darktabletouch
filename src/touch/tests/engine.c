@@ -261,6 +261,37 @@ int main(int argc, char **argv)
   g_assert_true(dt_touch_editor_preview(editor, 512, 512, &rotated, &w2, &h2, &message));
   g_assert_true(w2 != width || h2 != height || memcmp(edited, rotated, (size_t)w2 * h2 * 4) != 0);
   g_free(rotated);
+  dt_touch_state_t *crop_before = dt_touch_editor_capture(editor);
+  g_assert_true(dt_touch_editor_enable(editor, "crop", FALSE, &message));
+  uint8_t *crop_preview = NULL;
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &crop_preview, &w2, &h2, &message)); g_free(crop_preview);
+  float crop_bounds[4];
+  g_assert_true(dt_touch_editor_auto_crop(editor, 1.5, crop_bounds, &message));
+  g_assert_cmpfloat(crop_bounds[0], >, 0); g_assert_cmpfloat(crop_bounds[2], <, 1);
+  const float frame[4] = {0.1f,0.1f,0.9f,0.9f};
+  g_assert_true(dt_touch_editor_crop_apply(editor, frame, 0, 0, &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &crop_preview, &w2, &h2, &message)); g_free(crop_preview);
+  g_assert_true(dt_touch_editor_enable(editor, "crop", FALSE, &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &crop_preview, &w2, &h2, &message)); g_free(crop_preview);
+  g_assert_true(dt_touch_editor_crop_bounds(editor, crop_bounds, &message));
+  for(int i = 0; i < 4; i++) g_assert_cmpfloat(fabsf(crop_bounds[i] - frame[i]), <, 0.002f);
+  g_assert_true(dt_touch_editor_restore(editor, crop_before, &message));
+  g_assert_true(dt_touch_editor_enable(editor, "crop", FALSE, &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &crop_preview, &w2, &h2, &message)); g_free(crop_preview);
+  const float portrait_height = 0.4f * w2 / h2 * 1.5f;
+  const float portrait[4] = {0.3f, (1-portrait_height)/2, 0.7f, (1+portrait_height)/2};
+  g_assert_true(dt_touch_editor_crop_apply(editor, portrait, 2, 3, &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &crop_preview, &w2, &h2, &message)); g_free(crop_preview);
+  g_assert_cmpfloat(fabsf((float)w2/h2 - 2.0f/3.0f), <, 0.02f);
+  char *portrait_schema = dt_touch_editor_module(editor, "crop", &message);
+  g_assert_true(json_parser_load_from_data(parser, portrait_schema, -1, &error));
+  JsonArray *portrait_fields = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "fields");
+  for(guint i = 0; i < json_array_get_length(portrait_fields); ++i) {
+    JsonObject *field = json_array_get_object_element(portrait_fields, i);
+    if(!strcmp(json_object_get_string_member(field, "name"), "ratio_d")) g_assert_cmpint(json_object_get_int_member(field, "value"), ==, -3);
+  }
+  g_free(portrait_schema);
+  g_assert_true(dt_touch_editor_restore(editor, crop_before, &message)); dt_touch_state_free(crop_before);
   g_assert_true(dt_touch_editor_reset(editor, "flip", &message));
   g_assert_true(dt_touch_editor_restore(editor, edited_state, &message));
   char *automatic_json = g_strdup_printf("%d", automatic_mode);

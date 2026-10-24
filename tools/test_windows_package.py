@@ -40,7 +40,7 @@ def main():
             command.append("--self-test-command-line")
         with (output / (name + ".log")).open("wb") as log:
             subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=environment,
-                           check=True, timeout=120)
+                           check=True, timeout=180)
         report = json.loads((output / (name + "-coverage.json")).read_text(encoding="utf-8"))
         priorities = sorted((entry["priority"], entry["operation"]) for entry in report if entry["priority"])
         assert [operation for _, operation in priorities] == ["exposure", "agx", "lens", "denoiseprofile", "flip", "crop"]

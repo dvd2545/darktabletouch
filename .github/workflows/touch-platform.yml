@@ -130,7 +130,7 @@ jobs:
         run: |
           python tools/test_touch_launcher.py
           timeout 120 build/bin/test-touch-engine.exe "$PWD/build-fixtures/images/mire1.cr2"
-          QT_QUICK_BACKEND=software timeout 120 build/bin/darktable-touch.exe -platform offscreen --self-test "$PWD/build-fixtures/images/mire1.cr2" --screenshot "$PWD/build/unicode-workflow/touch-editor.png" --coverage-report "$PWD/build/unicode-workflow/module-coverage.json"
+          QT_QUICK_BACKEND=software timeout 180 build/bin/darktable-touch.exe -platform offscreen --self-test "$PWD/build-fixtures/images/mire1.cr2" --screenshot "$PWD/build/unicode-workflow/touch-editor.png" --coverage-report "$PWD/build/unicode-workflow/module-coverage.json"
           python tools/test_unicode_workflow.py --raw build-fixtures/Canon-EOS-M50.CR3 --keep build/unicode-cr3
       - name: Validate the standalone Windows package
         if: matrix.touch == 'ON'

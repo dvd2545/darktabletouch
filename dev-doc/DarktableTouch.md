@@ -112,6 +112,26 @@ the midpoint between fingers, including midpoint movement. Rotation offers
 a numeric precise-angle field backed by the native rotate-and-perspective
 operation, in addition to orientation controls.
 
+Crop opens an uncropped preview with a movable frame, four touch handles,
+thirds guides, free/preset/custom aspect ratios, and orientation swap.
+Apply writes one native crop history item and one session undo action;
+cancel and leaving the tool restore the original history. Automatic border
+cropping proposes a centered frame at the selected aspect ratio, checking
+native inverse geometry against source bounds. It does not analyze scene
+composition; review the frame before applying it. Specialized guides and
+complete controller crop interactions remain outstanding.
+
+Lens correction presents a toggle using the engine's current automatic or
+saved settings. Advanced lens configuration remains available in Classic.
+Numeric controls retain their requested values while processing; native
+acknowledgments are applied with the matching preview. D-pad left/right
+navigate images in the editor, while up/down adjust the last focused
+numeric parameter. Dialogs and choices retain focus navigation.
+
+Buttons use vector icons with accessible names and hover hints where the
+action is clear. Popups, choices, buttons, and module expansion animate;
+crop dragging and numeric manipulation remain immediate.
+
 The edit-history panel lists the current engine session, including disabled
 steps and instance labels. Selecting a step uses native history replay and
 is itself undoable. Built-in preset labels use the same localization helper
@@ -138,7 +158,19 @@ to toggle them, or use all, none, invert, same film roll, and untouched. Hold
 a thumbnail, right-click it, or press Menu/Shift+F10 for image actions.
 Shift+Space selects a range from the native anchor. Selection uses the catalog's existing selected-image table.
 It is separate from the active editor image. Export still targets that active
-image; selecting several images does not imply batch export.
+image when using the direct export API. The export settings dialog supports
+selected photos, the visible collection, or the current image.
+
+Quick settings default to hiding rejected images while showing unrated and
+one-to-five-star images. They also offer an optional next-image action after
+rejecting. These Touch preferences persist in DarktableTouch configuration; self-tests
+use isolated configuration directories.
+
+Collection rows can remove an imported folder and its subfolders from the
+catalog, including photos outside current filters. The collection removal
+action removes photos in the current native collection. Both require a
+confirmation and preserve source files and sidecars. Removal stops on the
+first failure and reports partial progress.
 
 Image actions include reject, unreject/unrate, remove from the catalog, and
 delete from disk. Unreject/unrate clears both rejection and stars. Removal
@@ -158,6 +190,22 @@ filters, and reports added, existing, and failed counts. Copy-and-import,
 camera ingestion, import renaming/metadata templates, collection presets,
 and specialized value trees remain available through Classic.
 
+### Batch export
+
+The export dialog groups storage, name modifiers, format, and global options.
+Choose one Unicode destination folder or an `exported` subfolder beside each
+source. Filename patterns support `{name}`, `{sequence}` (four digits), and
+`{id}`. Existing files can be skipped, given unique names, or stop the batch;
+they are never overwritten. Each result is rendered to a temporary file and
+renamed only after success. A failed item stops the batch and preserves
+previous outputs; cancellation stops after the current image.
+
+JPEG supports quality; PNG/TIFF support 8/16-bit output. Global controls set
+maximum dimensions, upscaling, high-quality resampling, and sRGB or the image's
+output profile. Native export configuration is restored after each item.
+Storage plugins, metadata filters, masks-as-layers, and format-specific
+advanced controls remain available in Classic.
+
 ### Coverage status
 
 All six priority modules are **partial**, not completed ports:
@@ -169,7 +217,7 @@ All six priority modules are **partial**, not completed ports:
 | Lens Correction | Camera/lens selection, methods, presets, and complete workflow validation |
 | Denoise (profiled) | Profile selection, wavelet interactions, presets, and advanced workflows |
 | Rotation | Straightening, guides, presets, and full workflow validation |
-| Crop | Frame manipulation, aspect ratios, orientation swap, and apply/cancel |
+| Crop | Presets, specialized guides, and full workflow validation |
 
 Other modules remain unported. `--coverage-report FILE` writes a registry
 from the modules actually loaded by that engine build, with priority and

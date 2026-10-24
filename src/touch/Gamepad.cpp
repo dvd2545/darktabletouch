@@ -41,6 +41,8 @@ void Gamepad::sendKey(int key, bool pressed)
 {
   QObject *focus = QGuiApplication::focusObject();
   if(!focus) return;
+  if(m_choicesOpen && key == Qt::Key_Backtab) key = Qt::Key_Up;
+  else if(m_choicesOpen && key == Qt::Key_Tab) key = Qt::Key_Down;
   QKeyEvent event(pressed ? QEvent::KeyPress : QEvent::KeyRelease, key, Qt::NoModifier);
   event.setAccepted(false);
   QCoreApplication::sendEvent(focus, &event);
@@ -91,7 +93,8 @@ void Gamepad::poll()
     if((buttons ^ m_buttons) & binding.mask)
     {
       const bool pressed = (buttons & binding.mask) != 0;
-      if(binding.key) sendKey(binding.key, pressed);
+      if(m_editing && !m_choicesOpen && (binding.mask & 15)) emit action(binding.mask == XINPUT_GAMEPAD_DPAD_UP ? "increase" : binding.mask == XINPUT_GAMEPAD_DPAD_DOWN ? "decrease" : binding.mask == XINPUT_GAMEPAD_DPAD_LEFT ? "previous" : "next", pressed);
+      else if(binding.key) sendKey(binding.key, pressed);
       else emit action(QString::fromLatin1(binding.action), pressed);
     }
   const WORD directions = buttons & 15;
@@ -103,7 +106,10 @@ void Gamepad::poll()
   else if(directions && m_repeat.elapsed() > 350)
   {
     for(const auto &binding : bindings)
-      if(binding.mask & directions) { sendKey(binding.key, true); sendKey(binding.key, false); }
+      if(binding.mask & directions) {
+        if(m_editing && !m_choicesOpen) emit action(binding.mask == XINPUT_GAMEPAD_DPAD_UP ? "increase" : binding.mask == XINPUT_GAMEPAD_DPAD_DOWN ? "decrease" : binding.mask == XINPUT_GAMEPAD_DPAD_LEFT ? "previous" : "next", true);
+        else { sendKey(binding.key, true); sendKey(binding.key, false); }
+      }
     m_repeat.restart();
   }
   m_buttons = buttons;

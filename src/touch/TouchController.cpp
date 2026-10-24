@@ -6,6 +6,9 @@
 
 #include "touch/TouchController.h"
 #include <QFileInfo>
+#include <QFile>
+#include <QUuid>
+#include <QRegularExpression>
 #include <QDirIterator>
 #include <QJsonDocument>
 #include <QJsonValue>
@@ -57,6 +60,17 @@ void FieldModel::setFields(const QVariantList &fields)
       m_rows[i] = fields[i];
       emit dataChanged(index(i), index(i), {Qt::UserRole + 1});
     }
+}
+
+void FieldModel::setValue(const QString &name, const QVariant &value)
+{
+  for(int i = 0; i < m_rows.size(); i++)
+  {
+    auto field = m_rows[i].toMap();
+    if(field.value(QStringLiteral("name")).toString() != name) continue;
+    field.insert(QStringLiteral("value"), value); m_rows[i] = field;
+    emit dataChanged(index(i), index(i), {Qt::UserRole + 1});
+  }
 }
 
 QVariantMap FieldModel::values() const
@@ -118,7 +132,7 @@ bool PreviewStore::hasThumbnail(int image) const
   return m_thumbnails.contains(image);
 }
 
-EngineWorker::EngineWorker(std::shared_ptr<std::atomic<quint64>> revision) : m_revision(std::move(revision)) {}
+EngineWorker::EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::shared_ptr<std::atomic<bool>> cancel) : m_exportCancel(std::move(cancel)), m_revision(std::move(revision)) {}
 
 void EngineWorker::report(char *error)
 {
@@ -199,6 +213,29 @@ void EngineWorker::importPaths(QStringList paths)
 void EngineWorker::libraryCommand(QString action, QJsonObject settings, int image)
 {
   if(!m_initialized) return;
+  if(action == QStringLiteral("touch-settings")) {
+    dt_touch_settings_set(settings.value(QStringLiteral("show_rejected")).toBool(), settings.value(QStringLiteral("advance_after_reject")).toBool()); return;
+  }
+  if(action == QStringLiteral("remove-folder") || action == QStringLiteral("remove-collection"))
+  {
+    abortCrop();
+    const auto ids = action == QStringLiteral("remove-folder")
+      ? takeJson(dt_touch_folder_images(settings.value(QStringLiteral("folder")).toString().toUtf8().constData())).array() : QJsonArray();
+    QJsonArray targets = ids;
+    if(action == QStringLiteral("remove-collection")) for(const auto &entry : images()) targets.append(entry.toObject().value(QStringLiteral("imgid")));
+    char *error = nullptr;
+    if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
+    const int active = m_imageId;
+    clearHistory(); dt_touch_editor_free(m_editor); m_editor = nullptr;
+    int removed = 0;
+    for(const auto &id : targets) { if(!dt_touch_image_action("remove", id.toInt(), &error)) break; removed++; }
+    if(dt_touch_image_exists(active)) openImage(active, m_revision->load());
+    else { m_imageId = 0; m_editorVisible = false; emit imageClosed(); }
+    emit imagesChanged(images()); emit libraryReady(takeJson(dt_touch_library()).object());
+    if(error) { const QString failure = QString::fromUtf8(error); dt_touch_free(error); emit failed(tr("removed %1 photos before stopping: %2").arg(removed).arg(failure)); }
+    else emit completed(tr("removed %1 photos from the catalog; files remain on disk").arg(removed));
+    return;
+  }
   if(action == QStringLiteral("values"))
   {
     const int property = settings.value(QStringLiteral("property")).toInt();
@@ -213,6 +250,7 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
   const bool closing = image == m_imageId && (action == QStringLiteral("remove") || action == QStringLiteral("trash"));
   if(closing)
   {
+    abortCrop();
     if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
     clearHistory(); dt_touch_editor_free(m_editor); m_editor = nullptr;
   }
@@ -229,6 +267,7 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
   if(collection || imageAction) emit imagesChanged(images());
   emit libraryReady(takeJson(dt_touch_library()).object());
   if(!success) { report(error); return; }
+  if(imageAction) emit imageActionFinished(action);
   emit completed(collection ? tr("collection updated") : imageAction ? tr("image action completed") : tr("selection updated"));
 }
 
@@ -285,6 +324,7 @@ void EngineWorker::clearHistory()
 void EngineWorker::openImage(int id, quint64 revision)
 {
   if(!m_initialized) return;
+  abortCrop();
   char *error = nullptr;
   if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
   auto next = dt_touch_editor_new(id, &error);
@@ -308,7 +348,12 @@ void EngineWorker::loadModule(QString operation, quint64 revision)
   char *error = nullptr;
   char *text = dt_touch_editor_module(m_editor, operation.toUtf8().constData(), &error);
   if(!text) { report(error); return; }
-  emit moduleReady(takeJson(text).object(), revision);
+  auto module = takeJson(text).object();
+  QJsonObject states;
+  for(const char *op : {"exposure", "agx", "lens", "denoiseprofile", "flip", "crop"})
+    states.insert(QString::fromLatin1(op), bool(dt_touch_editor_enabled(m_editor, op)));
+  module.insert(QStringLiteral("enabled_modules"), states);
+  emit moduleReady(module, revision);
   emit historyReady(takeJson(dt_touch_editor_history(m_editor)).object(), revision);
 }
 
@@ -358,18 +403,20 @@ void EngineWorker::setParameter(QString operation, QString name, QVariant value,
 
 void EngineWorker::changeEnabled(QString operation, bool enabled, quint64 revision)
 {
+  abortCrop();
   if(!m_editor) return;
   beginEdit();
   char *error = nullptr;
   if(!dt_touch_editor_enable(m_editor, operation.toUtf8().constData(), enabled, &error))
   { report(error); return; }
   commitEdit();
-  loadModule(operation, revision);
+  loadModule(m_operation, revision);
   render(revision);
 }
 
 void EngineWorker::resetModule(QString operation, quint64 revision)
 {
+  abortCrop();
   if(!m_editor) return;
   beginEdit();
   char *error = nullptr;
@@ -382,6 +429,7 @@ void EngineWorker::resetModule(QString operation, quint64 revision)
 
 void EngineWorker::historyStep(int direction, quint64 revision)
 {
+  abortCrop();
   if(!m_editor || (direction < 0 && !m_position)
      || (direction > 0 && m_position == m_edits.size())) return;
   const auto state = direction < 0 ? m_edits[m_position - 1].before : m_edits[m_position].after;
@@ -396,19 +444,21 @@ void EngineWorker::historyStep(int direction, quint64 revision)
   render(revision);
 }
 
-void EngineWorker::render(quint64 revision, int extent)
+bool EngineWorker::render(quint64 revision, int extent)
 {
-  if(!m_editor || revision != m_revision->load()) return;
+  if(!m_editor || revision != m_revision->load()) return false;
   uint8_t *pixels = nullptr;
   int width = 0, height = 0;
   char *error = nullptr;
   if(!dt_touch_editor_preview(m_editor, extent, extent, &pixels, &width, &height, &error))
-  { report(error); return; }
+  { report(error); return false; }
   emit frameReady(takePixels(pixels, width, height), revision);
+  return true;
 }
 
 void EngineWorker::jumpHistory(int end, quint64 revision)
 {
+  abortCrop();
   if(!m_editor) return;
   beginEdit();
   char *error = nullptr;
@@ -436,6 +486,7 @@ void EngineWorker::thumbnail(int id)
 
 void EngineWorker::exportImage(QString path, QString format)
 {
+  abortCrop();
   if(!m_editor) return;
   char *error = nullptr;
   if(!dt_touch_editor_export(m_editor, path.toUtf8().constData(), format.toUtf8().constData(), &error))
@@ -445,6 +496,7 @@ void EngineWorker::exportImage(QString path, QString format)
 
 void EngineWorker::shutdown()
 {
+  abortCrop();
   if(!m_initialized) { emit stopped(); return; }
   char *error = nullptr;
   if(!dt_touch_editor_save(m_editor, &error)) { m_nextInterface.clear(); report(error); return; }
@@ -476,7 +528,8 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   : QObject(parent), m_store(store), m_revision(std::make_shared<std::atomic<quint64>>(0))
 {
   m_fields.setParent(this);
-  m_worker = new EngineWorker(m_revision);
+  m_exportCancel = std::make_shared<std::atomic<bool>>(false);
+  m_worker = new EngineWorker(m_revision, m_exportCancel);
   m_worker->moveToThread(&m_thread);
   connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
   connect(this, &TouchController::boot, m_worker, &EngineWorker::initialize);
@@ -484,11 +537,24 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(this, &TouchController::libraryRequested, m_worker, &EngineWorker::libraryCommand);
   connect(this, &TouchController::importReviewRequested, m_worker, &EngineWorker::reviewImport);
   connect(m_worker, &EngineWorker::libraryReady, this, [this](QJsonObject library) {
-    m_library = library.toVariantMap(); emit libraryChanged();
+    m_library = library.toVariantMap();
+    if(!m_touchSettingsLoaded) {
+      const auto settings = library.value(QStringLiteral("touch_settings")).toObject();
+      m_showRejected = settings.value(QStringLiteral("show_rejected")).toBool();
+      m_advanceAfterReject = settings.value(QStringLiteral("advance_after_reject")).toBool();
+      m_touchSettingsLoaded = true; updateImages(QJsonArray::fromVariantList(m_allImages));
+    }
+    emit libraryChanged();
   });
   connect(m_worker, &EngineWorker::collectionValuesReady, this, [this](int property, QJsonArray values) {
     m_collectionValues = {{QStringLiteral("property"), property}, {QStringLiteral("values"), values.toVariantList()}};
     emit collectionValuesChanged();
+  });
+  connect(m_worker, &EngineWorker::imageActionFinished, this, [this](const QString &action) {
+    if(action == QStringLiteral("reject") && m_rejectNext) {
+      const int next = m_rejectNext; m_rejectNext = 0;
+      QTimer::singleShot(0, this, [this, next] { selectImage(next); });
+    }
   });
   connect(m_worker, &EngineWorker::imageClosed, this, [this] {
     m_imageId = 0; m_editorVisible = false; m_imageInformation.clear(); m_fields.setFields({});
@@ -497,6 +563,8 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(m_worker, &EngineWorker::importReviewed, this, [this](QJsonArray candidates) {
     m_importCandidates = candidates.toVariantList(); emit importReviewChanged();
   });
+  connect(this, &TouchController::cropRequested, m_worker, &EngineWorker::cropCommand);
+  connect(m_worker, &EngineWorker::cropReady, this, [this](QJsonArray bounds, QSize originalSize) { if(originalSize.isValid()) m_cropOriginalSize = originalSize; m_cropBounds = bounds.toVariantList(); m_cropEditing = !bounds.isEmpty(); emit cropChanged(); });
   connect(this, &TouchController::openRequested, m_worker, &EngineWorker::openImage);
   connect(this, &TouchController::moduleRequested, m_worker, &EngineWorker::loadModule);
   connect(this, &TouchController::parameterRequested, m_worker, &EngineWorker::setParameter);
@@ -505,6 +573,9 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(this, &TouchController::historyRequested, m_worker, &EngineWorker::historyStep);
   connect(this, &TouchController::historyJumpRequested, m_worker, &EngineWorker::jumpHistory);
   connect(this, &TouchController::thumbnailRequested, m_worker, &EngineWorker::thumbnail);
+  connect(this, &TouchController::batchExportRequested, m_worker, &EngineWorker::exportBatch);
+  connect(m_worker, &EngineWorker::exportProgress, this, [this](int done, int total) { m_message = tr("exported %1 of %2 photos").arg(done).arg(total); emit stateChanged(); });
+  connect(m_worker, &EngineWorker::exportFinished, this, [this] { m_exportRunning = false; m_busy = false; emit stateChanged(); });
   connect(this, &TouchController::exportRequested, m_worker, &EngineWorker::exportImage);
   connect(this, &TouchController::shutdownRequested, m_worker, &EngineWorker::shutdown);
   connect(this, &TouchController::viewRequested, m_worker, &EngineWorker::saveView);
@@ -521,7 +592,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
       QStringLiteral("camera/lens selection, methods, presets, and full workflow validation"),
       QStringLiteral("profile selection, wavelet interactions, presets, and full workflow validation"),
       QStringLiteral("straightening, guides, presets, and full workflow validation"),
-      QStringLiteral("frame manipulation, aspect ratios, apply/cancel, presets, and full workflow validation")};
+      QStringLiteral("presets, specialized guides, and full workflow validation")};
     for(const auto &module : modules)
     {
       auto entry = module.toObject().toVariantMap();
@@ -541,7 +612,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
                                  {QStringLiteral("label"), labels[i]}, {QStringLiteral("available"), available}});
     }
     m_ready = true;
-    m_busy = false;
+    m_busy = m_exportRunning;
     if(!m_failed) m_message = tr("ready");
     emit stateChanged();
     if(session.value(QStringLiteral("image_id")).toInt() > 0)
@@ -567,28 +638,17 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(m_worker, &EngineWorker::moduleReady, this, [this](QJsonObject module, quint64 revision) {
     if(revision != m_revision->load()) return;
     if(module.value(QStringLiteral("operation")).toString() != m_operation) return;
-    auto fields = module.value(QStringLiteral("fields")).toArray().toVariantList();
-    if(module.value(QStringLiteral("operation")).toString() == QStringLiteral("exposure"))
-    {
-      const QStringList order{QStringLiteral("mode"), QStringLiteral("exposure"), QStringLiteral("deflicker_target_level"),
-        QStringLiteral("deflicker_percentile"), QStringLiteral("black")};
-      const auto rank = [&order](const QVariant &value) {
-        const int position = order.indexOf(value.toMap().value(QStringLiteral("name")).toString());
-        return position < 0 ? 100 : position;
-      };
-      std::stable_sort(fields.begin(), fields.end(), [&rank](const QVariant &a, const QVariant &b) { return rank(a) < rank(b); });
-    }
-    m_fields.setFields(fields);
-    m_toolLabel = module.value(QStringLiteral("label")).toString();
-    m_moduleEnabled = module.value(QStringLiteral("enabled")).toBool();
-    emit moduleChanged();
+    if(revision > m_frameRevision && !m_failed) { m_deferredModule = module; return; }
+    applyModule(module);
   });
   connect(m_worker, &EngineWorker::frameReady, this, [this](QImage image, quint64 revision) {
     if(revision != m_revision->load()) return;
     m_store->setFrame(image);
     if(m_needBefore) { m_store->setFrame(image, true); m_needBefore = false; }
+    m_waitingFrame = false;
     m_frameRevision = revision;
-    m_busy = false;
+    if(!m_deferredModule.isEmpty()) { const auto module = m_deferredModule; m_deferredModule = {}; applyModule(module); }
+    m_busy = m_exportRunning;
     if(!m_failed) m_message = tr("edits are saved when an adjustment finishes");
     emit previewChanged();
     emit stateChanged();
@@ -615,10 +675,12 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
     emit historyChanged();
   });
   connect(m_worker, &EngineWorker::failed, this, [this](const QString &message) {
-    m_failed = true; m_message = message; m_busy = false; emit stateChanged();
+    if(!m_deferredModule.isEmpty()) { const auto module = m_deferredModule; m_deferredModule = {}; applyModule(module); }
+    m_waitingFrame = false; m_rejectNext = 0; m_failed = true; m_message = message; m_busy = false; emit stateChanged();
   });
   connect(m_worker, &EngineWorker::completed, this, [this](const QString &message) {
-    m_failed = false; m_message = message; m_busy = false; emit stateChanged();
+    m_failed = false; m_message = message; m_busy = m_waitingFrame || m_exportRunning; emit stateChanged();
+
   });
   connect(m_worker, &EngineWorker::stopped, this, [this] {
     m_canClose = true; emit stateChanged(); emit closingReady(); m_thread.quit();
@@ -651,14 +713,17 @@ QString TouchController::preview() const
 
 void TouchController::updateImages(const QJsonArray &images)
 {
-  m_images = images.toVariantList();
+  m_allImages = images.toVariantList();
+  m_images.clear();
+  for(const auto &image : m_allImages)
+    if(m_showRejected || !image.toMap().value(QStringLiteral("rejected")).toBool()) m_images.append(image);
   for(auto &item : m_images)
   {
     auto map = item.toMap();
     map.insert(QStringLiteral("filename"), QFileInfo(map.value(QStringLiteral("path")).toString()).fileName());
     item = map;
   }
-  m_busy = false;
+  m_busy = m_waitingFrame || m_exportRunning;
   emit imagesChanged();
   emit stateChanged();
 }
@@ -714,6 +779,10 @@ void TouchController::libraryCommand(const QString &action, const QVariantMap &s
       for(const auto &rule : settings.value(group).toList())
         if(!validText(rule.toMap().value(QStringLiteral("string")).toString()))
         { m_failed = true; m_message = tr("a collection value cannot be represented as valid UTF-8"); emit stateChanged(); return; }
+  if(action == QStringLiteral("reject") && m_advanceAfterReject)
+    for(int i = 0; i + 1 < m_images.size(); ++i)
+      if(m_images[i].toMap().value(QStringLiteral("imgid")).toInt() == image)
+        m_rejectNext = m_images[i + 1].toMap().value(QStringLiteral("imgid")).toInt();
   flush(true);
   m_busy = true; m_failed = false; emit stateChanged();
   emit libraryRequested(action, QJsonObject::fromVariantMap(settings), image);
@@ -723,6 +792,8 @@ void TouchController::selectImage(int id)
 {
   if(!m_ready || id <= 0) return;
   flush(true);
+  m_deferredModule = {};
+  m_waitingFrame = true;
   m_editorVisible = true; m_busy = true; m_before = false;
   m_message = tr("opening photo");
   emit stateChanged();
@@ -732,10 +803,14 @@ void TouchController::selectImage(int id)
 void TouchController::selectTool(const QString &operation)
 {
   if(!m_ready || !m_imageId) return;
+  if(m_cropEditing) cropCommand(QStringLiteral("cancel"));
   flush(true);
+  m_deferredModule = {};
   m_operation = operation;
+  m_fields.setFields({});
   emit moduleChanged();
-  emit moduleRequested(operation, m_revision->load());
+  if(operation == QStringLiteral("crop")) cropCommand(QStringLiteral("begin"));
+  else emit moduleRequested(operation, m_revision->load());
 }
 
 void TouchController::setParameter(const QString &name, const QVariant &value, bool commit, const QString &operation)
@@ -746,6 +821,13 @@ void TouchController::setParameter(const QString &name, const QVariant &value, b
   m_pendingName = name;
   m_pendingOperation = target;
   m_pendingValue = value;
+  for(int i = 0; i < m_fields.rowCount(); ++i) {
+    const auto field = m_fields.data(m_fields.index(i), Qt::UserRole + 1).toMap();
+    if(field.value(QStringLiteral("name")).toString() == name && field.value(QStringLiteral("operation"), m_operation).toString() == target) {
+      m_fields.setValue(name, value); emit moduleChanged(); break;
+    }
+  }
+  if(name == m_lastName && target == m_lastOperation) m_lastField.insert(QStringLiteral("value"), value);
   if(commit) flush(true);
   else if(!m_editTimer.isActive()) m_editTimer.start();
 }
@@ -760,11 +842,12 @@ void TouchController::flush(bool commit)
 
 void TouchController::setEnabled(bool enabled)
 {
-  flush(true); emit enabledRequested(m_operation, enabled, advance());
+  if(!m_imageId) return;
+  flush(true); m_waitingFrame = true; m_busy = true; emit stateChanged(); emit enabledRequested(m_operation, enabled, advance());
 }
-void TouchController::reset() { flush(true); emit resetRequested(m_operation, advance()); }
-void TouchController::undo() { flush(true); emit historyRequested(-1, advance()); }
-void TouchController::redo() { flush(true); emit historyRequested(1, advance()); }
+void TouchController::reset() { if(!m_imageId) return; m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit resetRequested(m_operation, advance()); }
+void TouchController::undo() { if(!m_canUndo) return; m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit historyRequested(-1, advance()); }
+void TouchController::redo() { if(!m_canRedo) return; m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit historyRequested(1, advance()); }
 void TouchController::jumpHistory(int end)
 {
   flush(true);
@@ -798,10 +881,11 @@ void TouchController::navigateImage(int direction)
 
 void TouchController::setEditorVisible(bool visible)
 {
+  if(!visible && m_cropEditing) cropCommand(QStringLiteral("cancel"));
   flush(true); m_editorVisible = visible; emit stateChanged();
 }
 void TouchController::setBefore(bool before) { m_before = before; emit previewChanged(); }
-void TouchController::shutdown() { flush(true); emit shutdownRequested(); }
+void TouchController::shutdown() { m_exportCancel->store(true); flush(true); emit shutdownRequested(); }
 
 void TouchController::saveView(double zoom, double centerX, double centerY)
 {
@@ -812,4 +896,188 @@ void TouchController::switchInterface(const QString &mode)
 {
   flush(true);
   emit switchRequested(mode);
+}
+
+void TouchController::setShowRejected(bool value)
+{
+  m_showRejected = value;
+  emit libraryRequested(QStringLiteral("touch-settings"), QJsonObject{{QStringLiteral("show_rejected"), m_showRejected}, {QStringLiteral("advance_after_reject"), m_advanceAfterReject}}, 0);
+  updateImages(QJsonArray::fromVariantList(m_allImages));
+}
+void TouchController::setAdvanceAfterReject(bool value)
+{
+  m_advanceAfterReject = value;
+  emit libraryRequested(QStringLiteral("touch-settings"), QJsonObject{{QStringLiteral("show_rejected"), m_showRejected}, {QStringLiteral("advance_after_reject"), m_advanceAfterReject}}, 0);
+  emit stateChanged();
+}
+void TouchController::rememberParameter(const QString &name, const QString &operation, double step)
+{
+  m_lastName = name; m_lastOperation = operation.isEmpty() ? m_operation : operation; m_lastStep = step;
+  for(int i = 0; i < m_fields.rowCount(); ++i)
+  {
+    const auto field = m_fields.data(m_fields.index(i), Qt::UserRole + 1).toMap();
+    if(field.value(QStringLiteral("name")).toString() == name) { m_lastField = field; break; }
+  }
+}
+void TouchController::adjustLastParameter(int direction)
+{
+  if(m_lastName.isEmpty() || !m_imageId || m_cropEditing || m_waitingFrame) return;
+  const double value = qBound(m_lastField.value(QStringLiteral("min"), -1e9).toDouble(),
+    m_lastField.value(QStringLiteral("value")).toDouble() + direction * m_lastStep,
+    m_lastField.value(QStringLiteral("max"), 1e9).toDouble());
+  setParameter(m_lastName, value, true, m_lastOperation);
+}
+
+void TouchController::applyModule(const QJsonObject &module)
+{
+  auto fields = module.value(QStringLiteral("fields")).toArray().toVariantList();
+  if(module.value(QStringLiteral("operation")).toString() == QStringLiteral("exposure"))
+  {
+    const QStringList order{QStringLiteral("mode"), QStringLiteral("exposure"), QStringLiteral("deflicker_target_level"),
+      QStringLiteral("deflicker_percentile"), QStringLiteral("black")};
+    const auto rank = [&order](const QVariant &value) {
+      const int position = order.indexOf(value.toMap().value(QStringLiteral("name")).toString());
+      return position < 0 ? 100 : position;
+    };
+    std::stable_sort(fields.begin(), fields.end(), [&rank](const QVariant &a, const QVariant &b) { return rank(a) < rank(b); });
+  }
+  m_moduleStates = module.value(QStringLiteral("enabled_modules")).toObject().toVariantMap();
+  m_fields.setFields(fields);
+  m_toolLabel = module.value(QStringLiteral("label")).toString();
+  m_moduleEnabled = module.value(QStringLiteral("enabled")).toBool();
+  emit moduleChanged();
+}
+
+void EngineWorker::abortCrop()
+{
+  if(!m_cropBefore) return;
+  char *error = nullptr;
+  if(!dt_touch_editor_restore(m_editor, m_cropBefore, &error)) report(error);
+  dt_touch_state_free(m_cropBefore); m_cropBefore = nullptr;
+  emit cropReady({});
+}
+void EngineWorker::cropCommand(QString action, QJsonObject settings, quint64 revision)
+{
+  if(!m_editor) return;
+  char *error = nullptr;
+  if(action == QStringLiteral("begin"))
+  {
+    if(m_cropBefore) return;
+    const bool enabled = dt_touch_editor_enabled(m_editor, "crop");
+    m_cropBefore = dt_touch_editor_capture(m_editor);
+    if(!dt_touch_editor_enable(m_editor, "crop", false, &error)) { abortCrop(); report(error); return; }
+    loadModule(QStringLiteral("crop"), revision);
+    if(!render(revision)) { abortCrop(); return; }
+    float bounds[4] = {0, 0, 1, 1};
+    if(enabled && !dt_touch_editor_crop_bounds(m_editor, bounds, &error)) { abortCrop(); report(error); return; }
+    int originalSize[2]; dt_touch_editor_crop_original(m_editor, originalSize);
+    emit cropReady(QJsonArray{bounds[0], bounds[1], bounds[2], bounds[3]}, QSize(originalSize[0], originalSize[1]));
+    return;
+  }
+  if(!m_cropBefore) return;
+  if(action == QStringLiteral("auto"))
+  {
+    float bounds[4];
+    if(!dt_touch_editor_auto_crop(m_editor, settings.value(QStringLiteral("aspect")).toDouble(), bounds, &error)) { report(error); return; }
+    emit cropReady(QJsonArray{bounds[0], bounds[1], bounds[2], bounds[3]}); emit completed(tr("automatic crop is ready to apply")); return;
+  }
+  if(action == QStringLiteral("apply"))
+  {
+    const auto rect = settings.value(QStringLiteral("bounds")).toArray();
+    if(rect.size() != 4) { emit failed(tr("crop frame needs four coordinates")); return; }
+    if(!dt_touch_editor_restore(m_editor, m_cropBefore, &error)) { report(error); return; }
+    beginEdit();
+    const float bounds[4] = {float(rect[0].toDouble()), float(rect[1].toDouble()), float(rect[2].toDouble()), float(rect[3].toDouble())};
+    if(!dt_touch_editor_crop_apply(m_editor, bounds, settings.value(QStringLiteral("ratio_n")).toInt(), settings.value(QStringLiteral("ratio_d")).toInt(), &error))
+    { report(error); return; }
+    dt_touch_state_free(m_cropBefore); m_cropBefore = nullptr;
+    commitEdit();
+  }
+  else abortCrop();
+  loadModule(m_operation, revision); render(revision); emit cropReady({});
+}
+void TouchController::cropCommand(const QString &action, const QVariantMap &settings)
+{
+  if(!m_imageId) return;
+  flush(true); m_busy = true; m_waitingFrame = action != QStringLiteral("auto"); emit stateChanged();
+  emit cropRequested(action, QJsonObject::fromVariantMap(settings), advance());
+}
+void TouchController::setEnabledFor(const QString &operation, bool enabled)
+{
+  if(!m_imageId) return;
+  m_moduleStates.insert(operation, enabled);
+  if(operation == m_operation) m_moduleEnabled = enabled;
+  emit moduleChanged();
+  m_waitingFrame = true; m_busy = true; emit stateChanged();
+  flush(true); emit enabledRequested(operation, enabled, advance());
+}
+
+void TouchController::exportBatch(const QVariantMap &settings)
+{
+  if(!m_ready || m_busy || m_exportRunning) return;
+  auto request = settings;
+  QVariantList entries;
+  const auto selected = m_library.value(QStringLiteral("selected")).toList();
+  const QString scope = settings.value(QStringLiteral("scope")).toString();
+  for(const auto &image : m_images) {
+    const int id = image.toMap().value(QStringLiteral("imgid")).toInt();
+    if(scope == QStringLiteral("collection") || (scope == QStringLiteral("current") && id == m_imageId)
+       || (scope == QStringLiteral("selected") && selected.contains(id))) entries.append(image);
+  }
+  if(scope == QStringLiteral("current") && entries.isEmpty() && m_imageId > 0) entries.append(QVariantMap{{QStringLiteral("imgid"), m_imageId}});
+  if(entries.isEmpty()) { m_failed = true; m_message = tr("no photos selected for export"); emit stateChanged(); return; }
+  request.insert(QStringLiteral("images"), entries);
+  const QUrl folder(settings.value(QStringLiteral("folder")).toUrl());
+  if(settings.value(QStringLiteral("storage")).toString() == QStringLiteral("folder") && (!folder.isLocalFile() || !validText(folder.toLocalFile())))
+  { m_failed = true; m_message = tr("choose an export folder"); emit stateChanged(); return; }
+  request.insert(QStringLiteral("folder"), folder.toLocalFile());
+  flush(true); m_exportCancel->store(false); m_exportRunning = true; m_busy = true; m_failed = false; emit stateChanged();
+  emit batchExportRequested(QJsonObject::fromVariantMap(request));
+}
+void EngineWorker::exportBatch(QJsonObject settings)
+{
+  abortCrop();
+  char *error = nullptr;
+  if(!dt_touch_editor_save(m_editor, &error)) { report(error); emit exportFinished(); return; }
+  const auto entries = settings.value(QStringLiteral("images")).toArray();
+  const QString format = settings.value(QStringLiteral("format")).toString(QStringLiteral("jpeg"));
+  const QString extension = format == QStringLiteral("jpeg") ? QStringLiteral("jpg") : format == QStringLiteral("tiff") ? QStringLiteral("tif") : QStringLiteral("png");
+  const QString pattern = settings.value(QStringLiteral("pattern")).toString(QStringLiteral("{name}_edited"));
+  const QString policy = settings.value(QStringLiteral("collision")).toString(QStringLiteral("unique"));
+  int done = 0, skipped = 0;
+  for(int i = 0; i < entries.size(); i++)
+  {
+    if(m_exportCancel->load()) break;
+    const auto image = entries[i].toObject(); const int id = image.value(QStringLiteral("imgid")).toInt();
+    char *nativePath = dt_touch_image_path(id);
+    if(!nativePath) { emit failed(tr("the export image is no longer in the catalog")); emit exportFinished(); return; }
+    const QFileInfo source(QString::fromUtf8(nativePath)); dt_touch_free(nativePath);
+    const QString directory = settings.value(QStringLiteral("storage")).toString() == QStringLiteral("source")
+      ? QDir(source.absolutePath()).filePath(QStringLiteral("exported")) : settings.value(QStringLiteral("folder")).toString();
+    QString name = pattern; name.replace(QStringLiteral("{name}"), source.completeBaseName());
+    name.replace(QStringLiteral("{sequence}"), QStringLiteral("%1").arg(i + 1, 4, 10, QChar('0'))); name.replace(QStringLiteral("{id}"), QString::number(id));
+    if(name.isEmpty() || !validText(name) || name.contains(QRegularExpression(QStringLiteral("[<>:\"/\\\\|?*{}]"))) || name.endsWith('.') || name.endsWith(' '))
+    { emit failed(tr("invalid export name: %1").arg(name)); emit exportFinished(); return; }
+    if(!QDir().mkpath(directory)) { emit failed(tr("could not create export folder: %1").arg(directory)); emit exportFinished(); return; }
+    QString target = QDir(directory).filePath(name + '.' + extension);
+    if(QFile::exists(target)) {
+      if(policy == QStringLiteral("skip")) { skipped++; continue; }
+      if(policy == QStringLiteral("error")) { emit failed(tr("export file already exists: %1").arg(target)); emit exportFinished(); return; }
+      int counter = 1; do { target = QDir(directory).filePath(name + QStringLiteral("_%1.").arg(counter++) + extension); } while(QFile::exists(target));
+    }
+    const QString temporary = QDir(directory).filePath(QStringLiteral(".darktabletouch-%1.%2").arg(QUuid::createUuid().toString(QUuid::Id128), extension));
+    const bool success = dt_touch_export_image(id, temporary.toUtf8().constData(), format.toUtf8().constData(),
+      settings.value(QStringLiteral("width")).toInt(), settings.value(QStringLiteral("height")).toInt(),
+      settings.value(QStringLiteral("quality")).toInt(95), settings.value(QStringLiteral("bits")).toInt(8),
+      settings.value(QStringLiteral("upscale")).toBool(), settings.value(QStringLiteral("high_quality")).toBool(true),
+      settings.value(QStringLiteral("srgb")).toBool(true), &error);
+    if(!success || !QFile::rename(temporary, target)) {
+      QFile::remove(temporary);
+      if(error) report(error); else emit failed(tr("could not finish export without replacing an existing file: %1").arg(target));
+      emit exportFinished(); return;
+    }
+    emit exportProgress(++done, entries.size());
+  }
+  emit completed(tr("export finished: %1 written, %2 skipped%3").arg(done).arg(skipped).arg(m_exportCancel->load() ? tr("; canceled") : QString()));
+  emit exportFinished();
 }

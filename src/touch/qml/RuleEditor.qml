@@ -21,14 +21,14 @@ ColumnLayout {
                 anchors.fill: parent; anchors.margins: 10
                 RowLayout {
                     Layout.fillWidth: true
-                    ComboBox {
+                    TouchComboBox {
                         visible: card.group !== "sort"; implicitHeight: 64; Layout.preferredWidth: 120
                         model: [qsTr("AND"), qsTr("OR"), qsTr("AND NOT")]
                         currentIndex: card.modelData.mode || 0
                         onActivated: dialog.change(card.group, card.index, "mode", currentIndex)
                         delegate: ItemDelegate { required property string modelData; width: parent.width; height: 64; text: modelData }
                     }
-                    ComboBox {
+                    TouchComboBox {
                         Layout.fillWidth: true; implicitHeight: 64
                         model: card.group === "sort" ? dialog.sortNames : dialog.properties
                         textRole: card.group === "sort" ? "" : "label"
@@ -40,7 +40,7 @@ ColumnLayout {
                         }
                     }
                     TouchButton {
-                        text: qsTr("remove"); enabled: card.group !== "collection" || dialog.draft.collection.length > 1
+                        iconName: "trash"; text: qsTr("remove"); enabled: card.group !== "collection" || dialog.draft.collection.length > 1
                         onClicked: dialog.remove(card.group, card.index)
                     }
                 }
@@ -56,7 +56,7 @@ ColumnLayout {
                             dialog.draft[card.group][card.index].string = text
                         }
                     }
-                    ComboBox {
+                    TouchComboBox {
                         visible: card.group !== "sort" && card.suggestions.length > 0
                         implicitHeight: 64; Layout.preferredWidth: 150
                         model: card.suggestions; displayText: qsTr("choose value")

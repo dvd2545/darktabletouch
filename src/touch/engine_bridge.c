@@ -204,6 +204,10 @@ char *dt_touch_library(void)
     json_array_add_int_element(selected, GPOINTER_TO_INT(item->data));
   g_list_free(ids);
   json_object_set_array_member(library, "selected", selected);
+  JsonObject *settings = json_object_new();
+  json_object_set_boolean_member(settings, "show_rejected", dt_conf_get_bool("touch/show_rejected"));
+  json_object_set_boolean_member(settings, "advance_after_reject", dt_conf_get_bool("touch/advance_after_reject"));
+  json_object_set_object_member(library, "touch_settings", settings);
   JsonNode *root = json_node_new(JSON_NODE_OBJECT);
   json_node_take_object(root, library);
   char *result = json_to_string(root, FALSE);
@@ -507,6 +511,121 @@ static dt_iop_module_t *_module(dt_touch_editor_t *editor, const char *operation
     ? dt_iop_get_module_by_op_priority(editor->dev.iop, operation, 0) : NULL;
   if(!module) _error(error, N_("module is unavailable for this editing session"));
   return module;
+}
+
+int dt_touch_editor_enabled(dt_touch_editor_t *editor, const char *operation)
+{
+  dt_iop_module_t *module = _module(editor, operation, NULL);
+  return module && module->enabled;
+}
+
+void dt_touch_editor_crop_original(dt_touch_editor_t *editor, int size[2])
+{
+  const int width = MAX(1, editor->dev.image_storage.p_width), height = MAX(1, editor->dev.image_storage.p_height);
+  const gboolean landscape = editor->pipe.processed_width >= editor->pipe.processed_height;
+  size[0] = landscape ? MAX(width, height) : MIN(width, height);
+  size[1] = landscape ? MIN(width, height) : MAX(width, height);
+}
+
+int dt_touch_editor_crop_bounds(dt_touch_editor_t *editor, float bounds[4], char **error)
+{
+  dt_iop_module_t *module = _module(editor, "crop", error);
+  if(!module || !editor->pipe_ready) return FALSE;
+  const dt_dev_pixelpipe_iop_t *piece = dt_dev_distort_get_iop_pipe(&editor->dev, &editor->pipe, module);
+  if(!piece || piece->buf_out.width < 1 || piece->buf_out.height < 1)
+    return _error(error, N_("crop geometry is not ready"));
+  const char *names[] = { "cx", "cy", "cw", "ch" };
+  for(int i = 0; i < 4; i++)
+  {
+    const float *value = module->get_p(module->params, names[i]);
+    if(!value) return _error(error, N_("crop parameters are unavailable"));
+    bounds[i] = *value * (i % 2 ? piece->buf_out.height : piece->buf_out.width);
+  }
+  if(!dt_dev_distort_transform_plus(&editor->dev, &editor->pipe, module->iop_order,
+                                    DT_DEV_TRANSFORM_DIR_FORW_EXCL, bounds, 2))
+    return _error(error, N_("could not map the crop frame"));
+  for(int i = 0; i < 4; i++) bounds[i] /= i % 2 ? editor->pipe.processed_height : editor->pipe.processed_width;
+  return TRUE;
+}
+
+int dt_touch_editor_crop_apply(dt_touch_editor_t *editor, const float bounds[4],
+                               int ratio_n, int ratio_d, char **error)
+{
+  dt_iop_module_t *module = _module(editor, "crop", error);
+  if(!module || !editor->pipe_ready) return FALSE;
+  for(int i = 0; i < 4; i++)
+    if(!isfinite(bounds[i]) || bounds[i] < 0 || bounds[i] > 1)
+      return _error(error, N_("crop frame is outside the image"));
+  if(bounds[2] - bounds[0] < 0.01f || bounds[3] - bounds[1] < 0.01f || ratio_n < 0 || ratio_d < 0 || ((ratio_n == 0) != (ratio_d == 0)))
+    return _error(error, N_("crop frame is too small or has an invalid aspect ratio"));
+  float points[4];
+  for(int i = 0; i < 4; i++) points[i] = bounds[i] * (i % 2 ? editor->pipe.processed_height : editor->pipe.processed_width);
+  if(!dt_dev_distort_backtransform_plus(&editor->dev, &editor->pipe, module->iop_order,
+                                       DT_DEV_TRANSFORM_DIR_FORW_EXCL, points, 2))
+    return _error(error, N_("could not map the crop frame"));
+  const dt_dev_pixelpipe_iop_t *piece = dt_dev_distort_get_iop_pipe(&editor->dev, &editor->pipe, module);
+  if(!piece || piece->buf_out.width < 1 || piece->buf_out.height < 1)
+    return _error(error, N_("crop geometry is not ready"));
+  const char *names[] = { "cx", "cy", "cw", "ch" };
+  for(int i = 0; i < 4; i++)
+  {
+    points[i] /= i % 2 ? piece->buf_out.height : piece->buf_out.width;
+    if(!isfinite(points[i]) || points[i] < -0.001f || points[i] > 1.001f)
+      return _error(error, N_("this crop cannot be represented in the native crop operation"));
+  }
+  for(int i = 0; i < 4; i++) *(float *)module->get_p(module->params, names[i]) = CLAMP(points[i], 0, 1);
+  const gboolean landscape = piece->buf_out.width >= piece->buf_out.height;
+  const gboolean flipped = ratio_n && (landscape != (ratio_n >= ratio_d));
+  // classic stores the smaller component as n and signals orientation with d
+  *(int *)module->get_p(module->params, "ratio_n") = MIN(ratio_n, ratio_d);
+  *(int *)module->get_p(module->params, "ratio_d") = (flipped ? -1 : 1) * MAX(ratio_n, ratio_d);
+  module->enabled = TRUE;
+  dt_dev_add_history_item_ext(&editor->dev, module, TRUE, TRUE);
+  return TRUE;
+}
+
+static gboolean _crop_inside_source(dt_touch_editor_t *editor, double width, double height)
+{
+  float points[2 * 81];
+  for(int y = 0; y <= 8; y++) for(int x = 0; x <= 8; x++)
+  {
+    const int i = 2 * (y * 9 + x);
+    points[i] = (0.5 - width / 2 + width * x / 8) * editor->pipe.processed_width;
+    points[i + 1] = (0.5 - height / 2 + height * y / 8) * editor->pipe.processed_height;
+  }
+  const dt_iop_module_t *rawprepare = _module(editor, "rawprepare", NULL);
+  const dt_dev_pixelpipe_iop_t *raw = rawprepare
+    ? dt_dev_distort_get_iop_pipe(&editor->dev, &editor->pipe, (dt_iop_module_t *)rawprepare) : NULL;
+  const gboolean active_raw = raw && raw->enabled && raw->buf_out.width > 0 && raw->buf_out.height > 0;
+  const float source_width = active_raw ? raw->buf_out.width : editor->pipe.iwidth;
+  const float source_height = active_raw ? raw->buf_out.height : editor->pipe.iheight;
+  // masked sensor borders are not valid image area after raw preparation
+  if(!dt_dev_distort_backtransform_plus(&editor->dev, &editor->pipe, active_raw ? rawprepare->iop_order : 0,
+                                       active_raw ? DT_DEV_TRANSFORM_DIR_FORW_EXCL : DT_DEV_TRANSFORM_DIR_ALL,
+                                       points, 81)) return FALSE;
+  for(int i = 0; i < 81; i++)
+    if(!isfinite(points[2*i]) || !isfinite(points[2*i+1])
+       || points[2*i] < 2 || points[2*i] > source_width - 2
+       || points[2*i+1] < 2 || points[2*i+1] > source_height - 2) return FALSE;
+  return TRUE;
+}
+
+int dt_touch_editor_auto_crop(dt_touch_editor_t *editor, double aspect, float bounds[4], char **error)
+{
+  if(!editor || !editor->pipe_ready || !isfinite(aspect) || aspect <= 0)
+    return _error(error, N_("automatic cropping needs a rendered image and a valid aspect ratio"));
+  const double relative = aspect * editor->pipe.processed_height / editor->pipe.processed_width;
+  const double width = fmin(1.0, relative), height = fmin(1.0, 1.0 / relative);
+  double lo = 0, hi = 1;
+  for(int iteration = 0; iteration < 24; iteration++)
+  {
+    const double scale = (lo + hi) / 2;
+    if(_crop_inside_source(editor, width * scale, height * scale)) lo = scale; else hi = scale;
+  }
+  if(lo < 0.02) return _error(error, N_("automatic cropping could not find a valid centered frame"));
+  bounds[0] = (1 - width * lo) / 2; bounds[1] = (1 - height * lo) / 2;
+  bounds[2] = 1 - bounds[0]; bounds[3] = 1 - bounds[1];
+  return TRUE;
 }
 
 static char *_hex(const void *params, const size_t size)
@@ -945,4 +1064,60 @@ int dt_touch_editor_export(dt_touch_editor_t *editor, const char *path,
   }
   return dt_bridge_export_images(NULL, editor->dev.image_storage.id, 0, 0, -1,
                                   path, NULL, NULL, format, 95, FALSE, TRUE, NULL, NULL, error);
+}
+
+char *dt_touch_folder_images(const char *folder)
+{
+  char *key = g_strdup(folder); g_strdelimit(key, "\\", '/');
+  JsonArray *array = json_array_new();
+  GList *films = dt_film_get_by_access();
+  for(GList *film = films; film; film = film->next)
+  {
+    char *path = dt_film_get_folder(GPOINTER_TO_INT(film->data));
+    if(!path) continue;
+    g_strdelimit(path, "\\", '/');
+    if(!g_strcmp0(path, key) || (g_str_has_prefix(path, key) && path[strlen(key)] == '/'))
+    {
+      GList *ids = dt_film_get_image_ids(GPOINTER_TO_INT(film->data));
+      for(GList *id = ids; id; id = id->next) json_array_add_int_element(array, GPOINTER_TO_INT(id->data));
+      g_list_free(ids);
+    }
+    g_free(path);
+  }
+  g_list_free(films); g_free(key);
+  JsonNode *node = json_node_new(JSON_NODE_ARRAY); json_node_take_array(node, array);
+  char *result = json_to_string(node, FALSE); json_node_free(node); return result;
+}
+
+int dt_touch_export_image(int image_id, const char *path, const char *format, int width, int height,
+                           int quality, int bits, int upscale, int high_quality, int srgb, char **error)
+{
+  GError *failure = NULL;
+  if(!dt_path_check_engine_utf8(path, &failure))
+  { _error(error, failure->message); g_error_free(failure); return FALSE; }
+  if(width < 0 || height < 0 || width > 100000 || height > 100000 || quality < 1 || quality > 100
+     || (bits != 8 && bits != 16)) return _error(error, N_("invalid export dimensions, quality, or bit depth"));
+  const char *keys[] = { "plugins/lighttable/export/icctype", "plugins/imageio/format/png/bpp", "plugins/imageio/format/tiff/bpp" };
+  int saved[3];
+  for(int i = 0; i < 3; i++) saved[i] = dt_conf_get_int(keys[i]);
+  dt_conf_set_int(keys[0], srgb ? DT_COLORSPACE_SRGB : -1);
+  dt_conf_set_int(keys[1], bits); dt_conf_set_int(keys[2], bits);
+  const int result = dt_bridge_export_images(NULL, image_id, width, height, -1, path, NULL, NULL,
+                                              format, quality, upscale, high_quality, NULL, NULL, error);
+  for(int i = 0; i < 3; i++) dt_conf_set_int(keys[i], saved[i]);
+  return result;
+}
+
+char *dt_touch_image_path(int image_id)
+{
+  if(!dt_image_exists(image_id)) return NULL;
+  char path[PATH_MAX] = {0}; gboolean cached = FALSE;
+  dt_image_full_path(image_id, path, sizeof(path), &cached);
+  return *path ? g_strdup(path) : NULL;
+}
+
+void dt_touch_settings_set(int show_rejected, int advance_after_reject)
+{
+  dt_conf_set_bool("touch/show_rejected", show_rejected);
+  dt_conf_set_bool("touch/advance_after_reject", advance_after_reject);
 }

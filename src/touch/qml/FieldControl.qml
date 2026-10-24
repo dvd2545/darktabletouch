@@ -46,7 +46,7 @@ Item {
         ColumnLayout {
             spacing: 8
             Label { text: root.label; color: "#aeb4be"; font.pixelSize: 14 }
-            ComboBox {
+            TouchComboBox {
                 objectName: "parameter-" + root.field.name
                 Layout.fillWidth: true
                 Layout.preferredHeight: 64
@@ -105,6 +105,7 @@ Item {
                     to: Math.max(root.field.soft_max === undefined ? (root.field.max === undefined ? 1 : root.field.max) : root.field.soft_max, Number(root.field.value || 0))
                     stepSize: root.increment
                     focusPolicy: Qt.StrongFocus
+                    onActiveFocusChanged: if(activeFocus) controller.rememberParameter(root.field.name, root.field.operation || "", root.increment)
                     property real lastMoved: value
                     background: Rectangle {
                         x: slider.leftPadding; y: slider.topPadding + slider.availableHeight / 2 - height / 2
@@ -132,7 +133,7 @@ Item {
                     id: numeric
                     objectName: "numeric-" + root.field.name
                     property bool edited: false
-                    onActiveFocusChanged: if(activeFocus) edited = false
+                    onActiveFocusChanged: if(activeFocus) { edited = false; controller.rememberParameter(root.field.name, root.field.operation || "", root.increment) }
                     onTextEdited: edited = true
                     Layout.preferredWidth: root.hasSlider ? 100 : 220
                     Layout.preferredHeight: 64
@@ -154,14 +155,15 @@ Item {
                         notation: DoubleValidator.ScientificNotation
                     }
                     Binding {
-                        target: numeric; property: "text"; when: !numeric.activeFocus
+                        target: numeric; property: "text"; when: !numeric.activeFocus && !numeric.edited
                         value: Number(root.field.value || 0).toLocaleString(Qt.locale("en_US"), "g", 6)
                         restoreMode: Binding.RestoreNone
                     }
                     onEditingFinished: {
                         if(edited && acceptableInput) {
+                            const next = Number.fromLocaleString(Qt.locale("en_US"), text)
+                            controller.setParameter(root.field.name, next, true, root.field.operation || "")
                             edited = false
-                            controller.setParameter(root.field.name, Number.fromLocaleString(Qt.locale("en_US"), text), true, root.field.operation || "")
                         }
                     }
                 }

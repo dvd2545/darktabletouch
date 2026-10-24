@@ -32,6 +32,7 @@ public:
   QHash<int, QByteArray> roleNames() const override;
   void setFields(const QVariantList &fields);
   QVariantMap values() const;
+  void setValue(const QString &name, const QVariant &value);
 private:
   QVariantList m_rows;
 };
@@ -54,7 +55,7 @@ class EngineWorker final : public QObject
 {
   Q_OBJECT
 public:
-  explicit EngineWorker(std::shared_ptr<std::atomic<quint64>> revision);
+  explicit EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::shared_ptr<std::atomic<bool>> cancel);
 public slots:
   void initialize(QStringList arguments);
   void importPaths(QStringList paths);
@@ -68,7 +69,9 @@ public slots:
   void historyStep(int direction, quint64 revision);
   void jumpHistory(int end, quint64 revision);
   void thumbnail(int id);
+  void cropCommand(QString action, QJsonObject settings, quint64 revision);
   void exportImage(QString path, QString format);
+  void exportBatch(QJsonObject settings);
   void saveView(int image, bool editor, double zoom, double centerX, double centerY);
   void switchInterface(QString mode);
   void shutdown();
@@ -78,6 +81,10 @@ signals:
   void libraryReady(QJsonObject library);
   void collectionValuesReady(int property, QJsonArray values);
   void imageClosed();
+  void imageActionFinished(QString action);
+  void cropReady(QJsonArray bounds, QSize originalSize = QSize());
+  void exportProgress(int done, int total);
+  void exportFinished();
   void importReviewed(QJsonArray candidates);
   void imageOpened(int id, quint64 revision);
   void informationReady(QJsonObject information, quint64 revision);
@@ -91,15 +98,18 @@ signals:
   void stopped();
 private:
   struct Edit { dt_touch_state_t *before; dt_touch_state_t *after; };
-  void render(quint64 revision, int extent = 1280);
+  bool render(quint64 revision, int extent = 1280);
+  void abortCrop();
   void beginEdit();
   void commitEdit();
   void clearHistory();
   void report(char *error);
   QJsonArray images();
+  std::shared_ptr<std::atomic<bool>> m_exportCancel;
   std::shared_ptr<std::atomic<quint64>> m_revision;
   dt_touch_editor_t *m_editor = nullptr;
   dt_touch_state_t *m_before = nullptr;
+  dt_touch_state_t *m_cropBefore = nullptr;
   std::vector<Edit> m_edits;
   size_t m_position = 0;
   bool m_initialized = false;
@@ -113,6 +123,13 @@ private:
 class TouchController final : public QObject
 {
   Q_OBJECT
+  Q_PROPERTY(bool exportRunning READ exportRunning NOTIFY stateChanged)
+  Q_PROPERTY(bool cropEditing READ cropEditing NOTIFY cropChanged)
+  Q_PROPERTY(QSize cropOriginalSize READ cropOriginalSize NOTIFY cropChanged)
+  Q_PROPERTY(QVariantList cropBounds READ cropBounds NOTIFY cropChanged)
+  Q_PROPERTY(QVariantMap moduleStates READ moduleStates NOTIFY moduleChanged)
+  Q_PROPERTY(bool showRejected READ showRejected WRITE setShowRejected NOTIFY stateChanged)
+  Q_PROPERTY(bool advanceAfterReject READ advanceAfterReject WRITE setAdvanceAfterReject NOTIFY stateChanged)
   Q_PROPERTY(bool ready READ ready NOTIFY stateChanged)
   Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
   Q_PROPERTY(bool canUndo READ canUndo NOTIFY stateChanged)
@@ -142,6 +159,20 @@ public:
   explicit TouchController(PreviewStore *store, QObject *parent = nullptr);
   ~TouchController() override;
   void initialize(const QStringList &arguments);
+  bool exportRunning() const { return m_exportRunning; }
+  Q_INVOKABLE void exportBatch(const QVariantMap &settings);
+  Q_INVOKABLE void cancelExport() { m_exportCancel->store(true); }
+  bool cropEditing() const { return m_cropEditing; }
+  QSize cropOriginalSize() const { return m_cropOriginalSize; }
+  QVariantList cropBounds() const { return m_cropBounds; }
+  QVariantMap moduleStates() const { return m_moduleStates; }
+  Q_INVOKABLE void cropCommand(const QString &action, const QVariantMap &settings = {});
+  bool showRejected() const { return m_showRejected; }
+  bool advanceAfterReject() const { return m_advanceAfterReject; }
+  void setShowRejected(bool value);
+  void setAdvanceAfterReject(bool value);
+  Q_INVOKABLE void rememberParameter(const QString &name, const QString &operation, double step);
+  Q_INVOKABLE void adjustLastParameter(int direction);
   bool ready() const { return m_ready; }
   bool busy() const { return m_busy; }
   bool canUndo() const { return m_canUndo; }
@@ -178,6 +209,7 @@ public:
   Q_INVOKABLE void selectTool(const QString &operation);
   Q_INVOKABLE void setParameter(const QString &name, const QVariant &value, bool commit, const QString &operation = QString());
   Q_INVOKABLE void setEnabled(bool enabled);
+  Q_INVOKABLE void setEnabledFor(const QString &operation, bool enabled);
   Q_INVOKABLE void reset();
   Q_INVOKABLE void undo();
   Q_INVOKABLE void redo();
@@ -189,6 +221,8 @@ public:
   Q_INVOKABLE void saveView(double zoom, double centerX, double centerY);
   Q_INVOKABLE void switchInterface(const QString &mode);
 signals:
+  void cropChanged();
+  void cropRequested(QString action, QJsonObject settings, quint64 revision);
   void stateChanged();
   void imagesChanged();
   void libraryChanged();
@@ -214,6 +248,7 @@ signals:
   void historyJumpRequested(int end, quint64 revision);
   void thumbnailRequested(int id);
   void exportRequested(QString path, QString format);
+  void batchExportRequested(QJsonObject settings);
   void shutdownRequested();
   void viewRequested(int image, bool editor, double zoom, double centerX, double centerY);
   void switchRequested(QString mode);
@@ -221,14 +256,28 @@ private:
   quint64 advance();
   void updateImages(const QJsonArray &images);
   void flush(bool commit);
+  void applyModule(const QJsonObject &module);
   PreviewStore *m_store;
   QThread m_thread;
   EngineWorker *m_worker;
+  std::shared_ptr<std::atomic<bool>> m_exportCancel;
   std::shared_ptr<std::atomic<quint64>> m_revision;
   QTimer m_editTimer;
+  QVariantList m_allImages;
+  bool m_touchSettingsLoaded = false;
+  bool m_showRejected = false, m_advanceAfterReject = false;
+  int m_rejectNext = 0;
+  QString m_lastName, m_lastOperation;
+  double m_lastStep = 0.01;
+  QVariantMap m_lastField;
   QVariantList m_images, m_tools, m_moduleCoverage;
   QVariantList m_history;
   QVariantMap m_imageInformation;
+  bool m_exportRunning = false;
+  bool m_cropEditing = false;
+  QSize m_cropOriginalSize;
+  QVariantList m_cropBounds;
+  QVariantMap m_moduleStates;
   QVariantMap m_library;
   QVariantMap m_collectionValues;
   QVariantList m_importCandidates;
@@ -245,6 +294,7 @@ private:
   bool m_ready = false, m_busy = true, m_canUndo = false, m_canRedo = false;
   bool m_canClose = false, m_editorVisible = false, m_before = false, m_moduleEnabled = false;
   bool m_needBefore = true;
+  bool m_waitingFrame = false;
   bool m_failed = false;
-  QJsonObject m_restoreView;
+  QJsonObject m_restoreView, m_deferredModule;
 };

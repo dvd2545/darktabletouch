@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Dialog {
+TouchDialog {
     id: libraryDialog
     required property var photoController
     property int page: 0
@@ -10,6 +10,7 @@ Dialog {
     property bool showCollectionRules: false
     property bool showSort: false
     property bool showFilters: false
+    property string removePath: ""
     property string errorText: ""
     property string search: ""
     property var expanded: ({})
@@ -166,13 +167,13 @@ Dialog {
                     Layout.fillWidth: true
                     Label { text: qsTr("collection"); color: "#00dbe5"; font.pixelSize: 18; Layout.fillWidth: true }
                     TouchButton { text: qsTr("edit rules"); checked: libraryDialog.showCollectionRules; onClicked: libraryDialog.showCollectionRules = !libraryDialog.showCollectionRules }
-                    TouchButton { text: qsTr("sort"); checked: libraryDialog.showSort; onClicked: libraryDialog.showSort = !libraryDialog.showSort }
+                    TouchButton { iconName: "settings"; text: qsTr("sort"); checked: libraryDialog.showSort; onClicked: libraryDialog.showSort = !libraryDialog.showSort }
                 }
                 RuleEditor { visible: libraryDialog.showCollectionRules; Layout.fillWidth: true; dialog: libraryDialog; group: "collection" }
                 RuleEditor { visible: libraryDialog.showSort; Layout.fillWidth: true; dialog: libraryDialog; group: "sort" }
                 RowLayout {
                     Layout.fillWidth: true
-                    ComboBox {
+                    TouchComboBox {
                         Layout.preferredWidth: 260; implicitHeight: 64; model: libraryDialog.properties; textRole: "label"
                         currentIndex: libraryDialog.propertyIndex(libraryDialog.browseProperty)
                         Accessible.name: qsTr("collection property")
@@ -198,7 +199,7 @@ Dialog {
                         Item { visible: libraryDialog.folderMode; Layout.preferredWidth: Math.min(6, modelData.depth || 0) * 18 }
                         TouchButton {
                             visible: libraryDialog.folderMode
-                            text: modelData.children ? libraryDialog.expanded[modelData.key] === false ? "\u203a" : "\u2304" : ""
+                            text: qsTr("expand or collapse folder"); iconName: libraryDialog.expanded[modelData.key] === false ? "chevron-right" : "chevron-down"
                             enabled: !!modelData.children; opacity: modelData.children ? 1 : 0; implicitWidth: 64
                             Accessible.name: qsTr("expand or collapse %1").arg(modelData.label || "")
                             onClicked: { const next = Object.assign({}, libraryDialog.expanded); next[modelData.key] = next[modelData.key] === false; libraryDialog.expanded = next }
@@ -217,6 +218,11 @@ Dialog {
                             onActiveFocusChanged: if(activeFocus) valueList.positionViewAtIndex(index, ListView.Contain)
                             ToolTip.visible: hovered; ToolTip.text: libraryDialog.folderMode ? modelData.key : modelData.value
                         }
+                        TouchButton {
+                            visible: libraryDialog.folderMode
+                            iconName: "trash"; text: qsTr("remove folder from catalog"); implicitWidth: 64
+                            onClicked: { libraryDialog.removePath = modelData.key; removeDialog.open() }
+                        }
                     }
                 }
                 Label { visible: !libraryDialog.folderMode && !libraryDialog.values.length; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#aebbc1"; text: qsTr("no values available; use edit rules to enter a matching value") }
@@ -225,10 +231,25 @@ Dialog {
         }
         RowLayout {
             Layout.fillWidth: true
-            TouchButton { text: qsTr("reset all"); onClicked: libraryDialog.resetAll() }
+            TouchButton { iconName: "reset"; text: qsTr("reset all"); onClicked: libraryDialog.resetAll() }
+            TouchButton { text: qsTr("remove collection from catalog"); iconName: "trash"; onClicked: { libraryDialog.removePath = ""; removeDialog.open() } }
             Item { Layout.fillWidth: true }
-            TouchButton { text: qsTr("cancel"); onClicked: libraryDialog.close() }
-            TouchButton { text: qsTr("apply"); checked: true; enabled: libraryDialog.photoController.ready && !libraryDialog.photoController.busy; onClicked: { libraryDialog.photoController.libraryCommand("collection", libraryDialog.draft); libraryDialog.close() } }
+            TouchButton { iconName: "close"; text: qsTr("cancel"); onClicked: libraryDialog.close() }
+            TouchButton { iconName: "check"; text: qsTr("apply"); checked: true; enabled: libraryDialog.photoController.ready && !libraryDialog.photoController.busy; onClicked: { libraryDialog.photoController.libraryCommand("collection", libraryDialog.draft); libraryDialog.close() } }
         }
     }
+    TouchDialog {
+        id: removeDialog
+        parent: Overlay.overlay; anchors.centerIn: parent; width: Math.min(560, parent.width - 32)
+        title: qsTr("remove from catalog"); modal: true; focus: true
+        contentItem: ColumnLayout {
+            Label { text: libraryDialog.removePath || qsTr("current collection"); textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#e6eef0" }
+            Label { text: qsTr("remove these photos from the catalog? folder removal includes imported subfolders and all their photos, including filtered or rejected images. original files and sidecars stay on disk"); Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#aebbc1" }
+            RowLayout {
+                TouchButton { text: qsTr("cancel"); iconName: "close"; onClicked: removeDialog.close() }
+                TouchButton { text: qsTr("remove"); iconName: "trash"; enabled: !photoController.busy; onClicked: { photoController.libraryCommand(libraryDialog.removePath ? "remove-folder" : "remove-collection", {folder: libraryDialog.removePath}); removeDialog.close(); libraryDialog.close() } }
+            }
+        }
+    }
+
 }

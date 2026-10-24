@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Dialog {
+TouchDialog {
     id: dialog
     required property var photoController
     property var chosen: ({})
@@ -62,7 +62,7 @@ Dialog {
         }
         RowLayout {
             Item { Layout.fillWidth: true }
-            TouchButton { text: qsTr("cancel"); onClicked: dialog.close() }
+            TouchButton { iconName: "close"; text: qsTr("cancel"); onClicked: dialog.close() }
             TouchButton {
                 objectName: "confirmImport"
                 text: dialog.selectedCount === 1 ? qsTr("add 1 photo") : qsTr("add %1 photos").arg(dialog.selectedCount); checked: true

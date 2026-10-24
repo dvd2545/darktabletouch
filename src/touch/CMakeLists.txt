@@ -22,11 +22,17 @@ set_source_files_properties(qml/PanelHandle.qml PROPERTIES QT_RESOURCE_ALIAS Pan
 set_source_files_properties(qml/LibraryDialog.qml PROPERTIES QT_RESOURCE_ALIAS LibraryDialog.qml)
 set_source_files_properties(qml/RuleEditor.qml PROPERTIES QT_RESOURCE_ALIAS RuleEditor.qml)
 set_source_files_properties(qml/ImportReview.qml PROPERTIES QT_RESOURCE_ALIAS ImportReview.qml)
+set_source_files_properties(qml/TouchComboBox.qml PROPERTIES QT_RESOURCE_ALIAS TouchComboBox.qml)
+set_source_files_properties(qml/ExportDialog.qml PROPERTIES QT_RESOURCE_ALIAS ExportDialog.qml)
+set_source_files_properties(qml/CropOverlay.qml PROPERTIES QT_RESOURCE_ALIAS CropOverlay.qml)
+set_source_files_properties(qml/Icon.qml PROPERTIES QT_RESOURCE_ALIAS Icon.qml)
+set_source_files_properties(qml/TouchDialog.qml PROPERTIES QT_RESOURCE_ALIAS TouchDialog.qml)
+set_source_files_properties(qml/TouchPopup.qml PROPERTIES QT_RESOURCE_ALIAS TouchPopup.qml)
 qt_add_qml_module(darktable-touch
   URI DarktableTouch
   VERSION 1.0
   RESOURCE_PREFIX /qt/qml
-  QML_FILES qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
+  QML_FILES qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
 
 qt_add_executable(darktabletouch launcher.cpp)
 target_link_libraries(darktabletouch PRIVATE Qt6::Core PkgConfig::TOUCH_JSON)
