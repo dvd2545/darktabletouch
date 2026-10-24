@@ -119,6 +119,11 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch's Exposure panel now shows target brightness and percentile in
+  automatic mode, with availability information for unsupported images.
+  Resize pills and editor gutters use less space, and focusing an
+  unchanged number no longer adds an edit.
+
 - Added Touch library controls for collection rules, separate filters,
   sort priorities, and multi-photo selection. Import now reviews chosen
   photos and identifies existing library entries before adding files.
