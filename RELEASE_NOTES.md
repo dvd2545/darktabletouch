@@ -119,6 +119,9 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- DarktableTouch uses US English presentation and keeps its configuration
+  and cache separate from an existing darktable installation.
+
 - The code has received a large set of changes in preparation of the
   Gtk4 migration.
   - The code for handling popover menus has been changed.
@@ -365,6 +368,10 @@ changes (where available).
   ready to splice into another invocation.
 
 ## Bug Fixes
+
+- Fixed Windows path resolution through Thai and other Unicode working
+  directories, removed a fixed-size path expansion buffer, and retained
+  Unicode command-line arguments while the engine processes them.
 
 - Fixed missing Active D-Lighting exposure compensation for Nikon
   images shot in sRGB or Adobe RGB.
