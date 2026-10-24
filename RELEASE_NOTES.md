@@ -119,6 +119,21 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Added interactive Touch cropping with draggable corners, frame movement,
+  aspect ratios, orientation swap, apply/cancel, and automatic border
+  cropping. Applied crops use native history and support undo.
+
+- Added Touch batch export settings for selected photos, collections,
+  and the current photo, with Unicode destinations, filename modifiers,
+  JPEG quality, PNG/TIFF bit depth, size limits, and output profiles.
+  Existing outputs can be skipped or given unique names.
+
+- Added confirmed catalog removal for folders and collections, quick
+  rejected-image visibility and reject-and-next settings, vector icons,
+  animated menus, and a simplified lens correction toggle. In the editor,
+  D-pad left/right navigate images and up/down adjust the last focused
+  numeric control.
+
 - Touch collections now offer checkable catalog values and expandable
   folder trees, with filters and sorting in the same dialog. A funnel
   button opens these controls from the upper-right of the library.
@@ -406,6 +421,10 @@ changes (where available).
   ready to splice into another invocation.
 
 ## Bug Fixes
+
+- Prevented Touch controls from snapping to an old value while a new
+  preview is processing. Native acknowledgments now follow the matching
+  rendered frame, including crop apply and undo.
 
 - Fixed Touch zoom anchoring under the mouse pointer and between fingers,
   including panning while pinching.
