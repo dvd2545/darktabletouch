@@ -119,6 +119,9 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Added a scrollable edit-history panel in Touch. Earlier native history
+  steps can be selected, and Undo restores the previous editing state.
+
 - Added the experimental DarktableTouch interface with library browsing,
   native parameter controls, undo/redo, and export. The launcher switches
   between Touch and Classic after saving the editing session. Specialized
