@@ -119,6 +119,17 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch collections now offer checkable catalog values and expandable
+  folder trees, with filters and sorting in the same dialog. A funnel
+  button opens these controls from the upper-right of the library.
+
+- Holding or right-clicking a Touch thumbnail opens reject, unrate,
+  catalog removal, and Recycle Bin actions. Removal keeps the source
+  files, and shared originals remain while other catalog versions exist.
+
+- Added precise numeric rotation in Touch and native Windows photo,
+  folder, and export dialogs.
+
 - Touch's Exposure panel now shows target brightness and percentile in
   automatic mode, with availability information for unsupported images.
   Resize pills and editor gutters use less space, and focusing an
@@ -395,6 +406,9 @@ changes (where available).
   ready to splice into another invocation.
 
 ## Bug Fixes
+
+- Fixed Touch zoom anchoring under the mouse pointer and between fingers,
+  including panning while pinching.
 
 - Prevented truncation of Thai paths and long UTF-8 image filenames on
   Windows while preserving stored editing parameters. Catalog handles are
