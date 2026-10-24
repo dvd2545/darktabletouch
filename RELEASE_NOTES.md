@@ -119,6 +119,11 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Redesigned the Touch editor with a bottom photo filmstrip, expandable
+  tools on the right, and a lower-left menu for library and editing
+  actions. Image information appears in the upper-left corner and fades
+  after four seconds; tapping the image shows it again.
+
 - Added a scrollable edit-history panel in Touch. Earlier native history
   steps can be selected, and Undo restores the previous editing state.
 
