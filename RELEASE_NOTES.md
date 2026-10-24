@@ -119,6 +119,10 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Added Touch library controls for collection rules, separate filters,
+  sort priorities, and multi-photo selection. Import now reviews chosen
+  photos and identifies existing library entries before adding files.
+
 - Added draggable pill handles to adjust the Touch filmstrip height and
   module-panel width, with keyboard adjustment and a quick size reset.
   The quick-action menu now sits beside the filmstrip thumbnails, outside
