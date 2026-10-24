@@ -14,9 +14,10 @@ Item {
         && typeof field.min === "number" && typeof field.max === "number"
         && Math.abs(field.min) <= 100000 && Math.abs(field.max) <= 100000 && field.max > field.min
     property real increment: integerField ? 1 : field.name === "black" ? 0.0001 : 0.01
-    implicitHeight: booleanField ? 72 : enumField ? 104 : 96
+    implicitHeight: booleanField ? 72 : enumField ? Math.max(96, fieldLoader.item ? fieldLoader.item.implicitHeight : 96) : 88
 
     Loader {
+        id: fieldLoader
         anchors.fill: parent
         sourceComponent: root.booleanField ? booleanControl : root.enumField ? enumControl : root.numericField ? numberControl : unavailableControl
     }
@@ -46,6 +47,7 @@ Item {
             spacing: 8
             Label { text: root.label; color: "#aeb4be"; font.pixelSize: 14 }
             ComboBox {
+                objectName: "parameter-" + root.field.name
                 Layout.fillWidth: true
                 Layout.preferredHeight: 64
                 model: root.field.values || []
@@ -60,6 +62,7 @@ Item {
                 displayText: currentIndex >= 0 ? root.field.values[currentIndex].name : qsTr("select")
                 font.pixelSize: 15
                 focusPolicy: Qt.StrongFocus
+                enabled: root.field.editable !== false
                 delegate: ItemDelegate {
                     required property int index
                     text: root.field.values[index].name
@@ -67,6 +70,11 @@ Item {
                     width: parent.width
                 }
                 onActivated: function(index) { controller.setParameter(root.field.name, root.field.values[index].value, true) }
+            }
+            Label {
+                visible: !!root.field.hint
+                text: root.field.hint || ""; color: "#9eb5bd"; font.pixelSize: 12
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
             }
         }
     }
@@ -78,7 +86,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Label {
-                    text: root.label + (root.field.name === "exposure" ? " (EV)" : "")
+                    text: root.label + (root.field.unit ? " (" + root.field.unit + ")" : "")
                     color: "#aeb4be"
                     Layout.fillWidth: true
                     elide: Text.ElideRight
@@ -89,6 +97,7 @@ Item {
                 Layout.fillWidth: true
                 Slider {
                     id: slider
+                    objectName: "parameter-" + root.field.name
                     Layout.fillWidth: true
                     Layout.preferredHeight: 64
                     visible: root.hasSlider
@@ -121,6 +130,10 @@ Item {
                 }
                 TextField {
                     id: numeric
+                    objectName: "numeric-" + root.field.name
+                    property bool edited: false
+                    onActiveFocusChanged: if(activeFocus) edited = false
+                    onTextEdited: edited = true
                     Layout.preferredWidth: root.hasSlider ? 100 : 220
                     Layout.preferredHeight: 64
                     font.pixelSize: 14
@@ -132,7 +145,7 @@ Item {
                     background: Rectangle {
                         radius: 8; color: "#253035"
                         border.width: numeric.activeFocus ? 2 : 1
-                        border.color: numeric.activeFocus ? "#00dbe5" : "#35434a"
+                        border.color: numeric.edited && !numeric.acceptableInput ? "#ffa99e" : numeric.activeFocus ? "#00dbe5" : "#35434a"
                     }
                     validator: DoubleValidator {
                         bottom: root.field.min === undefined ? -1.7976931348623157e308 : root.field.min
@@ -146,8 +159,10 @@ Item {
                         restoreMode: Binding.RestoreNone
                     }
                     onEditingFinished: {
-                        if(acceptableInput) controller.setParameter(root.field.name,
-                            Number.fromLocaleString(Qt.locale("en_US"), text), true)
+                        if(edited && acceptableInput) {
+                            edited = false
+                            controller.setParameter(root.field.name, Number.fromLocaleString(Qt.locale("en_US"), text), true)
+                        }
                     }
                 }
             }

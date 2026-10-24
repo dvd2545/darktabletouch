@@ -203,7 +203,8 @@ int main(int argc, char **argv)
     }
     ++libraryStage;
   });
-  QImage baseline, adjusted;
+  QImage baseline, adjusted, automaticBaseline, automaticAdjusted;
+  int manualMode = -1;
   QObject::connect(&controller, &TouchController::importReviewChanged, &app, [&] {
     if(selfTest.isEmpty() || testCommandLine || startedImage) return;
     QTimer::singleShot(200, &app, [&] {
@@ -269,8 +270,9 @@ int main(int argc, char **argv)
         }
         auto filmHandle = window->findChild<QQuickItem *>(QStringLiteral("filmstripResizeHandle"));
         auto moduleHandle = window->findChild<QQuickItem *>(QStringLiteral("moduleResizeHandle"));
-        if(!filmHandle || !moduleHandle || filmHandle->width() < 64 || filmHandle->height() < 64
-           || moduleHandle->width() < 64 || moduleHandle->height() < 64)
+        if(!filmHandle || !moduleHandle || filmHandle->width() < 112 || filmHandle->height() != 24
+           || moduleHandle->width() != 24 || moduleHandle->height() < 112
+           || filmstrip->y() > 14)
         { QTextStream(stderr) << "panel resize handles are unavailable\n"; controller.shutdown(); return; }
         const qreal originalStripHeight = strip->height(), originalPanelWidth = panel->width();
         QMetaObject::invokeMethod(filmHandle, "adjusted", Q_ARG(double, 40));
@@ -293,7 +295,7 @@ int main(int argc, char **argv)
             QMetaObject::invokeMethod(filmHandle, "adjusted", Q_ARG(double, -10000));
             QMetaObject::invokeMethod(moduleHandle, "adjusted", Q_ARG(double, -10000));
             QTimer::singleShot(150, &app, [&, strip, panel, filmHandle, moduleHandle] {
-              if(qAbs(strip->height() - 112) > 1 || qAbs(panel->width() - 340) > 1)
+              if(qAbs(strip->height() - 96) > 1 || qAbs(panel->width() - 340) > 1)
               { QTextStream(stderr) << "panel minimum sizes were not retained\n"; controller.shutdown(); return; }
               QMetaObject::invokeMethod(filmHandle, "resetRequested");
               QMetaObject::invokeMethod(moduleHandle, "resetRequested");
@@ -386,6 +388,61 @@ int main(int argc, char **argv)
     else if(stage == 6)
     {
       if(frame != adjusted) { QTextStream(stderr) << "undo did not restore the selected history state\n"; controller.shutdown(); return; }
+      int automaticMode = -1;
+      manualMode = controller.values().value(QStringLiteral("mode")).toInt();
+      for(int i = 0; i < controller.fields()->rowCount(); i++)
+      {
+        const auto field = controller.fields()->data(controller.fields()->index(i, 0), Qt::UserRole + 1).toMap();
+        if(field.value(QStringLiteral("name")).toString() != QStringLiteral("mode")) continue;
+        for(const auto &choice : field.value(QStringLiteral("values")).toList())
+          if(choice.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("automatic"))
+            automaticMode = choice.toMap().value(QStringLiteral("value")).toInt();
+      }
+      if(automaticMode < 0) { QTextStream(stderr) << "automatic exposure mode is unavailable\n"; controller.shutdown(); return; }
+      stage = -1; controller.setParameter(QStringLiteral("mode"), automaticMode, true);
+    }
+    else if(stage == -1)
+    {
+      automaticBaseline = frame.copy();
+      stage = -2; controller.setParameter(QStringLiteral("deflicker_target_level"), -2.0, true);
+    }
+    else if(stage == -2)
+    {
+      automaticAdjusted = frame.copy();
+      if(frame == automaticBaseline) { QTextStream(stderr) << "automatic target brightness did not change the preview\n"; controller.shutdown(); return; }
+      stage = -3; controller.undo();
+    }
+    else if(stage == -3)
+    {
+      if(frame != automaticBaseline) { QTextStream(stderr) << "automatic exposure undo did not restore the preview\n"; controller.shutdown(); return; }
+      stage = -4; controller.redo();
+    }
+    else if(stage == -4)
+    {
+      if(frame != automaticAdjusted) { QTextStream(stderr) << "automatic exposure redo did not restore the preview\n"; controller.shutdown(); return; }
+      stage = -5;
+      QTimer::singleShot(200, &app, [&] {
+        auto target = findItem(window->contentItem(), QStringLiteral("parameter-deflicker_target_level"));
+        auto percentile = findItem(window->contentItem(), QStringLiteral("parameter-deflicker_percentile"));
+        auto manual = findItem(window->contentItem(), QStringLiteral("parameter-exposure"));
+        if(!target || !target->isVisible() || !percentile || !percentile->isVisible()
+           || (manual && manual->isVisible()) || !libraryScreenshot(QStringLiteral("-automatic")))
+        { QTextStream(stderr) << "automatic exposure controls are invalid\n"; controller.shutdown(); return; }
+        auto numeric = findItem(window->contentItem(), QStringLiteral("numeric-deflicker_target_level"));
+        if(!numeric) { QTextStream(stderr) << "automatic numeric entry is unavailable\n"; controller.shutdown(); return; }
+        int focusEdits = 0;
+        const auto focusConnection = QObject::connect(&controller, &TouchController::parameterRequested,
+          &app, [&] { ++focusEdits; }, Qt::DirectConnection);
+        numeric->forceActiveFocus();
+        window->contentItem()->forceActiveFocus();
+        QObject::disconnect(focusConnection);
+        if(focusEdits) { QTextStream(stderr) << "focusing an unchanged number created an edit\n"; controller.shutdown(); return; }
+        controller.setParameter(QStringLiteral("mode"), manualMode, true);
+      });
+    }
+    else if(stage == -5)
+    {
+      if(frame != adjusted) { QTextStream(stderr) << "returning to manual exposure changed its saved adjustment\n"; controller.shutdown(); return; }
       stage = 7;
       const QString output = QDir(testDirectory.path()).filePath(QString::fromUtf8("ผู้ใช้/ส่งออก.png"));
       controller.exportTo(QUrl::fromLocalFile(output), QStringLiteral("png"));

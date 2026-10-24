@@ -450,6 +450,22 @@ static JsonParser *_decode(dt_iop_module_t *module, const void *params, char **e
   return parser;
 }
 
+static gboolean _exposure_automatic(dt_iop_module_t *module, const int mode)
+{
+  dt_introspection_field_t *field = module->get_f("mode");
+  for(dt_introspection_type_enum_tuple_t *choice = field ? field->Enum.values : NULL;
+      choice && choice->name; choice++)
+    if(choice->value == mode) return !strcmp(choice->name, "EXPOSURE_MODE_DEFLICKER");
+  return FALSE;
+}
+
+static gboolean _exposure_automatic_supported(dt_iop_module_t *module)
+{
+  const dt_image_t *image = &module->dev->image_storage;
+  return dt_image_is_raw(image) && image->buf_dsc.channels == 1
+    && image->buf_dsc.datatype == TYPE_UINT16;
+}
+
 char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, char **error)
 {
   dt_iop_module_t *module = _module(editor, operation, error);
@@ -474,6 +490,10 @@ char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, c
     json_node_get_object(json_parser_get_root(defaults)), "fields");
   json_object_set_string_member(object, "label", module->name());
   json_object_set_boolean_member(object, "enabled", module->enabled);
+  const gboolean exposure = !strcmp(operation, "exposure");
+  const int *mode = exposure ? module->get_p(module->params, "mode") : NULL;
+  const gboolean automatic_supported = exposure && _exposure_automatic_supported(module);
+  const gboolean automatic = mode && automatic_supported && _exposure_automatic(module, *mode);
   JsonArray *fields = json_object_get_array_member(object, "fields");
   for(guint i = 0; i < json_array_get_length(fields); i++)
   {
@@ -482,6 +502,29 @@ char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, c
     dt_introspection_field_t *description = module->get_f(name);
     const char *label = description ? description->header.description : NULL;
     json_object_set_string_member(field, "label", label && *label ? label : name);
+    if(exposure)
+    {
+      const gboolean deflicker = g_str_has_prefix(name, "deflicker_");
+      const gboolean manual = !strcmp(name, "exposure") || g_str_has_prefix(name, "compensate_");
+      json_object_set_boolean_member(field, "visible", deflicker ? automatic
+        : manual ? !automatic : TRUE);
+      if(!strcmp(name, "mode"))
+      {
+        json_object_set_boolean_member(field, "editable", automatic_supported);
+        json_object_set_string_member(field, "hint", automatic_supported
+          ? (automatic ? _("adjust target brightness and percentile; manual exposure is not used in this mode") : "")
+          : _("automatic mode requires a single-channel 16-bit RAW image"));
+      }
+      if(!strcmp(name, "deflicker_target_level"))
+      {
+        json_object_set_string_member(field, "label", _("target brightness"));
+        json_object_set_string_member(field, "unit", "EV");
+        json_object_set_double_member(field, "soft_min", -8.0);
+        json_object_set_double_member(field, "soft_max", 0.0);
+      }
+      if(!strcmp(name, "deflicker_percentile")) json_object_set_string_member(field, "unit", "%");
+      if(!strcmp(name, "exposure")) json_object_set_string_member(field, "unit", "EV");
+    }
     if(!strcmp(operation, "exposure") && !strcmp(name, "exposure"))
     {
       json_object_set_double_member(field, "soft_min", -3.0);
@@ -516,6 +559,9 @@ char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, c
       const int *reset = module->get_p(module->default_params, name);
       if(live) json_object_set_int_member(field, "value", *live);
       if(reset) json_object_set_int_member(field, "default", *reset);
+      if(exposure && !automatic_supported && !strcmp(name, "mode"))
+        for(dt_introspection_type_enum_tuple_t *choice = description->Enum.values; choice && choice->name; choice++)
+          if(!strcmp(choice->name, "EXPOSURE_MODE_MANUAL")) json_object_set_int_member(field, "value", choice->value);
     }
   }
   JsonGenerator *generator = json_generator_new();
@@ -574,6 +620,10 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
   dt_introspection_field_t *field = module->get_f(name);
   void *value = module->get_p(module->params, name);
   if(!field || !value) return _error(error, N_("unknown module parameter"));
+  const gboolean exposure = !strcmp(operation, "exposure");
+  const int *mode = exposure ? module->get_p(module->params, "mode") : NULL;
+  if(mode && _exposure_automatic_supported(module) && _exposure_automatic(module, *mode) && !strcmp(name, "exposure"))
+    return _error(error, N_("adjust target brightness in automatic exposure mode"));
   JsonParser *parser = json_parser_new();
   if(!json_parser_load_from_data(parser, value_json, -1, NULL)
      || !JSON_NODE_HOLDS_VALUE(json_parser_get_root(parser)))
@@ -618,6 +668,12 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
           for(dt_introspection_type_enum_tuple_t *choice = field->Enum.values;
               choice && choice->name; choice++)
             if(number == choice->value) { ok = TRUE; break; }
+          if(ok && exposure && !strcmp(name, "mode") && _exposure_automatic(module, (int)number)
+             && !_exposure_automatic_supported(module))
+          {
+            g_object_unref(parser);
+            return _error(error, N_("automatic mode requires a single-channel 16-bit RAW image"));
+          }
           if(ok) *(int *)value = (int)number;
           break;
         default: ok = FALSE; break;

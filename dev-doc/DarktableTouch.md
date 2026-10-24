@@ -90,11 +90,22 @@ messages fade. Focus navigation scrolls tool controls and quick actions
 into view on smaller screens.
 
 Small pill handles resize the filmstrip height and module-panel width.
+Their short axis is 24 logical pixels, with the visible pill centered on
+the panel boundary. The filmstrip leaves 14 pixels above its thumbnails,
+and the module panel uses an 18-pixel left gutter. Primary buttons retain
+their 64-pixel touch targets.
 Drag the filmstrip handle up or down, or the module handle left or right.
 The handles have larger touch areas, support arrow-key adjustment and
 accessibility actions, and reset to their automatic sizes on a double-tap
 or the controller's confirm button. Sizes are bounded to retain room for
 the image and controls and remain adjustable during the current session.
+
+Exposure displays the controls used by its current mode. Manual mode uses
+the exposure adjustment; automatic mode uses target brightness and RAW
+histogram percentile. Automatic mode is available for single-channel
+16-bit RAW images, matching the native operation's eligibility checks.
+Numeric fields commit only after text is edited, so moving focus does not
+add a history item or round an unchanged parameter.
 
 The edit-history panel lists the current engine session, including disabled
 steps and instance labels. Selecting a step uses native history replay and

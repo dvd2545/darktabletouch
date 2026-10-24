@@ -190,6 +190,7 @@ int main(int argc, char **argv)
   g_assert_no_error(error);
   JsonArray *fields = json_object_get_array_member(json_node_get_object(json_parser_get_root(schema_parser)), "fields");
   gboolean found_mode = FALSE;
+  int automatic_mode = -1;
   for(guint i = 0; i < json_array_get_length(fields); i++)
   {
     JsonObject *field = json_array_get_object_element(fields, i);
@@ -198,9 +199,17 @@ int main(int argc, char **argv)
       found_mode = TRUE;
       g_assert_cmpint(json_node_get_value_type(json_object_get_member(field, "value")), ==, G_TYPE_INT64);
       g_assert_cmpuint(json_array_get_length(json_object_get_array_member(field, "values")), ==, 2);
+      JsonArray *choices = json_object_get_array_member(field, "values");
+      for(guint k = 0; k < json_array_get_length(choices); k++)
+      {
+        JsonObject *choice = json_array_get_object_element(choices, k);
+        if(!strcmp(json_object_get_string_member(choice, "name"), "automatic"))
+          automatic_mode = json_object_get_int_member(choice, "value");
+      }
     }
   }
   g_assert_true(found_mode);
+  g_assert_cmpint(automatic_mode, >=, 0);
   dt_touch_free(schema);
   g_object_unref(schema_parser);
   dt_touch_state_t *before = dt_touch_editor_capture(editor);
@@ -221,6 +230,27 @@ int main(int argc, char **argv)
   g_assert_cmpint(width, ==, w2); g_assert_cmpint(height, ==, h2);
   g_assert_true(memcmp(original, edited, (size_t)width * height * 4) != 0);
   dt_touch_state_t *edited_state = dt_touch_editor_capture(editor);
+  char *automatic_json = g_strdup_printf("%d", automatic_mode);
+  g_assert_true(dt_touch_editor_set(editor, "exposure", "mode", automatic_json, &message));
+  uint8_t *automatic = NULL, *brighter = NULL, *restored = NULL;
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &automatic, &w2, &h2, &message));
+  dt_touch_state_t *automatic_state = dt_touch_editor_capture(editor);
+  g_assert_true(dt_touch_editor_set(editor, "exposure", "deflicker_target_level", "-2.0", &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &brighter, &w2, &h2, &message));
+  g_assert_cmpint(memcmp(automatic, brighter, (size_t)w2 * h2 * 4), !=, 0);
+  g_assert_true(dt_touch_editor_restore(editor, automatic_state, &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &restored, &w2, &h2, &message));
+  g_assert_cmpmem(automatic, (size_t)w2 * h2 * 4, restored, (size_t)w2 * h2 * 4);
+  dt_touch_free(restored); restored = NULL;
+  g_assert_true(dt_touch_editor_set(editor, "exposure", "deflicker_percentile", "90.0", &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &restored, &w2, &h2, &message));
+  g_assert_cmpint(memcmp(automatic, restored, (size_t)w2 * h2 * 4), !=, 0);
+  g_assert_false(dt_touch_editor_set(editor, "exposure", "exposure", "1.0", &message));
+  g_assert_nonnull(message); g_free(message); message = NULL;
+  dt_touch_free(automatic); dt_touch_free(brighter); dt_touch_free(restored);
+  dt_touch_state_free(automatic_state);
+  g_assert_true(dt_touch_editor_restore(editor, edited_state, &message));
+  g_free(automatic_json);
   char *history = dt_touch_editor_history(editor);
   g_assert_true(json_parser_load_from_data(parser, history, -1, &error));
   JsonObject *steps = json_node_get_object(json_parser_get_root(parser));
@@ -241,7 +271,28 @@ int main(int argc, char **argv)
   g_assert_cmpmem(original, (size_t)width * height * 4, undone, (size_t)w2 * h2 * 4);
   dt_touch_free(original); dt_touch_free(edited); dt_touch_free(undone);
   dt_touch_state_free(before);
+  char *png = g_build_filename(folder, "automatic unavailable.png", NULL);
+  g_assert_true(dt_touch_editor_export(editor, png, "png", &message));
+  g_assert_null(message);
   dt_touch_editor_free(editor);
+  char *png_import = dt_touch_import(png, &message);
+  g_assert_nonnull(png_import); g_assert_null(message); g_free(png_import);
+  dt_touch_editor_t *raster = dt_touch_editor_new(dt_touch_import_candidate(png), &message);
+  g_assert_nonnull(raster); g_assert_null(message);
+  char *raster_schema = dt_touch_editor_module(raster, "exposure", &message);
+  g_assert_true(json_parser_load_from_data(parser, raster_schema, -1, &error));
+  JsonArray *raster_fields = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "fields");
+  for(guint i = 0; i < json_array_get_length(raster_fields); i++)
+  {
+    JsonObject *field = json_array_get_object_element(raster_fields, i);
+    if(!strcmp(json_object_get_string_member(field, "name"), "mode"))
+      g_assert_false(json_object_get_boolean_member(field, "editable"));
+  }
+  char *mode_json = g_strdup_printf("%d", automatic_mode);
+  g_assert_false(dt_touch_editor_set(raster, "exposure", "mode", mode_json, &message));
+  g_assert_nonnull(message); g_free(message); message = NULL;
+  g_free(mode_json); g_free(raster_schema); g_free(png);
+  dt_touch_editor_free(raster);
   GString *long_path = g_string_new("C:/ผู้ใช้/");
   for(int i = 0; i < 100; i++) g_string_append(long_path, "ทดสอบ ภาพถ่าย/$#%");
   dt_conf_set_int("plugins/lighttable/collect/num_rules", 1);

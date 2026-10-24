@@ -38,7 +38,7 @@ ApplicationWindow {
     readonly property real maximumModuleWidth: Math.min(640, width - 400)
 
     function resizeFilmstrip(delta) {
-        requestedFilmstripHeight = Math.max(112, Math.min(maximumFilmstripHeight, filmstripBar.height + delta))
+        requestedFilmstripHeight = Math.max(96, Math.min(maximumFilmstripHeight, filmstripBar.height + delta))
         Qt.callLater(clampPan)
     }
     function resizeModules(delta) {
@@ -335,15 +335,15 @@ ApplicationWindow {
                     id: filmstripBar
                     objectName: "filmstripBar"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(112, Math.min(window.maximumFilmstripHeight, window.requestedFilmstripHeight || (window.compact ? 120 : 144)))
+                    Layout.preferredHeight: Math.max(96, Math.min(window.maximumFilmstripHeight, window.requestedFilmstripHeight || (window.compact ? 104 : 120)))
                     color: "#0e1417"
                     Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: "#283337" }
                     PanelHandle {
                         objectName: "filmstripResizeHandle"
-                        anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.topMargin: -26
+                        anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.topMargin: -12
                         z: 2
                         Accessible.name: qsTr("filmstrip height")
-                        panelSize: filmstripBar.height; minimumValue: 112; maximumValue: window.maximumFilmstripHeight
+                        panelSize: filmstripBar.height; minimumValue: 96; maximumValue: window.maximumFilmstripHeight
                         onAdjusted: function(delta) { window.resizeFilmstrip(delta) }
                         onResetRequested: { window.requestedFilmstripHeight = 0; Qt.callLater(clampPan) }
                     }
@@ -360,7 +360,7 @@ ApplicationWindow {
                         id: filmstrip
                         objectName: "filmstrip"
                         anchors.left: menuButton.right; anchors.right: parent.right
-                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 10; anchors.topMargin: 36
+                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 8; anchors.topMargin: 14
                         orientation: ListView.Horizontal; spacing: 10; clip: true
                         boundsBehavior: Flickable.StopAtBounds
                         model: controller.images; cacheBuffer: 200
@@ -402,7 +402,7 @@ ApplicationWindow {
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: "#283337" }
                 PanelHandle {
                     objectName: "moduleResizeHandle"
-                    anchors.left: parent.left; anchors.leftMargin: -24; anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: -12; anchors.verticalCenter: parent.verticalCenter
                     z: 2; vertical: true
                     Accessible.name: qsTr("module panel width")
                     panelSize: toolPanel.width; minimumValue: 340; maximumValue: window.maximumModuleWidth
@@ -411,7 +411,7 @@ ApplicationWindow {
                 }
                 Flickable {
                     id: toolScroll
-                    anchors.fill: parent; anchors.margins: 12; anchors.leftMargin: 40
+                    anchors.fill: parent; anchors.margins: 12; anchors.leftMargin: 18
                     contentWidth: width; contentHeight: toolColumn.implicitHeight
                     onContentHeightChanged: contentY = Math.max(0, Math.min(contentY, contentHeight - height))
                     clip: true; boundsBehavior: Flickable.StopAtBounds
@@ -503,8 +503,8 @@ ApplicationWindow {
                     required property var model
                     field: model.field
                     Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
-                    visible: controller.operation !== "exposure" || window.advanced
-                        || ["exposure", "black", "mode"].indexOf(field.name) >= 0
+                    visible: field.visible !== false && (controller.operation !== "exposure" || window.advanced
+                        || ["exposure", "black", "mode", "deflicker_target_level", "deflicker_percentile"].indexOf(field.name) >= 0)
                         || (Number(controller.values.mode) === 1 && field.name.startsWith("deflicker_"))
                 }
             }

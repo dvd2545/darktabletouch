@@ -540,7 +540,8 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
     auto fields = module.value(QStringLiteral("fields")).toArray().toVariantList();
     if(module.value(QStringLiteral("operation")).toString() == QStringLiteral("exposure"))
     {
-      const QStringList order{QStringLiteral("exposure"), QStringLiteral("black"), QStringLiteral("mode")};
+      const QStringList order{QStringLiteral("mode"), QStringLiteral("exposure"), QStringLiteral("deflicker_target_level"),
+        QStringLiteral("deflicker_percentile"), QStringLiteral("black")};
       const auto rank = [&order](const QVariant &value) {
         const int position = order.indexOf(value.toMap().value(QStringLiteral("name")).toString());
         return position < 0 ? 100 : position;
