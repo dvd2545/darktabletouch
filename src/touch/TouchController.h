@@ -74,6 +74,7 @@ signals:
   void initialized(QJsonArray images, QJsonArray modules, QJsonObject session);
   void imagesChanged(QJsonArray images);
   void imageOpened(int id, quint64 revision);
+  void informationReady(QJsonObject information, quint64 revision);
   void moduleReady(QJsonObject module, quint64 revision);
   void frameReady(QImage image, quint64 revision);
   void thumbnailReady(int id, QImage image);
@@ -114,6 +115,8 @@ class TouchController final : public QObject
   Q_PROPERTY(int historyEnd READ historyEnd NOTIFY historyChanged)
   Q_PROPERTY(bool canClose READ canClose NOTIFY stateChanged)
   Q_PROPERTY(int imageId READ imageId NOTIFY stateChanged)
+  Q_PROPERTY(QVariantMap imageInformation READ imageInformation NOTIFY imageInformationChanged)
+  Q_PROPERTY(bool hasError READ hasError NOTIFY stateChanged)
   Q_PROPERTY(QVariantList images READ images NOTIFY imagesChanged)
   Q_PROPERTY(QVariantList tools READ tools NOTIFY stateChanged)
   Q_PROPERTY(QVariantList moduleCoverage READ moduleCoverage NOTIFY stateChanged)
@@ -138,6 +141,8 @@ public:
   int historyEnd() const { return m_historyEnd; }
   bool canClose() const { return m_canClose; }
   int imageId() const { return m_imageId; }
+  QVariantMap imageInformation() const { return m_imageInformation; }
+  bool hasError() const { return m_failed; }
   QVariantList images() const { return m_images; }
   QVariantList tools() const { return m_tools; }
   QVariantList moduleCoverage() const { return m_moduleCoverage; }
@@ -171,6 +176,7 @@ public:
 signals:
   void stateChanged();
   void imagesChanged();
+  void imageInformationChanged();
   void moduleChanged();
   void historyChanged();
   void previewChanged();
@@ -202,6 +208,7 @@ private:
   QTimer m_editTimer;
   QVariantList m_images, m_tools, m_moduleCoverage;
   QVariantList m_history;
+  QVariantMap m_imageInformation;
   FieldModel m_fields;
   QSet<int> m_requestedThumbnails;
   QString m_operation = QStringLiteral("exposure");

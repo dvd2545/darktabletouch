@@ -112,6 +112,11 @@ char *dt_touch_modules(void)
   return dt_bridge_list_modules_json();
 }
 
+char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error)
+{
+  return editor ? dt_bridge_get_metadata_json(editor->dev.image_storage.id, error) : NULL;
+}
+
 int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, char **error)
 {
   dt_mipmap_buffer_t buffer = { 0 };
@@ -147,6 +152,8 @@ int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, 
       return _error(error, N_("could not color manage the image thumbnail"));
     }
   }
+  // mipmap alpha is unused; Qt's scene graph needs opaque RGBA thumbnails
+  for(size_t i = 3; i < bytes; i += 4) (*pixels)[i] = 255;
   dt_mipmap_cache_release(&buffer);
   return TRUE;
 }

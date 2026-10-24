@@ -29,6 +29,7 @@ int dt_touch_save_session(const char *next_ui, int image_id, int editor,
 int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, char **error);
 dt_touch_editor_t *dt_touch_editor_new(int image_id, char **error);
 void dt_touch_editor_free(dt_touch_editor_t *editor);
+char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error);
 char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, char **error);
 char *dt_touch_editor_history(dt_touch_editor_t *editor);
 int dt_touch_editor_history_select(dt_touch_editor_t *editor, int end, char **error);

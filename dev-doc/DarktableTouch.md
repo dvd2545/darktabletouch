@@ -75,6 +75,19 @@ editor includes native scalar/enum controls, reset, undo/redo, numeric
 entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
 markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 
+The editor places a virtualized photo filmstrip below the canvas and the
+six priority tools in a vertical panel on the right. One tool expands at a
+time; its menu contains reset and additional controls. The lower-left
+hamburger button sits above the filmstrip and opens library, export,
+history, undo/redo, comparison, import, and interface-switching actions.
+Image information appears in the upper-left corner when a photo opens,
+then fades after four seconds. Tap the canvas or choose "image information"
+to show it again. Filenames remain literal Unicode text; camera and
+exposure information come from the engine's metadata, with en-US numbers.
+Busy operations and errors remain visible even after transient status
+messages fade. Focus navigation scrolls tool controls and quick actions
+into view on smaller screens.
+
 The edit-history panel lists the current engine session, including disabled
 steps and instance labels. Selecting a step uses native history replay and
 is itself undoable. Built-in preset labels use the same localization helper

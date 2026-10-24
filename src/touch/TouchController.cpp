@@ -212,6 +212,9 @@ void EngineWorker::openImage(int id, quint64 revision)
   m_editor = next;
   m_imageId = id;
   emit imageOpened(id, revision);
+  const auto information = takeJson(dt_touch_editor_information(m_editor, &error)).object();
+  if(error) report(error);
+  else emit informationReady(information, revision);
   loadModule(m_operation, revision);
   render(revision);
 }
@@ -345,7 +348,7 @@ void EngineWorker::thumbnail(int id)
     emit thumbnailReady(id, QImage());
     return;
   }
-  emit thumbnailReady(id, QImage(pixels, width, height, width * 4, QImage::Format_RGBX8888,
+  emit thumbnailReady(id, QImage(pixels, width, height, width * 4, QImage::Format_RGBA8888,
                                   dt_touch_free, pixels));
 }
 
@@ -451,6 +454,11 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
     }
   });
   connect(m_worker, &EngineWorker::imagesChanged, this, &TouchController::updateImages);
+  connect(m_worker, &EngineWorker::informationReady, this, [this](QJsonObject information, quint64 revision) {
+    if(revision != m_revision->load()) return;
+    m_imageInformation = information.toVariantMap();
+    emit imageInformationChanged();
+  });
   connect(m_worker, &EngineWorker::imageOpened, this, [this](int id, quint64 revision) {
     if(revision != m_revision->load()) return;
     m_imageId = id;

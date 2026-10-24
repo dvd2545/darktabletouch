@@ -97,6 +97,18 @@ Item {
                     stepSize: root.increment
                     focusPolicy: Qt.StrongFocus
                     property real lastMoved: value
+                    background: Rectangle {
+                        x: slider.leftPadding; y: slider.topPadding + slider.availableHeight / 2 - height / 2
+                        width: slider.availableWidth; height: 6; radius: 3; color: "#3b484d"
+                        Rectangle { width: slider.visualPosition * parent.width; height: parent.height; radius: 3; color: "#00dbe5" }
+                    }
+                    handle: Rectangle {
+                        x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
+                        y: slider.topPadding + slider.availableHeight / 2 - height / 2
+                        width: 24; height: 24; radius: 12
+                        color: slider.pressed ? "#00dbe5" : "#d8e6ed"
+                        border.width: slider.activeFocus ? 2 : 0; border.color: "#00dbe5"
+                    }
                     Binding { target: slider; property: "value"; when: !slider.pressed; value: Number(root.field.value || 0); restoreMode: Binding.RestoreNone }
                     onMoved: {
                         lastMoved = value
@@ -109,12 +121,19 @@ Item {
                 }
                 TextField {
                     id: numeric
-                    Layout.preferredWidth: root.hasSlider ? 112 : 220
+                    Layout.preferredWidth: root.hasSlider ? 100 : 220
                     Layout.preferredHeight: 64
-                    font.pixelSize: 16
+                    font.pixelSize: 14
+                    padding: 6
                     horizontalAlignment: TextInput.AlignHCenter
                     selectByMouse: true
                     inputMethodHints: Qt.ImhFormattedNumbersOnly
+                    color: "#e6eef0"
+                    background: Rectangle {
+                        radius: 8; color: "#253035"
+                        border.width: numeric.activeFocus ? 2 : 1
+                        border.color: numeric.activeFocus ? "#00dbe5" : "#35434a"
+                    }
                     validator: DoubleValidator {
                         bottom: root.field.min === undefined ? -1.7976931348623157e308 : root.field.min
                         top: root.field.max === undefined ? 1.7976931348623157e308 : root.field.max
@@ -130,11 +149,6 @@ Item {
                         if(acceptableInput) controller.setParameter(root.field.name,
                             Number.fromLocaleString(Qt.locale("en_US"), text), true)
                     }
-                }
-                TouchButton {
-                    text: qsTr("reset")
-                    implicitWidth: 64
-                    onClicked: controller.setParameter(root.field.name, root.field.default, true)
                 }
             }
         }

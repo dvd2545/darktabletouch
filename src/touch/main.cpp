@@ -15,10 +15,21 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QQuickItem>
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QTemporaryDir>
 #include <QTextStream>
+
+namespace {
+QQuickItem *findItem(QQuickItem *root, const QString &name)
+{
+  if(root->objectName() == name) return root;
+  for(auto child : root->childItems())
+    if(auto item = findItem(child, name)) return item;
+  return nullptr;
+}
+}
 
 int main(int argc, char **argv)
 {
@@ -75,7 +86,10 @@ int main(int argc, char **argv)
   auto store = new PreviewStore;
   TouchController controller(store);
   Gamepad gamepad;
+  bool reportFailed = false;
   QQmlApplicationEngine engine;
+  if(!selfTest.isEmpty())
+    QObject::connect(&engine, &QQmlEngine::warnings, &app, [&](const QList<QQmlError> &) { reportFailed = true; });
   engine.addImageProvider(QStringLiteral("photos"), store);
   engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
   engine.rootContext()->setContextProperty(QStringLiteral("gamepad"), &gamepad);
@@ -87,7 +101,7 @@ int main(int argc, char **argv)
   auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
   if(selfTest.isEmpty() && screenshot.isEmpty()) window->showMaximized();
   if(!selfTest.isEmpty() && testCommandLine) window->resize(960, 540);
-  bool startedImport = false, startedImage = false, finished = false, reportFailed = false;
+  bool startedImport = false, startedImage = false, finished = false;
   int stage = 0;
   QImage baseline, adjusted;
   QObject::connect(&controller, &TouchController::stateChanged, &app, [&] {
@@ -114,7 +128,42 @@ int main(int argc, char **argv)
     if(stage == 7 && controller.message().startsWith(QStringLiteral("exported to")))
     {
       stage = 8;
-      QTimer::singleShot(400, &app, [&] {
+      QMetaObject::invokeMethod(window, "showImageInformation");
+      QTimer::singleShot(600, &app, [&] {
+        auto info = window->findChild<QQuickItem *>(QStringLiteral("imageInformation"));
+        auto strip = window->findChild<QQuickItem *>(QStringLiteral("filmstripBar"));
+        auto panel = window->findChild<QQuickItem *>(QStringLiteral("toolPanel"));
+        auto menu = window->findChild<QQuickItem *>(QStringLiteral("editorMenuButton"));
+        auto thumb = findItem(window->contentItem(), QStringLiteral("filmThumbnail-") + QString::number(controller.imageId()));
+        if(!info || !strip || !panel || !menu || !thumb || info->opacity() < 0.99
+           || thumb->property("status").toInt() != 1 || thumb->width() <= 0 || thumb->height() <= 0
+           || controller.imageInformation().value(QStringLiteral("filename")).toString() != QFileInfo(testPhoto).fileName()
+           || menu->height() < 64 || menu->width() < 64
+           || menu->mapToScene(QPointF(0, menu->height())).y() > strip->mapToScene(QPointF()).y()
+           || strip->mapToScene(QPointF(strip->width(), 0)).x() > panel->mapToScene(QPointF()).x() + 1)
+        { QTextStream(stderr) << "editor layout or image information is invalid\n"; controller.shutdown(); return; }
+        if(!screenshot.isEmpty())
+        {
+          const QFileInfo file(screenshot);
+          const QString infoShot = file.dir().filePath(file.completeBaseName() + QStringLiteral("-information.png"));
+          if(!window->grabWindow().save(infoShot))
+          { QTextStream(stderr) << "could not write the information screenshot\n"; controller.shutdown(); return; }
+        }
+        if(auto tool = findItem(window->contentItem(), QStringLiteral("tool-agx")))
+          QMetaObject::invokeMethod(tool, "clicked");
+        QTimer::singleShot(600, &app, [&] {
+          auto exposure = findItem(window->contentItem(), QStringLiteral("card-exposure"));
+          auto agx = findItem(window->contentItem(), QStringLiteral("card-agx"));
+          if(!exposure || !agx || exposure->height() > 65 || agx->height() <= 64)
+          { QTextStream(stderr) << "tool accordion did not collapse the previous controls\n"; controller.shutdown(); return; }
+          if(auto tool = findItem(window->contentItem(), QStringLiteral("tool-exposure")))
+            QMetaObject::invokeMethod(tool, "clicked");
+        });
+      });
+      QTimer::singleShot(5000, &app, [&] {
+        auto info = window->findChild<QQuickItem *>(QStringLiteral("imageInformation"));
+        if(!info || info->opacity() > 0.01)
+        { QTextStream(stderr) << "image information did not fade out\n"; controller.shutdown(); return; }
         QFile exported(QDir(testDirectory.path()).filePath(QString::fromUtf8("ผู้ใช้/ส่งออก.png")));
         if(!exported.open(QIODevice::ReadOnly) || exported.read(8) != QByteArray::fromHex("89504e470d0a1a0a"))
         { QTextStream(stderr) << "export did not create a valid PNG\n"; controller.shutdown(); return; }
@@ -140,7 +189,7 @@ int main(int argc, char **argv)
               { QTextStream(stderr) << "could not write the menu screenshot\n"; controller.shutdown(); return; }
             }
             finished = true;
-            QTextStream(stdout) << "passed: Touch import, preview, Exposure, history, undo, redo, and export\n";
+            QTextStream(stdout) << "passed: Touch import, preview, Exposure, history, undo, redo, export, editor layout, and fading image information\n";
             controller.shutdown();
           });
         });

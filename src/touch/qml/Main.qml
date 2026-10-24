@@ -11,23 +11,73 @@ ApplicationWindow {
     minimumWidth: 960
     minimumHeight: 540
     title: qsTr("darktabletouch")
-    color: "#141619"
+    color: "#090d0f"
     font.family: "Segoe UI"
     font.pixelSize: 15
-    palette.window: "#141619"
+    palette.window: "#090d0f"
     palette.windowText: "#e6e8eb"
     palette.base: "#202329"
     palette.text: "#e6e8eb"
     palette.button: "#292d34"
     palette.buttonText: "#e6e8eb"
-    palette.highlight: "#a9d5bc"
-    palette.highlightedText: "#101915"
+    palette.highlight: "#00dbe5"
+    palette.highlightedText: "#07191b"
     property real viewZoom: 1
     property int thumbnailRevision: 0
     property bool advanced: false
+    property string expandedTool: "exposure"
+    property bool informationVisible: false
+    property bool statusVisible: true
+    readonly property bool compact: height < 650
+
+    function showImageInformation() {
+        informationVisible = true
+        informationTimer.restart()
+    }
+    function currentImageIndex() {
+        for(let i = 0; i < controller.images.length; ++i)
+            if(controller.images[i].imgid === controller.imageId) return i
+        return -1
+    }
+    function updateFilmstrip() {
+        filmstrip.currentIndex = currentImageIndex()
+        if(filmstrip.currentIndex >= 0)
+            filmstrip.positionViewAtIndex(filmstrip.currentIndex, ListView.Contain)
+    }
+    function cameraDescription() {
+        const camera = controller.imageInformation.camera || {}
+        return [camera.model, camera.lens].filter(function(value) { return value && value.length }).join("  |  ")
+    }
+    function exposureDescription() {
+        const exif = controller.imageInformation.exif || {}
+        const locale = Qt.locale("en_US")
+        const values = []
+        if(exif.focal_length > 0) values.push(Number(exif.focal_length).toLocaleString(locale, "g", 4) + " mm")
+        if(exif.aperture > 0) values.push("f/" + Number(exif.aperture).toLocaleString(locale, "g", 3))
+        if(exif.exposure > 0) values.push((exif.exposure < 1 ? "1/" + Math.round(1 / exif.exposure).toLocaleString(locale, "f", 0) : Number(exif.exposure).toLocaleString(locale, "g", 3)) + " s")
+        if(exif.iso > 0) values.push("ISO " + Number(exif.iso).toLocaleString(locale, "f", 0))
+        return values.join("  |  ")
+    }
+    function revealItem(item, column, flickable) {
+        if(!item) return
+        let ancestor = item.parent
+        while(ancestor && ancestor !== column) ancestor = ancestor.parent
+        if(!ancestor) return
+        const top = item.mapToItem(column, 0, 0).y
+        if(top < flickable.contentY) flickable.contentY = top
+        else if(top + item.height > flickable.contentY + flickable.height)
+            flickable.contentY = Math.min(top + item.height - flickable.height, Math.max(0, flickable.contentHeight - flickable.height))
+    }
+    onActiveFocusItemChanged: {
+        revealItem(activeFocusItem, toolColumn, toolScroll)
+        if(quickMenu.opened) revealItem(activeFocusItem, quickColumn, quickScroll.contentItem)
+    }
+
+    Timer { id: informationTimer; interval: 4000; onTriggered: window.informationVisible = false }
+    Timer { id: statusTimer; interval: 3500; onTriggered: window.statusVisible = false }
 
     function showHistory() { historyDialog.open() }
-    function showQuickMenu() { historyDialog.close(); quickMenu.open() }
+    function showQuickMenu() { historyDialog.close(); toolActions.close(); toolSearch.close(); quickMenu.open() }
 
     onClosing: function(close) {
         if(!controller.canClose) { close.accepted = false; saveView(); controller.shutdown() }
@@ -36,6 +86,10 @@ ApplicationWindow {
         target: controller
         function onClosingReady() { window.close() }
         function onThumbnailChanged(id) { window.thumbnailRevision++ }
+        function onImageInformationChanged() { showImageInformation(); updateFilmstrip() }
+        function onImagesChanged() { Qt.callLater(updateFilmstrip) }
+        function onModuleChanged() { window.expandedTool = controller.operation }
+        function onStateChanged() { window.statusVisible = true; statusTimer.restart() }
         function onViewRestored(zoom, centerX, centerY) {
             window.viewZoom = Math.max(1, Math.min(128, zoom))
             Qt.callLater(function() {
@@ -70,7 +124,7 @@ ApplicationWindow {
             else if(name === "next") controller.navigateImage(1)
             else if(name === "library") controller.editorVisible = !controller.editorVisible
             else if(name === "search") toolSearch.open()
-            else if(name === "menu") quickMenu.open()
+            else if(name === "menu") showQuickMenu()
         }
         function onPan(delta) {
             if(controller.editorVisible) { canvas.contentX += delta.x * 12; canvas.contentY += delta.y * 12; clampPan() }
@@ -80,40 +134,11 @@ ApplicationWindow {
 
     Shortcut { sequences: [StandardKey.Undo]; onActivated: controller.undo() }
     Shortcut { sequences: [StandardKey.Redo]; onActivated: controller.redo() }
-    Shortcut { sequence: "Escape"; onActivated: controller.editorVisible = false }
-
-    header: Rectangle {
-        height: 80
-        color: "#1b1e23"
-        RowLayout {
-            anchors.fill: parent
-            anchors.margins: 8
-            spacing: 8
-            Rectangle {
-                Layout.preferredWidth: 48; Layout.preferredHeight: 48; radius: 14; color: "#a9d5bc"
-                Text { anchors.centerIn: parent; text: qsTr("dt"); color: "#142019"; font.pixelSize: 25; font.weight: Font.DemiBold }
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                Label { text: qsTr("darktabletouch"); font.pixelSize: 19; font.weight: Font.DemiBold; color: "#f0f1f3" }
-                Label { text: qsTr("your photos, within reach"); font.pixelSize: 12; color: "#9da6b3" }
-            }
-            TouchButton { text: qsTr("library"); checked: !controller.editorVisible; onClicked: controller.editorVisible = false }
-            TouchButton { text: qsTr("editor"); checked: controller.editorVisible; enabled: controller.imageId > 0; onClicked: controller.editorVisible = true }
-            TouchButton { text: qsTr("undo"); visible: window.width >= 1150; enabled: controller.canUndo; onClicked: controller.undo() }
-            TouchButton { text: qsTr("redo"); visible: window.width >= 1150; enabled: controller.canRedo; onClicked: controller.redo() }
-            TouchButton { text: qsTr("history"); visible: window.width >= 1150; enabled: controller.imageId > 0; onClicked: showHistory() }
-            TouchButton {
-                text: qsTr("before")
-                enabled: controller.imageId > 0
-                onPressed: controller.before = true
-                onReleased: controller.before = false
-                onCanceled: controller.before = false
-            }
-            TouchButton { text: qsTr("export"); enabled: controller.imageId > 0; onClicked: exportDialog.open() }
-            TouchButton { text: qsTr("menu"); onClicked: showQuickMenu() }
-        }
+    Shortcut {
+        sequence: "Escape"
+        enabled: !quickMenu.opened && !historyDialog.opened && !toolSearch.opened && !toolActions.opened
+            && !importDialog.visible && !folderDialog.visible && !exportDialog.visible
+        onActivated: { if(controller.before) controller.before = false; else controller.editorVisible = false }
     }
 
     StackLayout {
@@ -123,6 +148,7 @@ ApplicationWindow {
             spacing: 16
             RowLayout {
                 Layout.fillWidth: true; Layout.margins: 16
+                TouchButton { text: "\u2630"; font.pixelSize: 28; Accessible.name: qsTr("quick actions"); onClicked: showQuickMenu() }
                 ColumnLayout {
                     Layout.fillWidth: true
                     Label { text: qsTr("photo library"); color: "#eceef0"; font.pixelSize: 28; font.weight: Font.DemiBold }
@@ -144,6 +170,7 @@ ApplicationWindow {
                     width: library.cellWidth; height: library.cellHeight
                     TouchButton {
                         anchors.fill: parent; anchors.margins: 6; text: ""
+                        Accessible.name: modelData.filename
                         onClicked: { viewZoom = 1; controller.selectImage(modelData.imgid) }
                         ColumnLayout {
                             anchors.fill: parent; anchors.margins: 10; spacing: 8
@@ -152,7 +179,7 @@ ApplicationWindow {
                                 source: "image://photos/thumb/" + modelData.imgid + "?revision=" + window.thumbnailRevision
                                 fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
                             }
-                            Label { text: modelData.filename; Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: 14; color: "#e2e5e9" }
+                            Label { text: modelData.filename; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: 14; color: "#e2e5e9" }
                         }
                     }
                     Component.onCompleted: controller.requestThumbnail(modelData.imgid)
@@ -173,96 +200,246 @@ ApplicationWindow {
         }
         RowLayout {
             spacing: 0
-            Item {
-                Layout.fillWidth: true; Layout.fillHeight: true
-                Flickable {
-                    id: canvas
-                    anchors.fill: parent; anchors.margins: 16
-                    clip: true; boundsBehavior: Flickable.StopAtBounds
-                    contentWidth: width * window.viewZoom
-                    contentHeight: height * window.viewZoom
-                    Image {
-                        id: photo
-                        width: canvas.contentWidth; height: canvas.contentHeight
-                        source: controller.preview
-                        fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
+            ColumnLayout {
+                Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
+                Item {
+                    id: imageStage
+                    objectName: "imageStage"
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    Flickable {
+                        id: canvas
+                        anchors.fill: parent
+                        clip: true; boundsBehavior: Flickable.StopAtBounds
+                        contentWidth: width * window.viewZoom
+                        contentHeight: height * window.viewZoom
+                        Image {
+                            id: photo
+                            width: canvas.contentWidth; height: canvas.contentHeight
+                            source: controller.preview
+                            fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
+                        }
+                        PinchHandler {
+                            target: null
+                            property real startZoom: 1
+                            onActiveChanged: if(active) startZoom = window.viewZoom
+                            onActiveScaleChanged: window.viewZoom = Math.max(1, Math.min(8, startZoom * activeScale))
+                        }
+                        TapHandler {
+                            onTapped: showImageInformation()
+                            onDoubleTapped: { window.viewZoom = window.viewZoom > 1 ? 1 : 2; clampPan() }
+                        }
+                        WheelHandler { onWheel: function(event) { zoomBy(event.angleDelta.y > 0 ? 1.1 : 1 / 1.1) } }
                     }
-                    PinchHandler {
-                        target: null
-                        property real startZoom: 1
-                        onActiveChanged: if(active) startZoom = window.viewZoom
-                        onActiveScaleChanged: window.viewZoom = Math.max(1, Math.min(8, startZoom * activeScale))
+                    Rectangle {
+                        id: imageInformation
+                        objectName: "imageInformation"
+                        anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 20
+                        width: Math.min(520, parent.width - 40); height: informationText.implicitHeight + 28
+                        color: "#cf101619"; radius: 12
+                        opacity: window.informationVisible && controller.imageId > 0 ? 1 : 0
+                        visible: opacity > 0
+                        Behavior on opacity { NumberAnimation { duration: 450 } }
+                        Column {
+                            id: informationText
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 14
+                            spacing: 5
+                            Label {
+                                width: parent.width; text: controller.imageInformation.filename || ""
+                                textFormat: Text.PlainText; color: "#f4f7f8"; font.pixelSize: 18; font.weight: Font.DemiBold; elide: Text.ElideMiddle
+                            }
+                            Label { width: parent.width; text: cameraDescription(); textFormat: Text.PlainText; visible: text.length > 0; elide: Text.ElideRight; color: "#c0cbd0"; font.pixelSize: 12 }
+                            Label { width: parent.width; text: exposureDescription(); color: "#c0cbd0"; font.pixelSize: 12; wrapMode: Text.Wrap }
+                        }
                     }
-                    TapHandler { onDoubleTapped: { window.viewZoom = window.viewZoom > 1 ? 1 : 2; clampPan() } }
-                    WheelHandler { onWheel: function(event) { zoomBy(event.angleDelta.y > 0 ? 1.1 : 1 / 1.1) } }
+                    TouchButton {
+                        id: menuButton
+                        objectName: "editorMenuButton"
+                        anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 16
+                        text: "\u2630"; implicitWidth: 64; font.pixelSize: 28
+                        Accessible.name: qsTr("quick actions")
+                        ToolTip.visible: hovered; ToolTip.text: qsTr("quick actions")
+                        onClicked: showQuickMenu()
+                    }
+                    Rectangle {
+                        anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20
+                        width: 92; height: 36; radius: 8; color: "#cf101619"; visible: controller.before
+                        Label { anchors.centerIn: parent; text: qsTr("before"); color: "#f0f4f5" }
+                    }
+                    Rectangle {
+                        objectName: "statusOverlay"
+                        anchors.left: menuButton.right; anchors.right: parent.right; anchors.bottom: parent.bottom
+                        anchors.leftMargin: 12; anchors.rightMargin: 16; anchors.bottomMargin: 16
+                        height: statusLine.implicitHeight + 20; radius: 10
+                        color: controller.hasError ? "#ed532d29" : "#d4101619"
+                        visible: controller.busy || controller.hasError || window.statusVisible
+                        RowLayout {
+                            id: statusLine
+                            anchors.fill: parent; anchors.margins: 10; spacing: 8
+                            BusyIndicator { running: controller.busy; visible: running; implicitWidth: 24; implicitHeight: 24 }
+                            Label { text: controller.message; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#c0cbd0"; font.pixelSize: 12 }
+                        }
+                    }
                 }
-                Row {
-                    anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 24; spacing: 8
-                    TouchButton { text: qsTr("previous"); onClicked: controller.navigateImage(-1) }
-                    TouchButton { text: qsTr("fit"); onClicked: { window.viewZoom = 1; clampPan() } }
-                    TouchButton { text: qsTr("next"); onClicked: controller.navigateImage(1) }
+                Rectangle {
+                    id: filmstripBar
+                    objectName: "filmstripBar"
+                    Layout.fillWidth: true; Layout.preferredHeight: window.compact ? 98 : 122
+                    color: "#0e1417"
+                    Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: "#283337" }
+                    ListView {
+                        id: filmstrip
+                        objectName: "filmstrip"
+                        anchors.fill: parent; anchors.margins: 10
+                        orientation: ListView.Horizontal; spacing: 10; clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: controller.images; cacheBuffer: 200
+                        onWidthChanged: Qt.callLater(updateFilmstrip)
+                        delegate: TouchButton {
+                            required property var modelData
+                            required property int index
+                            width: window.compact ? 132 : 164; height: filmstrip.height
+                            text: ""; padding: 4; checked: controller.imageId === modelData.imgid
+                            Accessible.name: modelData.filename
+                            onClicked: { if(controller.imageId !== modelData.imgid) { viewZoom = 1; controller.selectImage(modelData.imgid) } else showImageInformation() }
+                            onActiveFocusChanged: if(activeFocus) filmstrip.positionViewAtIndex(index, ListView.Contain)
+                            ToolTip.visible: hovered; ToolTip.text: modelData.filename
+                            Image {
+                                objectName: "filmThumbnail-" + modelData.imgid
+                                anchors.fill: parent; anchors.margins: 4
+                                source: "image://photos/thumb/" + modelData.imgid + "?revision=" + window.thumbnailRevision
+                                fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
+                            }
+                            background: Rectangle {
+                                radius: 8; color: "#182126"
+                                border.width: parent.checked || parent.activeFocus ? 2 : 1
+                                border.color: parent.checked ? "#00dbe5" : parent.activeFocus ? "#f0f6f8" : "#2a3439"
+                            }
+                            Component.onCompleted: controller.requestThumbnail(modelData.imgid)
+                            Connections {
+                                target: controller
+                                function onStateChanged() { if(controller.ready) controller.requestThumbnail(modelData.imgid) }
+                            }
+                        }
+                    }
                 }
             }
             Rectangle {
-                Layout.preferredWidth: Math.max(300, Math.min(380, window.width * 0.29))
-                Layout.fillHeight: true; color: "#1d2026"
-                ColumnLayout {
-                    anchors.fill: parent; anchors.margins: 16; spacing: 8
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Label { text: controller.toolLabel; Layout.fillWidth: true; elide: Text.ElideRight; color: "#f0f1f3"; font.pixelSize: 21; font.weight: Font.DemiBold }
-                        TouchButton { text: qsTr("more"); checkable: true; checked: window.advanced; onClicked: window.advanced = !window.advanced }
-                        TouchButton { text: qsTr("reset"); onClicked: controller.reset() }
-                    }
-                    Switch { text: qsTr("enabled"); checked: controller.moduleEnabled; implicitHeight: 64; onToggled: controller.setEnabled(checked) }
-                    ListView {
-                        id: controls
-                        Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 12
-                        model: controller.fields
-                        delegate: FieldControl {
-                            required property var model
-                            field: model.field
-                            width: controls.width
-                            visible: controller.operation !== "exposure" || window.advanced
-                                || ["exposure", "black", "mode"].indexOf(field.name) >= 0
-                                || (Number(controller.values.mode) === 1 && field.name.startsWith("deflicker_"))
-                            height: visible ? implicitHeight : 0
+                id: toolPanel
+                objectName: "toolPanel"
+                Layout.preferredWidth: Math.max(340, Math.min(420, window.width * 0.31))
+                Layout.fillHeight: true; color: "#111719"
+                Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: "#283337" }
+                Flickable {
+                    id: toolScroll
+                    anchors.fill: parent; anchors.margins: 12
+                    contentWidth: width; contentHeight: toolColumn.implicitHeight
+                    onContentHeightChanged: contentY = Math.max(0, Math.min(contentY, contentHeight - height))
+                    clip: true; boundsBehavior: Flickable.StopAtBounds
+                    Column {
+                        id: toolColumn
+                        width: toolScroll.width; spacing: 10
+                        Repeater {
+                            model: controller.tools
+                            Rectangle {
+                                id: toolCard
+                                objectName: "card-" + modelData.operation
+                                required property var modelData
+                                readonly property bool expanded: window.expandedTool === modelData.operation
+                                onYChanged: if(expanded) toolScroll.contentY = Math.min(y, Math.max(0, toolScroll.contentHeight - toolScroll.height))
+                                width: toolColumn.width; height: toolContents.implicitHeight
+                                color: expanded ? "#1a2326" : "#161e21"; radius: 12
+                                border.width: 1; border.color: expanded ? "#315258" : "#263136"
+                                Column {
+                                    id: toolContents
+                                    width: parent.width
+                                    RowLayout {
+                                        width: parent.width; spacing: 0
+                                        TouchButton {
+                                            objectName: "tool-" + toolCard.modelData.operation
+                                            Layout.fillWidth: true; text: ""
+                                            enabled: toolCard.modelData.available && controller.imageId > 0
+                                            Accessible.name: toolCard.modelData.label
+                                            onClicked: {
+                                                if(toolCard.expanded) window.expandedTool = ""
+                                                else {
+                                                    window.expandedTool = toolCard.modelData.operation
+                                                    controller.selectTool(toolCard.modelData.operation)
+                                                    Qt.callLater(function() { toolScroll.contentY = Math.min(toolCard.y, Math.max(0, toolScroll.contentHeight - toolScroll.height)) })
+                                                }
+                                            }
+                                            background: Rectangle { radius: 12; color: parent.down || parent.hovered ? "#263438" : "transparent"; border.width: parent.activeFocus ? 2 : 0; border.color: "#00dbe5" }
+                                            RowLayout {
+                                                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 12
+                                                Label { text: toolCard.expanded ? "\u2304" : "\u203a"; color: "#9aafb6"; font.pixelSize: 22; Layout.preferredWidth: 18 }
+                                                Label { text: toolCard.modelData.label; color: toolCard.expanded ? "#00dbe5" : "#e5ecef"; font.pixelSize: 17; Layout.fillWidth: true; elide: Text.ElideRight }
+                                            }
+                                        }
+                                        TouchButton {
+                                            text: "..."; implicitWidth: 64
+                                            visible: toolCard.expanded
+                                            Accessible.name: qsTr("tool actions")
+                                            onClicked: toolActions.open()
+                                            background: Rectangle { radius: 10; color: parent.down || parent.hovered ? "#263438" : "transparent"; border.width: parent.activeFocus ? 2 : 0; border.color: "#00dbe5" }
+                                        }
+                                        Switch {
+                                            id: enabledSwitch
+                                            visible: toolCard.expanded
+                                            checked: controller.moduleEnabled
+                                            implicitWidth: 64; implicitHeight: 64; padding: 0
+                                            Accessible.name: qsTr("enable %1").arg(toolCard.modelData.label)
+                                            onToggled: controller.setEnabled(checked)
+                                            indicator: Rectangle {
+                                                x: (enabledSwitch.width - width) / 2; y: (enabledSwitch.height - height) / 2
+                                                width: 42; height: 26; radius: 13
+                                                color: enabledSwitch.checked ? "#00dbe5" : "#465157"
+                                                border.width: enabledSwitch.activeFocus ? 2 : 0; border.color: "#e6eef0"
+                                                Rectangle { x: enabledSwitch.checked ? parent.width - width - 3 : 3; y: 3; width: 20; height: 20; radius: 10; color: "#f0f6f8" }
+                                            }
+                                        }
+                                    }
+                                    Loader {
+                                        width: parent.width
+                                        active: toolCard.expanded && controller.operation === toolCard.modelData.operation
+                                        height: active && item ? item.implicitHeight : 0
+                                        sourceComponent: adjustmentControls
+                                    }
+                                }
+                            }
                         }
-                        ScrollBar.vertical: ScrollBar { }
                     }
+                    ScrollBar.vertical: ScrollBar { }
                 }
             }
         }
     }
 
-    footer: ColumnLayout {
-        spacing: 0
-        Rectangle {
-            Layout.fillWidth: true; implicitHeight: 88; visible: controller.editorVisible
-            color: "#1b1e23"
-            RowLayout {
-                anchors.fill: parent; anchors.margins: 10; spacing: 8
-                Repeater {
-                    model: controller.tools
-                    TouchButton {
-                        required property var modelData
-                        Layout.fillWidth: true; Layout.preferredWidth: 1
-                        text: modelData.label
-                        checked: controller.operation === modelData.operation
-                        enabled: modelData.available && controller.imageId > 0
-                        onClicked: controller.selectTool(modelData.operation)
-                    }
+    Component {
+        id: adjustmentControls
+        ColumnLayout {
+            width: parent.width; spacing: 8
+            Repeater {
+                model: controller.fields
+                FieldControl {
+                    required property var model
+                    field: model.field
+                    Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+                    visible: controller.operation !== "exposure" || window.advanced
+                        || ["exposure", "black", "mode"].indexOf(field.name) >= 0
+                        || (Number(controller.values.mode) === 1 && field.name.startsWith("deflicker_"))
                 }
             }
+            Item { Layout.preferredHeight: 12 }
         }
-        Rectangle {
-            Layout.fillWidth: true; implicitHeight: 32; color: "#101215"
-            RowLayout {
-                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
-                BusyIndicator { running: controller.busy; implicitWidth: 24; implicitHeight: 24; visible: running }
-                Label { text: controller.message; Layout.fillWidth: true; elide: Text.ElideMiddle; color: "#a8b0bc"; font.pixelSize: 12 }
-                Label { text: gamepad.connected ? qsTr("A select   B back   X before   Y tools   LB/RB photos") : qsTr("touch, keyboard, and mouse"); color: "#7f8b9c"; font.pixelSize: 12 }
-            }
+    }
+
+    footer: Rectangle {
+        height: controller.editorVisible ? 0 : 32
+        visible: !controller.editorVisible; color: "#101619"
+        RowLayout {
+            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
+            BusyIndicator { running: controller.busy; implicitWidth: 24; implicitHeight: 24; visible: running }
+            Label { text: controller.message; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; color: controller.hasError ? "#ffa99e" : "#a8b0bc"; font.pixelSize: 12 }
+            Label { text: gamepad.connected ? qsTr("A select   B back   X before   Y tools   LB/RB photos") : qsTr("touch, keyboard, and mouse"); color: "#7f8b9c"; font.pixelSize: 12 }
         }
     }
 
@@ -272,6 +449,23 @@ ApplicationWindow {
         fileMode: FileDialog.OpenFiles
         options: FileDialog.DontUseNativeDialog
         onAccepted: controller.importUrls(selectedFiles)
+    }
+    Popup {
+        id: toolActions
+        anchors.centerIn: parent
+        width: 320; padding: 20; modal: true; focus: true
+        background: Rectangle { color: "#1c272c"; radius: 16; border.color: "#334249" }
+        ColumnLayout {
+            width: parent.width; spacing: 10
+            Label { text: controller.toolLabel; Layout.fillWidth: true; color: "#e6eef0"; font.pixelSize: 20 }
+            TouchButton { text: qsTr("reset tool"); Layout.fillWidth: true; onClicked: { toolActions.close(); controller.reset() } }
+            TouchButton {
+                text: window.advanced ? qsTr("fewer controls") : qsTr("all controls")
+                Layout.fillWidth: true; visible: controller.operation === "exposure"
+                checked: window.advanced; onClicked: { window.advanced = !window.advanced; toolActions.close() }
+            }
+            TouchButton { text: qsTr("close"); Layout.fillWidth: true; onClicked: toolActions.close() }
+        }
     }
     FolderDialog {
         id: folderDialog
@@ -294,20 +488,44 @@ ApplicationWindow {
     Popup {
         id: quickMenu
         anchors.centerIn: parent
-        width: 420; height: Math.min(600, window.height - 48); padding: 24; modal: true; focus: true
+        width: Math.min(520, window.width - 48); height: Math.min(620, window.height - 48); padding: 24; modal: true; focus: true
         background: Rectangle { color: "#24272d"; radius: 20; border.color: "#424951" }
         ColumnLayout {
             anchors.fill: parent; spacing: 12
             Label { text: qsTr("quick actions"); color: "#f0f1f3"; font.pixelSize: 24 }
             ScrollView {
+                id: quickScroll
                 Layout.fillWidth: true; Layout.fillHeight: true
                 contentWidth: availableWidth
                 ColumnLayout {
-                    width: parent.width; spacing: 12
-                    TouchButton { text: qsTr("import photos"); Layout.fillWidth: true; onClicked: { quickMenu.close(); importDialog.open() } }
-                    TouchButton { text: qsTr("undo"); Layout.fillWidth: true; enabled: controller.canUndo; onClicked: { quickMenu.close(); controller.undo() } }
-                    TouchButton { text: qsTr("redo"); Layout.fillWidth: true; enabled: controller.canRedo; onClicked: { quickMenu.close(); controller.redo() } }
+                    id: quickColumn
+                    width: parent.width; spacing: 10
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 10
+                        TouchButton { text: qsTr("library"); Layout.fillWidth: true; checked: !controller.editorVisible; onClicked: { quickMenu.close(); controller.editorVisible = false } }
+                        TouchButton { text: qsTr("editor"); Layout.fillWidth: true; enabled: controller.imageId > 0; checked: controller.editorVisible; onClicked: { quickMenu.close(); controller.editorVisible = true } }
+                    }
+                    TouchButton { text: qsTr("export photo"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { quickMenu.close(); exportDialog.open() } }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 10
+                        TouchButton { text: qsTr("undo"); Layout.fillWidth: true; enabled: controller.canUndo; onClicked: { quickMenu.close(); controller.undo() } }
+                        TouchButton { text: qsTr("redo"); Layout.fillWidth: true; enabled: controller.canRedo; onClicked: { quickMenu.close(); controller.redo() } }
+                    }
                     TouchButton { text: qsTr("edit history"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { quickMenu.close(); showHistory() } }
+                    TouchButton {
+                        text: controller.before ? qsTr("show edited image") : qsTr("show before image"); Layout.fillWidth: true; enabled: controller.imageId > 0
+                        onClicked: { controller.before = !controller.before; quickMenu.close() }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 10
+                        TouchButton { text: qsTr("fit image"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { window.viewZoom = 1; clampPan(); quickMenu.close() } }
+                        TouchButton { text: qsTr("image information"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { quickMenu.close(); showImageInformation() } }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 10
+                        TouchButton { text: qsTr("import photos"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); importDialog.open() } }
+                        TouchButton { text: qsTr("import folder"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); folderDialog.open() } }
+                    }
                     TouchButton {
                         text: qsTr("switch to classic"); Layout.fillWidth: true; visible: managedSession; enabled: controller.ready
                         onClicked: { quickMenu.close(); saveView(); controller.switchInterface("classic") }

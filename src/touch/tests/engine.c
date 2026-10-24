@@ -50,6 +50,16 @@ int main(int argc, char **argv)
   g_assert_cmpstr(truncated, ==, "");
   dt_touch_editor_t *editor = dt_touch_editor_new(image_id, &message);
   g_assert_null(message); g_assert_nonnull(editor);
+  char *information = dt_touch_editor_information(editor, &message);
+  g_assert_null(message); g_assert_nonnull(information);
+  g_assert_true(json_parser_load_from_data(parser, information, -1, &error));
+  g_assert_no_error(error);
+  JsonObject *metadata = json_node_get_object(json_parser_get_root(parser));
+  g_assert_cmpint(json_object_get_int_member(metadata, "imgid"), ==, image_id);
+  g_assert_cmpstr(json_object_get_string_member(metadata, "filename"), ==, "รูป.CR2");
+  g_assert_nonnull(json_object_get_object_member(metadata, "camera"));
+  g_assert_cmpfloat(json_object_get_double_member(json_object_get_object_member(metadata, "exif"), "iso"), >, 0);
+  dt_touch_free(information);
   char *schema = dt_touch_editor_module(editor, "exposure", &message);
   g_assert_null(message); g_assert_nonnull(schema);
   JsonParser *schema_parser = json_parser_new();
@@ -80,6 +90,7 @@ int main(int argc, char **argv)
   g_assert_true(dt_touch_thumbnail(image_id, &thumbnail, &tw, &th, &message));
   g_assert_null(message);
   g_assert_cmpint(tw, >, 0); g_assert_cmpint(th, >, 0);
+  for(size_t i = 3; i < (size_t)tw * th * 4; i += 4) g_assert_cmpuint(thumbnail[i], ==, 255);
   dt_touch_free(thumbnail);
   g_assert_true(dt_touch_editor_set(editor, "exposure", "exposure", "0.5", &message));
   g_assert_null(message);
