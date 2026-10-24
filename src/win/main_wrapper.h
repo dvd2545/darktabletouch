@@ -1,19 +1,34 @@
 #pragma once
 
 #include <glib.h>
+#include <stdio.h>
 
-// On Windows the command line arguments are ANSI encoded. We want UTF-8 in dt though.
+// use the Unicode CRT entry point so paths never pass through the system code page
 // including this file will add a wrapper that acts together with linker switch -municode
 
 int main(int argc, char *argv[]);
 
 int wmain(int argc, wchar_t *argv[])
 {
-  char **_argv = g_new0(char *, argc + 1);
+  char **owned = g_new0(char *, argc + 1);
   for(int i = 0; i < argc; i++)
-    _argv[i] = g_utf16_to_utf8((const gunichar2 *)argv[i], -1, NULL, NULL, NULL);
+  {
+    GError *error = NULL;
+    owned[i] = g_utf16_to_utf8((const gunichar2 *)argv[i], -1, NULL, NULL, &error);
+    if(!owned[i])
+    {
+      fprintf(stderr, "invalid Unicode command-line argument: %s\n", error->message);
+      g_clear_error(&error);
+      g_strfreev(owned);
+      return 1;
+    }
+  }
+  // dt_init compacts argv in place, so retain a separate ownership list
+  char **_argv = g_new0(char *, argc + 1);
+  for(int i = 0; i < argc; i++) _argv[i] = owned[i];
   int res = main(argc, _argv);
-  g_strfreev(_argv);
+  g_free(_argv);
+  g_strfreev(owned);
   return res;
 }
 // clang-format off

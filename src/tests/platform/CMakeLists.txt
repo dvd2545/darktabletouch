@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.18)
+project(darktabletouch_platform_tests LANGUAGES C)
+
+enable_testing()
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
+
+add_executable(test-unicode-paths unicode_paths.c ../../common/filepath.c ../../common/locale.c)
+target_include_directories(test-unicode-paths PRIVATE ../..)
+target_link_libraries(test-unicode-paths PRIVATE PkgConfig::GLIB)
+target_compile_features(test-unicode-paths PRIVATE c_std_99)
+if(WIN32)
+  target_link_options(test-unicode-paths PRIVATE -municode)
+endif()
+add_test(NAME unicode-paths COMMAND test-unicode-paths)

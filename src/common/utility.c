@@ -20,6 +20,7 @@
 
 #include "common/darktable.h"
 #include "common/file_location.h"
+#include "common/filepath.h"
 #include "common/grealpath.h"
 #include "common/utility.h"
 #include "control/conf.h"
@@ -774,14 +775,12 @@ gboolean dt_util_gps_elevation_to_number(const double r_1,
 gchar *dt_util_normalize_path(const gchar *_input)
 {
 #ifdef _WIN32
-  gchar *input;
-  if(g_utf8_validate(_input, -1, NULL))
-    input = g_strdup(_input);
-  else
+  if(!_input || !g_utf8_validate(_input, -1, NULL))
   {
-    input = g_locale_to_utf8(_input, -1, NULL, NULL, NULL);
-    if(!input) return NULL;
+    dt_print(DT_DEBUG_ALWAYS, "[path] invalid UTF-8 filename");
+    return NULL;
   }
+  const gchar *input = _input;
 #else
   const gchar *input = _input;
 #endif
@@ -793,16 +792,13 @@ gchar *dt_util_normalize_path(const gchar *_input)
     if(g_str_has_prefix(input, "file://")) // in this case we should take care of %XX encodings in the string
                                            // (for example %20 = ' ')
     {
-      // don't advance input itself: on Windows it owns the allocation freed below
       filename = g_uri_unescape_string(input + strlen("file://"), NULL);
     }
     else
       filename = g_strdup(input);
   }
 
-#ifdef _WIN32
-  g_free(input);
-#endif
+  if(!filename) return NULL;
 
   if(g_path_is_absolute(filename) == FALSE)
   {
@@ -832,20 +828,9 @@ gchar *dt_util_normalize_path(const gchar *_input)
   // letter>:\path\to\file or \\host-name\share-name\file some other
   // formats like \Device\... are not supported
 
-  // the Windows api expects wide chars and not utf8 :(
-  wchar_t *wfilename = g_utf8_to_utf16(filename, -1, NULL, NULL, NULL);
+  gchar *expanded = dt_path_existing_utf8(filename, NULL);
   g_free(filename);
-  if(!wfilename)
-    return NULL;
-
-  wchar_t LongPath[MAX_PATH] = {0};
-  const DWORD size = GetLongPathNameW(wfilename, LongPath, MAX_PATH);
-  g_free(wfilename);
-  if(size == 0 || size > MAX_PATH)
-    return NULL;
-
-  // back to utf8!
-  filename = g_utf16_to_utf8(LongPath, -1, NULL, NULL, NULL);
+  filename = expanded;
   if(!filename)
     return NULL;
 

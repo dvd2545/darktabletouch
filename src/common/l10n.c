@@ -19,6 +19,7 @@
 #include "common/l10n.h"
 #include "common/darktable.h"
 #include "common/file_location.h"
+#include "common/locale.h"
 #include "control/conf.h"
 
 #include <libintl.h>
@@ -96,6 +97,10 @@ static void _set_locale(const char *ui_lang, const char *old_env, const gboolean
     g_unsetenv("LANGUAGE");
 
   setlocale(LC_ALL, "");
+
+  // keep the fork's presentation in US English without changing path encoding
+  if(gui) gtk_disable_setlocale();
+  dt_l10n_use_en_us();
 }
 
 static gint _sort_languages(gconstpointer a, gconstpointer b)
@@ -314,7 +319,7 @@ dt_l10n_t *dt_l10n_init(const gboolean init_list)
   result->selected = -1;
   result->sys_default = -1;
 
-  gchar *ui_lang = g_strdup(dt_conf_get_string("ui_last/gui_language"));
+  gchar *ui_lang = g_strdup("C");
 
   const char *old_env = g_getenv("LANGUAGE");
 

@@ -12,6 +12,7 @@
 #include <glib.h>
 
 #include "common/darktable.h" // for dt_print
+#include "common/filepath.h"
 
 #ifdef _WIN32
 #include <fileapi.h>
@@ -47,30 +48,13 @@ static inline gchar *g_realpath(const char *path)
     return g_strdup(path);
   }
 #else
-  char *buffer;
-  char dummy;
-  int rc, len;
-
-  rc = GetFullPathNameA(path, 1, &dummy, NULL);
-
-  if(rc == 0)
+  GError *error = NULL;
+  gchar *buffer = dt_path_absolute_utf8(path, &error);
+  if(!buffer)
   {
-    /* Weird failure, so just return the input path as such */
-    return g_strdup(path);
+    dt_print(DT_DEBUG_ALWAYS, "[g_realpath] %s", error->message);
+    g_clear_error(&error);
   }
-
-  len = rc + 1;
-  buffer = g_malloc(len);
-
-  rc = GetFullPathNameA(path, len, buffer, NULL);
-
-  if(rc == 0 || rc > len)
-  {
-    /* Weird failure again */
-    g_free(buffer);
-    return g_strdup(path);
-  }
-
   return buffer;
 #endif
 }

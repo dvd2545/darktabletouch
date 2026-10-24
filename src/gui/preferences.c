@@ -425,6 +425,9 @@ static void init_tab_general(GtkWidget *dialog,
   gtk_grid_attach(GTK_GRID(grid), labelev, 0, line++, 1, 1);
   gtk_grid_attach_next_to(GTK_GRID(grid), widget, labelev, GTK_POS_RIGHT, 1, 1);
   dt_gui_connect_click(labelev, reset_language_widget_cb, NULL, widget);
+  gtk_widget_set_sensitive(widget, FALSE);
+  gtk_widget_set_tooltip_text(labelev, _("darktabletouch uses US English"));
+  gtk_widget_set_tooltip_text(widget, _("darktabletouch uses US English"));
 
   // theme
 

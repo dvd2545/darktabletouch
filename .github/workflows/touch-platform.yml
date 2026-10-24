@@ -1,0 +1,116 @@
+name: DarktableTouch platform
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  posix-paths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev ninja-build
+      - run: cmake -S src/tests/platform -B build-platform -G Ninja
+      - run: cmake --build build-platform
+      - run: ctest --test-dir build-platform --output-on-failure
+
+  unicode-paths:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        language: [en_US.UTF-8, th_TH.UTF-8]
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-glib2
+      - name: Build Unicode path tests
+        run: |
+          cmake -S src/tests/platform -B build-platform -G Ninja
+          cmake --build build-platform
+      - name: Exercise Thai and mixed Unicode paths
+        env:
+          LANG: ${{ matrix.language }}
+          LANGUAGE: ${{ matrix.language }}
+        run: ctest --test-dir build-platform --output-on-failure
+
+  engine-unicode:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git intltool
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-libxslt
+            mingw-w64-ucrt-x86_64-python-jsonschema
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-drmingw
+            mingw-w64-ucrt-x86_64-exiv2
+            mingw-w64-ucrt-x86_64-gettext
+            mingw-w64-ucrt-x86_64-gtk3
+            mingw-w64-ucrt-x86_64-iso-codes
+            mingw-w64-ucrt-x86_64-lcms2
+            mingw-w64-ucrt-x86_64-lensfun
+            mingw-w64-ucrt-x86_64-libavif
+            mingw-w64-ucrt-x86_64-libarchive
+            mingw-w64-ucrt-x86_64-libgphoto2
+            mingw-w64-ucrt-x86_64-libheif
+            mingw-w64-ucrt-x86_64-libjpeg-turbo
+            mingw-w64-ucrt-x86_64-libjxl
+            mingw-w64-ucrt-x86_64-libpng
+            mingw-w64-ucrt-x86_64-libraw
+            mingw-w64-ucrt-x86_64-librsvg
+            mingw-w64-ucrt-x86_64-libsecret
+            mingw-w64-ucrt-x86_64-libtiff
+            mingw-w64-ucrt-x86_64-libwebp
+            mingw-w64-ucrt-x86_64-lua54
+            mingw-w64-ucrt-x86_64-openexr
+            mingw-w64-ucrt-x86_64-openjpeg2
+            mingw-w64-ucrt-x86_64-osm-gps-map
+            mingw-w64-ucrt-x86_64-portmidi
+            mingw-w64-ucrt-x86_64-potrace
+            mingw-w64-ucrt-x86_64-pugixml
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-sqlite3
+      - name: Fetch engine dependencies and pinned RAW fixture
+        run: |
+          git submodule update --init --depth 1 src/external/rawspeed src/external/OpenCL src/external/libxcf src/external/whereami
+          git clone --filter=blob:none --sparse --no-checkout https://github.com/darktable-org/darktable-tests.git build-fixtures
+          git -C build-fixtures sparse-checkout set --no-cone /images/mire1.cr2
+          git -C build-fixtures checkout 3f2d1abaa2a473bf25a4f20c7f8db7d984e2746b
+      - name: Build Classic and the headless engine
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPROJECT_VERSION=0.1.0 -DBUILD_TESTING=OFF -DBINARY_PACKAGE_BUILD=ON -DDONT_USE_INTERNAL_LIBRAW=ON -DUSE_GMIC=OFF -DUSE_GRAPHICSMAGICK=OFF -DUSE_OPENCV=OFF -DUSE_AI=OFF
+          cmake --build build -j 2
+      - name: Verify RAW editing through Thai paths
+        run: python tools/test_unicode_workflow.py --raw build-fixtures/images/mire1.cr2 --keep build/unicode-workflow
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unicode-workflow-results
+          path: build/unicode-workflow
