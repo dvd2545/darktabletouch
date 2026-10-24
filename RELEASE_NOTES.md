@@ -119,6 +119,11 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Added the experimental DarktableTouch interface with library browsing,
+  native parameter controls, undo/redo, and export. The launcher switches
+  between Touch and Classic after saving the editing session. Specialized
+  controls for the six priority tools are still incomplete.
+
 - DarktableTouch uses US English presentation and keeps its configuration
   and cache separate from an existing darktable installation.
 
@@ -368,6 +373,10 @@ changes (where available).
   ready to splice into another invocation.
 
 ## Bug Fixes
+
+- Prevented truncation of Thai paths and long UTF-8 image filenames on
+  Windows while preserving stored editing parameters. Catalog handles are
+  released before switching interfaces.
 
 - Fixed Windows path resolution through Thai and other Unicode working
   directories, removed a fixed-size path expansion buffer, and retained
@@ -744,6 +753,9 @@ changes (where available).
   required for the `.dtdata` sidecar
 
 ### Optional
+
+- Qt 6.8 or newer for the DarktableTouch interface. Classic-only builds
+  continue to work without Qt.
 
 - OpenCV 4 or 5 for HDR exposure-bracket auto-alignment (only the
   core, imgproc and flann modules plus features2d/calib3d on OpenCV 4,
