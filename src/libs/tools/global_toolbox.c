@@ -20,6 +20,7 @@
 
 #include "common/collection.h"
 #include "common/darktable.h"
+#include "common/touch_session.h"
 #include "control/conf.h"
 #include "control/control.h"
 #include "dtgtk/button.h"
@@ -58,6 +59,18 @@ static void _lib_help_button_clicked(GtkWidget *widget, gpointer user_data);
 static void _lib_keymap_button_clicked(GtkWidget *widget, gpointer user_data);
 static void _lib_keymap_button_pressed(GtkGestureSingle *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
 static void _lib_keymap_button_released(GtkGestureSingle *gesture, gint n_press, gdouble x, gdouble y, gpointer user_data);
+
+static void _switch_to_touch(GtkWidget *widget, gpointer data)
+{
+  char *error = NULL;
+  if(!dt_touch_session_save_classic("touch", &error))
+  {
+    dt_control_log("%s", error);
+    g_free(error);
+    return;
+  }
+  dt_control_quit();
+}
 
 const char *name(dt_lib_module_t *self)
 {
@@ -541,6 +554,13 @@ void gui_init(dt_lib_module_t *self)
 
   self->widget = dt_gui_hbox(d->grouping_button, d->overlays_button,
                              d->help_button, d->keymap_button, d->preferences_button);
+  if(dt_touch_session_available() && g_getenv("DARKTABLETOUCH_MANAGED"))
+  {
+    GtkWidget *touch = gtk_button_new_with_label(_("touch"));
+    gtk_widget_set_tooltip_text(touch, _("save edits and switch to the touch interface"));
+    g_signal_connect(touch, "clicked", G_CALLBACK(_switch_to_touch), NULL);
+    dt_gui_box_add(GTK_BOX(self->widget), touch);
+  }
 }
 
 void gui_cleanup(dt_lib_module_t *self)

@@ -6,6 +6,8 @@
 
 #include "common/filepath.h"
 #include <glib/gstdio.h>
+#include <glib/gi18n.h>
+#include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -51,6 +53,25 @@ static gboolean _validate(const gchar *path, GError **error)
     return FALSE;
   }
   return TRUE;
+}
+
+gboolean dt_path_check_engine_utf8(const gchar *path, GError **error)
+{
+  if(!_validate(path, error)) return FALSE;
+  // legacy engine buffers need space for version suffixes and sidecars
+  if(strlen(path) >= PATH_MAX - 128)
+  {
+    g_set_error_literal(error, G_FILE_ERROR, G_FILE_ERROR_NAMETOOLONG,
+                        _("path exceeds the engine's UTF-8 buffer capacity"));
+    return FALSE;
+  }
+  gchar *name = g_path_get_basename(path);
+  const gboolean fits = strlen(name) < DT_MAX_FILENAME_UTF8_LEN;
+  g_free(name);
+  if(!fits)
+    g_set_error_literal(error, G_FILE_ERROR, G_FILE_ERROR_NAMETOOLONG,
+                        _("filename exceeds the engine's UTF-8 buffer capacity"));
+  return fits;
 }
 
 gchar *dt_path_absolute_utf8(const gchar *path, GError **error)

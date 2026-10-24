@@ -100,6 +100,7 @@ FILE(GLOB SOURCE_FILES
   "common/styles.c"
   "common/system_signal_handling.c"
   "common/tags.c"
+  "common/touch_session.c"
   "common/undo.c"
   "common/usermanual_url.c"
   "common/utility.c"
@@ -1265,6 +1266,10 @@ add_subdirectory(cli)
 # have a Model Context Protocol server exposing the raw engine to AI agents
 if(USE_MCP)
   add_subdirectory(mcp)
+endif()
+
+if(BUILD_TOUCH_UI)
+  add_subdirectory(touch)
 endif()
 
 # have a command line utility to generate all the thumbnails

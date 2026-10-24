@@ -21,6 +21,7 @@
 #include "common/color_harmony.h"
 #include "common/colorspaces.h"
 #include "common/dtpthread.h"
+#include "common/path_limits.h"
 #include "develop/format.h"
 #include <glib.h>
 #include <inttypes.h>
@@ -297,7 +298,7 @@ typedef struct dt_image_t
   char camera_makermodel[128];
   gboolean camera_missing_sample;
 
-  char filename[DT_MAX_FILENAME_LEN];
+  char filename[DT_MAX_FILENAME_UTF8_LEN];
 
   // common stuff
 

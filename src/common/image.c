@@ -413,6 +413,18 @@ gboolean dt_image_safe_remove(const dt_imgid_t imgid)
   }
 }
 
+static gboolean _copy_image_path(char *destination, const size_t size, const char *source)
+{
+  if(!source || !g_utf8_validate(source, -1, NULL) || strlen(source) >= size)
+  {
+    if(size) destination[0] = '\0';
+    dt_print(DT_DEBUG_ALWAYS, "[image path] invalid UTF-8 or path exceeds the destination buffer");
+    return FALSE;
+  }
+  g_strlcpy(destination, source, size);
+  return TRUE;
+}
+
 void dt_image_full_path(const dt_imgid_t imgid,
                         char *pathname,
                         const size_t pathname_len,
@@ -430,7 +442,12 @@ void dt_image_full_path(const dt_imgid_t imgid,
   DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
   if(sqlite3_step(stmt) == SQLITE_ROW)
   {
-    g_strlcpy(pathname, (char *)sqlite3_column_text(stmt, 0), pathname_len);
+    if(!_copy_image_path(pathname, pathname_len, (const char *)sqlite3_column_text(stmt, 0)))
+    {
+      if(from_cache) *from_cache = FALSE;
+      sqlite3_finalize(stmt);
+      return;
+    }
   }
   sqlite3_finalize(stmt);
 
@@ -440,7 +457,9 @@ void dt_image_full_path(const dt_imgid_t imgid,
     _image_local_copy_full_path(imgid, lc_pathname, sizeof(lc_pathname));
 
     if(g_file_test(lc_pathname, G_FILE_TEST_EXISTS))
-      g_strlcpy(pathname, (char *)lc_pathname, pathname_len);
+    {
+      if(!_copy_image_path(pathname, pathname_len, lc_pathname)) *from_cache = FALSE;
+    }
     else
       *from_cache = FALSE;
   }
@@ -2835,7 +2854,7 @@ gboolean dt_image_rename(const dt_imgid_t imgid,
         if(img)
         {
           img->film_id = filmid;
-          if(newname) g_strlcpy(img->filename, newname, DT_MAX_FILENAME_LEN);
+          if(newname) g_strlcpy(img->filename, newname, sizeof(img->filename));
         }
         // write through to db, but not to xmp
         dt_image_cache_write_release(img, DT_IMAGE_CACHE_RELAXED);

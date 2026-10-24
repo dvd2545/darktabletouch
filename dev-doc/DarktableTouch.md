@@ -13,6 +13,14 @@ retain their original Unicode text.
   normalize Unicode filename spelling. Invalid encoding is an error.
 - Do not truncate paths. Resolve Windows path buffers using the size
   reported by the native API, including room for the terminator.
+- Legacy engine path buffers have at least 4096 UTF-8 bytes on Windows;
+  MinGW's 260-byte ANSI limit cannot represent many ordinary Thai paths.
+  In-memory image filenames allow 1024 UTF-8 bytes. Persisted module
+  parameter buffers remain unchanged. The fork has a distinct module ABI
+  so older upstream DLLs cannot load against these internal layouts.
+- Reject paths beyond bounded engine capacity explicitly, reserving space
+  for sidecars and version suffixes. Dynamic path-resolution helpers can
+  resolve longer names; that alone does not establish engine support.
 - Default configuration and cache directories use `darktabletouch` instead
   of `darktable`. Explicit `--configdir` and `--cachedir` still take priority.
 - Application presentation uses en-US. Numeric serialization remains in
@@ -34,6 +42,90 @@ separate crop operation. Old histories retain their deprecated operations.
 
 Print, Slideshow, and Tethering remain available in Classic only. A generated
 parameter panel is not complete coverage of a module's specialized tools.
+
+## Touch foundation
+
+`BUILD_TOUCH_UI=ON` builds `darktable-touch` and the `darktabletouch` launcher
+with Qt 6.8 or newer. Windows builds enable it by default. Set
+`BUILD_TOUCH_UI=OFF` for a Classic-only build without Qt.
+
+The launcher accepts `--ui=touch|classic`, defaults to Touch, and stores the
+selection in `launcher.ini` inside the engine configuration directory. Use
+the launcher when switching interfaces: Touch's quick actions contain
+"switch to classic", and a managed Classic session has a "touch" button.
+The launcher waits for a successful process exit before honoring a new
+switch request. Failed saves keep the current Touch session open. A crash
+or an old request does not trigger a relaunch.
+
+`touch-session.json` binds the selected image, collection, filters, sort,
+relative-to-fit zoom, and image center to the current catalog. Collection
+rules use structured UTF-8 JSON rather than the legacy preset serializer,
+which has a fixed text buffer. Explicit command-line photos take priority
+on the initial launch; subsequent handoffs restore the current session.
+
+The bridge keeps the existing native parameter blobs, histories, and
+module version conversions. A worker thread owns the engine and processes
+commands serially. Preview revisions prevent old frames from replacing
+new edits. Slider changes are coalesced and one completed gesture records
+one undo entry. Preview processing releases the full-resolution input lock
+before thumbnail generation or export. The preview pipeline remains cached.
+
+The library uses a virtualized grid and a bounded thumbnail cache. The
+editor includes native scalar/enum controls, reset, undo/redo, numeric
+entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
+markers; native strings use gettext. Fonts retain Thai shaping and fallback.
+
+### Coverage status
+
+All six priority modules are **partial**, not completed ports:
+
+| Tool | Remaining specialized work |
+| --- | --- |
+| Exposure | Picker, presets, history UI, and complete workflow validation |
+| AgX | Range/tone/look organization, graphs, presets, and specialized interactions |
+| Lens Correction | Camera/lens selection, methods, presets, and complete workflow validation |
+| Denoise (profiled) | Profile selection, wavelet interactions, presets, and advanced workflows |
+| Rotation | Rotate-and-perspective adapter, straightening, and guides |
+| Crop | Frame manipulation, aspect ratios, orientation swap, and apply/cancel |
+
+Other modules remain unported. `--coverage-report FILE` writes a registry
+from the modules actually loaded by that engine build, with priority and
+explicit partial/not-started status. Unsupported field types point users
+to Classic instead of displaying invalid numeric controls.
+
+Controller polling supports XInput reconnection, focus navigation,
+confirmation/back, image navigation, compare, tool selection, pan, and zoom.
+Remapping, configurable dead zones, tool cursor interactions, focused
+parameter triggers, and a controller keyboard remain outstanding. Monitor
+ICC integration, fit/100% behavior, and broader UI sizing also need work.
+
+## Building and packaging on Windows
+
+Use MSYS2 UCRT64 and the dependencies listed in
+`.github/workflows/touch-platform.yml`. The Qt additions are `qt6-base` and
+`qt6-declarative`; NSIS builds the installer. For example:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TOUCH_UI=ON -DBUILD_TESTING=OFF -DBINARY_PACKAGE_BUILD=ON \
+  -DDONT_USE_INTERNAL_LIBRAW=ON -DUSE_GMIC=OFF \
+  -DUSE_GRAPHICSMAGICK=OFF -DUSE_OPENCV=OFF -DUSE_AI=OFF
+cmake --build build -j 3
+cmake --install build --prefix "$PWD/build-stage" --component DTApplication
+python tools/test_windows_package.py --prefix build-stage --raw /path/to/sample.CR2
+cpack --config build/CPackConfig.cmake -G NSIS -B build-installer
+```
+
+The staged application includes Qt runtime DLLs, QML imports, platform
+plugins, Qt license notices, the processing engine, and Classic. The NSIS
+package uses the DarktableTouch installation directory and registry keys
+so it can coexist with upstream darktable. Its dialogs use English and
+its filesystem handling is Unicode. The upstream Inno Setup template is
+not the DarktableTouch packaging entry point.
+
+The upstream `BUILD_TESTING=ON` configuration currently references missing
+unit-test directories. The standalone platform suite and the Touch tests
+below avoid that unrelated configuration failure.
 
 ## Platform regression tests
 
@@ -68,6 +160,41 @@ identity, applies Exposure, compares preview pixels, writes an XMP and PNG,
 restarts the engine, and checks persistence and the original file's hash.
 The test uses isolated temporary catalogs. `--keep build/unicode-workflow`
 retains the output and engine log for inspection.
+
+The Windows CI also exercises a real Canon EOS M50 C-RAW (`.CR3`) sample
+from [raw.pixls.us](https://raw.pixls.us/), repository item 2663, released
+under CC0. Its pinned SHA-256 is
+`15384b775867ec4c42b11882837f1e368cedc0561832ffab271221e6bb80be4c`.
+The RAW files are downloaded as test data rather than committed to this
+repository. Do not rename another RAW format to `.CR3` to simulate support.
+
+Additional Touch checks:
+
+```sh
+python tools/test_touch_launcher.py
+build/bin/test-touch-engine.exe /path/to/sample.CR2
+QT_QUICK_BACKEND=software build/bin/darktable-touch.exe -platform offscreen \
+  --self-test /path/to/sample.CR2 --screenshot "$PWD/build/touch-editor.png" \
+  --coverage-report "$PWD/build/module-coverage.json"
+```
+
+The native bridge test checks preview changes, exact history restoration,
+thumbnail generation while an editor exists, session round-trips, and
+release of database handles. Launcher probes check Unicode executable and
+argument paths, selection persistence, handoffs, failed children, and old
+requests. Package tests remove the developer toolchain from child-process
+PATH and exercise both UI startup and regular/command-line RAW workflows.
+
+The local validation host identifies as an ROG Ally Z1 Extreme. Software
+rendering tests and a visible Touch editor session have run on that host.
+The host uses Windows ANSI code page 1252 and the en-US Windows user locale;
+the Unicode workflows do not rely on the system UTF-8 compatibility option.
+Touch-to-Classic process handoff has run, but visual confirmation of the
+Classic restored view was blocked by a computer-use window-binding error.
+Physical touch/controller workflows, GPU frame pacing, both Windows
+regional-setting configurations, and complete installer installation/
+uninstallation still require validation. No delivery phase is marked
+complete by these foundation checks.
 
 ## Verification and publication
 

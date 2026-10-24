@@ -2553,13 +2553,15 @@ int dt_init(int argc,
 
     // load image(s) specified on cmdline.  this has to happen after
     // lua is initialized as image import can run lua code
-    if(argc == 2 && !_is_directory(argv[1]))
+    const gboolean restore_touch_session = g_getenv("DARKTABLETOUCH_MANAGED")
+      && g_getenv("DARKTABLETOUCH_RESTORE_SESSION");
+    if(!restore_touch_session && argc == 2 && !_is_directory(argv[1]))
     {
       // If only one image is listed, attempt to load it in darkroom
       dt_splash_screen_set_progress(_("importing image"));
       dt_load_from_string(argv[1], TRUE, NULL);
     }
-    else if(argc >= 2)
+    else if(!restore_touch_session && argc >= 2)
     {
       // when multiple names are given, or we are given a directory,
       // fire up a background job to import them after switching to

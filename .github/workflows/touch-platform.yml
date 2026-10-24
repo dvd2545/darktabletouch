@@ -52,6 +52,10 @@ jobs:
   engine-unicode:
     runs-on: windows-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        touch: ["OFF", "ON"]
     defaults:
       run:
         shell: msys2 {0}
@@ -97,20 +101,56 @@ jobs:
             mingw-w64-ucrt-x86_64-pugixml
             mingw-w64-ucrt-x86_64-SDL2
             mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative
+            mingw-w64-ucrt-x86_64-nsis
       - name: Fetch engine dependencies and pinned RAW fixture
         run: |
           git submodule update --init --depth 1 src/external/rawspeed src/external/OpenCL src/external/libxcf src/external/whereami
           git clone --filter=blob:none --sparse --no-checkout https://github.com/darktable-org/darktable-tests.git build-fixtures
           git -C build-fixtures sparse-checkout set --no-cone /images/mire1.cr2
           git -C build-fixtures checkout 3f2d1abaa2a473bf25a4f20c7f8db7d984e2746b
+      - name: Fetch the CC0 Canon CR3 fixture
+        if: matrix.touch == 'ON'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri 'https://raw.pixls.us/getfile.php/2663/nice/Canon%20-%20EOS%20M50%20-%20CRAW%20%283%3A2%29.CR3' -OutFile 'build-fixtures/Canon-EOS-M50.CR3'
+          if((Get-FileHash 'build-fixtures/Canon-EOS-M50.CR3' -Algorithm SHA256).Hash -ne '15384b775867ec4c42b11882837f1e368cedc0561832ffab271221e6bb80be4c') { throw 'CR3 fixture checksum mismatch' }
       - name: Build Classic and the headless engine
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPROJECT_VERSION=0.1.0 -DBUILD_TESTING=OFF -DBINARY_PACKAGE_BUILD=ON -DDONT_USE_INTERNAL_LIBRAW=ON -DUSE_GMIC=OFF -DUSE_GRAPHICSMAGICK=OFF -DUSE_OPENCV=OFF -DUSE_AI=OFF
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPROJECT_VERSION=0.1.0 -DBUILD_TOUCH_UI=${{ matrix.touch }} -DBUILD_TESTING=OFF -DBINARY_PACKAGE_BUILD=ON -DDONT_USE_INTERNAL_LIBRAW=ON -DUSE_GMIC=OFF -DUSE_GRAPHICSMAGICK=OFF -DUSE_OPENCV=OFF -DUSE_AI=OFF
           cmake --build build -j 2
+      - name: Verify Classic-only dependency isolation
+        if: matrix.touch == 'OFF'
+        run: cmake -S . -B build -DBUILD_TOUCH_UI=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON
       - name: Verify RAW editing through Thai paths
         run: python tools/test_unicode_workflow.py --raw build-fixtures/images/mire1.cr2 --keep build/unicode-workflow
+      - name: Verify Touch editing and UI rendering
+        if: matrix.touch == 'ON'
+        run: |
+          python tools/test_touch_launcher.py
+          timeout 120 build/bin/test-touch-engine.exe "$PWD/build-fixtures/images/mire1.cr2"
+          QT_QUICK_BACKEND=software timeout 120 build/bin/darktable-touch.exe -platform offscreen --self-test "$PWD/build-fixtures/images/mire1.cr2" --screenshot "$PWD/build/unicode-workflow/touch-editor.png" --coverage-report "$PWD/build/unicode-workflow/module-coverage.json"
+          python tools/test_unicode_workflow.py --raw build-fixtures/Canon-EOS-M50.CR3 --keep build/unicode-cr3
+      - name: Validate the standalone Windows package
+        if: matrix.touch == 'ON'
+        run: |
+          cmake --install build --prefix "$PWD/build-stage" --component DTApplication
+          python tools/test_windows_package.py --prefix build-stage --raw build-fixtures/images/mire1.cr2
+          python tools/test_windows_package.py --prefix build-stage --raw build-fixtures/Canon-EOS-M50.CR3 --output build/package-validation-cr3
+          cpack --config build/CPackConfig.cmake -G NSIS -B build-installer
+      - uses: actions/upload-artifact@v4
+        if: matrix.touch == 'ON' && always()
+        with:
+          name: DarktableTouch-Windows
+          path: |
+            build-installer/*.exe
+            build/package-validation
+            build/package-validation-cr3
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: unicode-workflow-results
-          path: build/unicode-workflow
+          name: unicode-workflow-results-${{ matrix.touch }}
+          path: |
+            build/unicode-workflow
+            build/unicode-cr3

@@ -112,6 +112,10 @@ if(WIN32)
   endif()
 endif(WIN32)
 
+if(WIN32)
+  include("${CMAKE_SOURCE_DIR}/cmake/darktabletouch-packaging.cmake")
+endif()
+
 include(CPack)
 
 # More descriptive names for each of the components

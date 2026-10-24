@@ -239,11 +239,11 @@ typedef struct lr2dt
 
 char *dt_get_lightroom_xmp(const dt_imgid_t imgid)
 {
-  char pathname[DT_MAX_FILENAME_LEN];
+  char pathname[PATH_MAX];
   gboolean from_cache = TRUE;
 
   // Get full pathname
-  dt_image_full_path(imgid, pathname, DT_MAX_FILENAME_LEN, &from_cache);
+  dt_image_full_path(imgid, pathname, sizeof(pathname), &from_cache);
 
   // Look for extension
   char *pos = strrchr(pathname, '.');

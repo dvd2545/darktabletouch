@@ -1,6 +1,6 @@
 if(WIN32 AND NOT BUILD_MSYS2_INSTALL)
 
-  set(plugin_dest_dir lib/darktable/plugins)
+  set(plugin_dest_dir lib/darktable)
   set(APPS "\${CMAKE_INSTALL_PREFIX}/bin/darktable.exe") # paths to executables
   get_filename_component(MINGW_PATH ${CMAKE_CXX_COMPILER} PATH)
 
@@ -17,6 +17,13 @@ if(WIN32 AND NOT BUILD_MSYS2_INSTALL)
       file(GLOB_RECURSE DTPLUGINS
         \"\${CMAKE_INSTALL_PREFIX}/${plugin_dest_dir}/*${CMAKE_SHARED_LIBRARY_SUFFIX}\")
       list(APPEND DTPLUGINS \"\${CMAKE_INSTALL_PREFIX}/bin/libdarktable.dll\")
+      if(${BUILD_TOUCH_UI})
+        file(GLOB_RECURSE QTPLUGINS \"\${CMAKE_INSTALL_PREFIX}/share/qt6/*.dll\")
+        file(GLOB QTLIBS \"\${CMAKE_INSTALL_PREFIX}/bin/Qt6*.dll\")
+        list(APPEND DTPLUGINS \${QTPLUGINS} \${QTLIBS}
+          \"\${CMAKE_INSTALL_PREFIX}/bin/darktable-touch.exe\"
+          \"\${CMAKE_INSTALL_PREFIX}/bin/darktabletouch.exe\")
+      endif()
       include(\"${CMAKE_ROOT}/Modules/BundleUtilities.cmake\")
       set(gp_tool \"objdump\")
       fixup_bundle(\"${APPS}\" \"\${DTPLUGINS}\" \"${DIRS}\")
@@ -41,6 +48,13 @@ if(WIN32 AND NOT BUILD_MSYS2_INSTALL)
 
       file(GLOB_RECURSE DTPLUGINS \"\${CMAKE_INSTALL_PREFIX}/${plugin_dest_dir}/*${CMAKE_SHARED_LIBRARY_SUFFIX}\")
       list(APPEND DTPLUGINS \"\${CMAKE_INSTALL_PREFIX}/bin/libdarktable.dll\")
+      if(${BUILD_TOUCH_UI})
+        file(GLOB_RECURSE QTPLUGINS \"\${CMAKE_INSTALL_PREFIX}/share/qt6/*.dll\")
+        file(GLOB QTLIBS \"\${CMAKE_INSTALL_PREFIX}/bin/Qt6*.dll\")
+        list(APPEND DTPLUGINS \${QTPLUGINS} \${QTLIBS}
+          \"\${CMAKE_INSTALL_PREFIX}/bin/darktable-touch.exe\"
+          \"\${CMAKE_INSTALL_PREFIX}/bin/darktabletouch.exe\")
+      endif()
 
       process_file(\"${APPS}\")
       foreach(filename IN LISTS DTPLUGINS)

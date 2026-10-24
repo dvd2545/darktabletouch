@@ -39,6 +39,7 @@
 #endif
 
 #include "external/ThreadSafetyAnalysis.h"
+#include "common/path_limits.h"
 
 #include "common/database.h"
 #include "common/dtpthread.h"
@@ -212,7 +213,7 @@ typedef int32_t dt_mask_id_t;
 /* Helper for 4-float pixel vectors */
 #define DT_IS_ALIGNED_PIXEL(x) __builtin_assume_aligned(x, 16)
 
-#define DT_MODULE_VERSION 25 // version of dt's module interface
+#define DT_MODULE_VERSION 100025 // fork ABI: UTF-8 path buffers and in-memory image filenames differ
 
 // version of current performance configuration version
 // if you want to run an updated version of the performance configuration later
@@ -1008,17 +1009,6 @@ static inline void dt_unreachable_codepath_with_caller(const char *description,
 
 /** define for max path/filename length */
 #define DT_MAX_FILENAME_LEN 256
-
-#ifndef PATH_MAX
-/*
- * from /usr/include/linux/limits.h (Linux 3.16.5)
- * Some systems might not define it (e.g. Hurd)
- *
- * We do NOT depend on any specific value of this env variable.
- * If you want constant value across all systems, use DT_MAX_PATH_FOR_PARAMS!
- */
-#define PATH_MAX 4096
-#endif
 
 /*
  * ONLY TO BE USED FOR PARAMS!!! (e.g. dt_imageio_disk_t)

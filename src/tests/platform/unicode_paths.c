@@ -11,6 +11,23 @@
 #include <string.h>
 #include <time.h>
 
+static void _engine_limits(void)
+{
+  GError *error = NULL;
+  GString *filename = g_string_new("รูปที่ ๑");
+  for(int i = 0; i < 18; i++) g_string_append(filename, "กำลัง");
+  g_string_append(filename, ".CR3");
+  g_assert_cmpuint(filename->len, >, 256);
+  g_assert_true(dt_path_check_engine_utf8(filename->str, &error));
+  g_assert_no_error(error);
+  gchar *too_long = g_strnfill(PATH_MAX, 'a');
+  g_assert_false(dt_path_check_engine_utf8(too_long, &error));
+  g_assert_error(error, G_FILE_ERROR, G_FILE_ERROR_NAMETOOLONG);
+  g_clear_error(&error);
+  g_free(too_long);
+  g_string_free(filename, TRUE);
+}
+
 #ifdef _WIN32
 #include "win/main_wrapper.h"
 #include <windows.h>
@@ -157,7 +174,11 @@ static void _long_path(void)
 
 int main(int argc, char **argv)
 {
+#ifdef _WIN32
+  G_STATIC_ASSERT(PATH_MAX >= 4096);
+#endif
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/paths/engine-utf8-buffer-limits", _engine_limits);
   g_test_add_func("/paths/unicode-round-trip", _round_trip);
   g_test_add_func("/paths/reject-invalid-utf8", _invalid);
   g_test_add_func("/paths/unicode-working-directory", _unicode_cwd);

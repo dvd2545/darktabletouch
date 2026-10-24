@@ -701,7 +701,7 @@ static gboolean _control_merge_hdr_validate(GList *images)
     const int32_t width = img->width;
     const int32_t height = img->height;
     const dt_image_orientation_t orientation = img->orientation;
-    char filename[DT_MAX_FILENAME_LEN];
+    char filename[DT_MAX_FILENAME_UTF8_LEN];
     g_strlcpy(filename, img->filename, sizeof(filename));
     dt_image_cache_read_release(img);
 

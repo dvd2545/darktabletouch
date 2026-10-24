@@ -162,7 +162,7 @@ gchar *dt_loc_init_generic(const char *absolute_value,
     {
       // default_value is relative.
       // combine basename (application_directory) and relative path (default_value).
-      gchar complete_path[PATH_MAX] = { 0 };
+      gchar *complete_path = NULL;
 #if defined(__APPLE__)
       char *bundle_path = dt_osx_get_bundle_res_path();
       if(bundle_path)
@@ -182,23 +182,32 @@ gchar *dt_loc_init_generic(const char *absolute_value,
         // So we have to modify the relative default value
 
         // +2: removes the two dots '..'
-        g_snprintf(complete_path, sizeof(complete_path), "%s/../Resources%s", application_directory, default_value + 2);
+        complete_path = g_strdup_printf("%s/../Resources%s", application_directory, default_value + 2);
       }
       else
       {
         /// outside a bundle. Apply standard linux path rules
-        g_snprintf(complete_path, sizeof(complete_path), "%s/%s", application_directory, default_value);
+        complete_path = g_build_filename(application_directory, default_value, NULL);
       }
 #else
-      g_snprintf(complete_path, sizeof(complete_path), "%s/%s", application_directory, default_value);
+      complete_path = g_build_filename(application_directory, default_value, NULL);
 #endif
-      path = g_strdup(complete_path);
+      path = complete_path;
     }
     else
     {
       // default_value is absolute
       path = g_strdup(default_value);
     }
+  }
+
+  GError *error = NULL;
+  if(!dt_path_check_engine_utf8(path, &error))
+  {
+    dt_print(DT_DEBUG_ALWAYS, "[path] %s", error->message);
+    g_clear_error(&error);
+    g_free(path);
+    return NULL;
   }
 
   // create file if it does not exist

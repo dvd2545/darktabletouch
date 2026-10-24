@@ -1,3 +1,22 @@
+# DarktableTouch
+
+A Windows fork of darktable for the 7-inch ROG Ally, with U.S. English UI
+and Unicode file paths. The Qt Quick Touch interface and GTK Classic
+interface share the fork's catalog and use separate executables.
+
+This is a development build. The Touch foundation supports library browsing,
+native parameter controls, undo/redo, and export. All six priority editing
+tools remain partial; specialized controls and complete controller workflows
+are still being developed. Classic retains the original tools.
+
+Use `darktabletouch.exe --ui=touch` or `--ui=classic` to start the launcher.
+See the [build instructions, tests, and coverage status](dev-doc/DarktableTouch.md)
+and [Windows CI artifacts](https://github.com/dvd2545/darktabletouch/actions/workflows/touch-platform.yml).
+
+The upstream project documentation follows.
+
+---
+
 [![icon](/data/pixmaps/idbutton.png?raw=true)](https://www.darktable.org/) darktable [![GitHub Workflow Status (branch)](https://img.shields.io/github/actions/workflow/status/darktable-org/darktable/ci.yml?branch=master)](https://github.com/darktable-org/darktable/actions/workflows/ci.yml?query=branch%3Amaster+is%3Acompleted+event%3Apush) [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/470/badge)](https://bestpractices.coreinfrastructure.org/projects/470)
 =========
 

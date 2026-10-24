@@ -95,8 +95,10 @@ def run(binary, build, source, work):
     folder.mkdir(parents=True)
     thai = folder / ("รูปที่ ๑" + source.suffix)
     english = work / ("reference" + source.suffix)
+    long_name = folder / ("รูปที่ ๑" + "กำลัง" * 18 + source.suffix)
     shutil.copyfile(source, thai)
     shutil.copyfile(source, english)
+    shutil.copyfile(source, long_name)
     original_hash = hashlib.sha256(thai.read_bytes()).digest()
     engine = Engine(binary, build, work)
     try:
@@ -110,6 +112,11 @@ def run(binary, build, source, work):
         preview = engine.render(image_id, edit=True)
         reference = engine.render(images[1]["imgid"], edit=True)
         assert image_data(preview) == image_data(reference), "filename affected rendered pixels"
+        long_import = engine.decode(engine.tool("import_images", {"paths": [str(long_name)]}))
+        long_id = long_import["images"][0]["imgid"]
+        assert long_id > 0 and Path(long_import["images"][0]["path"]).name == long_name.name
+        assert image_data(engine.render(long_id, edit=True)) == image_data(preview), "long Thai filename affected rendering"
+        assert Path(str(long_name) + ".xmp").exists(), "long-name sidecar missing"
         (folder / "พรีวิว.png").write_bytes(preview)
         sidecar = Path(str(thai) + ".xmp")
         assert sidecar.exists(), "sidecar missing"
@@ -123,7 +130,9 @@ def run(binary, build, source, work):
     engine = Engine(binary, build, work)
     try:
         assert image_data(engine.render(image_id)) == image_data(preview), "edits did not survive restart"
+        assert image_data(engine.render(long_id)) == image_data(preview), "long filename did not survive restart"
         assert hashlib.sha256(thai.read_bytes()).digest() == original_hash, "source RAW was modified"
+        assert hashlib.sha256(long_name.read_bytes()).digest() == original_hash, "long-name RAW was modified"
     finally:
         engine.close()
     print("passed: Unicode RAW import, duplicate detection, Exposure, preview, XMP, export, and restart")

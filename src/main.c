@@ -21,6 +21,7 @@
 #include "develop/develop.h"
 #include "common/gimp.h"
 #include "common/image_cache.h"
+#include "common/touch_session.h"
 #include "gui/gtk.h"
 #include <stdlib.h>
 
@@ -243,8 +244,14 @@ int main(int argc, char *argv[])
   }
 
   if(!dt_gimpmode() || dt_check_gimpmode_ok("file"))
+  {
+    if(!dt_gimpmode())
+      g_idle_add(dt_touch_session_restore_classic,
+        GINT_TO_POINTER(argv[1] && !g_getenv("DARKTABLETOUCH_RESTORE_SESSION")));
     dt_gui_gtk_run(darktable.gui);
+  }
 
+  if(!dt_gimpmode()) dt_touch_session_finish_classic();
   dt_cleanup();
 
   if(dt_gimpmode() && darktable.gimp.error)

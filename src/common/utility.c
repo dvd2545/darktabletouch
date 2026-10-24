@@ -843,6 +843,14 @@ gchar *dt_util_normalize_path(const gchar *_input)
   if(!filename)
     return NULL;
 
+  GError *path_error = NULL;
+  if(!dt_path_check_engine_utf8(filename, &path_error))
+  {
+    dt_print(DT_DEBUG_ALWAYS, "[path] %s", path_error->message);
+    g_clear_error(&path_error);
+    g_free(filename);
+    return NULL;
+  }
   const char first = g_ascii_toupper(filename[0]);
   if(first >= 'A' && first <= 'Z' && filename[1] == ':') // path format is <drive letter>:\path\to\file
   {

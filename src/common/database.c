@@ -4902,6 +4902,7 @@ void dt_upgrade_maker_model(const dt_database_t *db)
 
 void dt_database_destroy(const dt_database_t *db)
 {
+  if(db->handle) dt_database_cleanup_busy_statements(db);
   sqlite3_close(db->handle);
   if(db->lockfile_data)
   {
