@@ -26,6 +26,9 @@ ApplicationWindow {
     property int thumbnailRevision: 0
     property bool advanced: false
 
+    function showHistory() { historyDialog.open() }
+    function showQuickMenu() { historyDialog.close(); quickMenu.open() }
+
     onClosing: function(close) {
         if(!controller.canClose) { close.accepted = false; saveView(); controller.shutdown() }
     }
@@ -100,6 +103,7 @@ ApplicationWindow {
             TouchButton { text: qsTr("editor"); checked: controller.editorVisible; enabled: controller.imageId > 0; onClicked: controller.editorVisible = true }
             TouchButton { text: qsTr("undo"); visible: window.width >= 1150; enabled: controller.canUndo; onClicked: controller.undo() }
             TouchButton { text: qsTr("redo"); visible: window.width >= 1150; enabled: controller.canRedo; onClicked: controller.redo() }
+            TouchButton { text: qsTr("history"); visible: window.width >= 1150; enabled: controller.imageId > 0; onClicked: showHistory() }
             TouchButton {
                 text: qsTr("before")
                 enabled: controller.imageId > 0
@@ -108,7 +112,7 @@ ApplicationWindow {
                 onCanceled: controller.before = false
             }
             TouchButton { text: qsTr("export"); enabled: controller.imageId > 0; onClicked: exportDialog.open() }
-            TouchButton { text: qsTr("menu"); onClicked: quickMenu.open() }
+            TouchButton { text: qsTr("menu"); onClicked: showQuickMenu() }
         }
     }
 
@@ -290,19 +294,77 @@ ApplicationWindow {
     Popup {
         id: quickMenu
         anchors.centerIn: parent
-        width: 420; padding: 24; modal: true; focus: true
+        width: 420; height: Math.min(600, window.height - 48); padding: 24; modal: true; focus: true
         background: Rectangle { color: "#24272d"; radius: 20; border.color: "#424951" }
         ColumnLayout {
             anchors.fill: parent; spacing: 12
             Label { text: qsTr("quick actions"); color: "#f0f1f3"; font.pixelSize: 24 }
-            TouchButton { text: qsTr("import photos"); Layout.fillWidth: true; onClicked: { quickMenu.close(); importDialog.open() } }
-            TouchButton { text: qsTr("undo"); Layout.fillWidth: true; enabled: controller.canUndo; onClicked: { quickMenu.close(); controller.undo() } }
-            TouchButton { text: qsTr("redo"); Layout.fillWidth: true; enabled: controller.canRedo; onClicked: { quickMenu.close(); controller.redo() } }
-            TouchButton {
-                text: qsTr("switch to classic"); Layout.fillWidth: true; visible: managedSession; enabled: controller.ready
-                onClicked: { quickMenu.close(); saveView(); controller.switchInterface("classic") }
+            ScrollView {
+                Layout.fillWidth: true; Layout.fillHeight: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: parent.width; spacing: 12
+                    TouchButton { text: qsTr("import photos"); Layout.fillWidth: true; onClicked: { quickMenu.close(); importDialog.open() } }
+                    TouchButton { text: qsTr("undo"); Layout.fillWidth: true; enabled: controller.canUndo; onClicked: { quickMenu.close(); controller.undo() } }
+                    TouchButton { text: qsTr("redo"); Layout.fillWidth: true; enabled: controller.canRedo; onClicked: { quickMenu.close(); controller.redo() } }
+                    TouchButton { text: qsTr("edit history"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { quickMenu.close(); showHistory() } }
+                    TouchButton {
+                        text: qsTr("switch to classic"); Layout.fillWidth: true; visible: managedSession; enabled: controller.ready
+                        onClicked: { quickMenu.close(); saveView(); controller.switchInterface("classic") }
+                    }
+                    TouchButton { text: qsTr("close menu"); Layout.fillWidth: true; onClicked: quickMenu.close() }
+                }
             }
-            TouchButton { text: qsTr("close menu"); Layout.fillWidth: true; onClicked: quickMenu.close() }
+        }
+    }
+    Popup {
+        id: historyDialog
+        anchors.centerIn: parent
+        width: Math.min(560, window.width - 48); height: Math.min(600, window.height - 48)
+        padding: 20; modal: true; focus: true
+        background: Rectangle { color: "#24272d"; radius: 20; border.color: "#424951" }
+        onOpened: {
+            historySteps.currentIndex = controller.historyEnd
+            historySteps.positionViewAtIndex(controller.historyEnd, ListView.Contain)
+            Qt.callLater(function() {
+                const item = historySteps.itemAtIndex(historySteps.currentIndex)
+                if(item) item.forceActiveFocus()
+            })
+        }
+        ColumnLayout {
+            anchors.fill: parent; spacing: 12
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("edit history"); color: "#f0f1f3"; font.pixelSize: 24; Layout.fillWidth: true }
+                TouchButton { text: qsTr("close"); onClicked: historyDialog.close() }
+            }
+            Label { text: qsTr("choose a step; undo returns to your previous edit"); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#aeb4be" }
+            ListView {
+                id: historySteps
+                Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 8
+                model: [{index: 0, label: qsTr("original"), enabled: true}].concat(controller.history)
+                delegate: TouchButton {
+                    required property var modelData
+                    required property int index
+                    width: historySteps.width
+                    text: modelData.index + "  " + modelData.label + (modelData.enabled ? "" : qsTr(" (disabled)"))
+                    checked: controller.historyEnd === modelData.index
+                    opacity: modelData.index > controller.historyEnd ? 0.5 : 1
+                    onClicked: { controller.jumpHistory(modelData.index); historyDialog.close() }
+                    onActiveFocusChanged: if(activeFocus) { historySteps.currentIndex = index; historySteps.positionViewAtIndex(index, ListView.Contain) }
+                    Keys.onPressed: function(event) {
+                        const direction = event.key === Qt.Key_Tab || event.key === Qt.Key_Down ? 1 : event.key === Qt.Key_Backtab || event.key === Qt.Key_Up ? -1 : 0
+                        const next = index + direction
+                        if(direction && next >= 0 && next < historySteps.count) {
+                            event.accepted = true
+                            historySteps.currentIndex = next
+                            historySteps.positionViewAtIndex(next, ListView.Contain)
+                            Qt.callLater(function() { const item = historySteps.itemAtIndex(next); if(item) item.forceActiveFocus() })
+                        }
+                    }
+                }
+                ScrollBar.vertical: ScrollBar { }
+            }
         }
     }
     Popup {

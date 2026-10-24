@@ -64,6 +64,7 @@ public slots:
   void changeEnabled(QString operation, bool enabled, quint64 revision);
   void resetModule(QString operation, quint64 revision);
   void historyStep(int direction, quint64 revision);
+  void jumpHistory(int end, quint64 revision);
   void thumbnail(int id);
   void exportImage(QString path, QString format);
   void saveView(int image, bool editor, double zoom, double centerX, double centerY);
@@ -77,6 +78,7 @@ signals:
   void frameReady(QImage image, quint64 revision);
   void thumbnailReady(int id, QImage image);
   void historyChanged(bool undo, bool redo);
+  void historyReady(QJsonObject history, quint64 revision);
   void completed(QString message);
   void failed(QString message);
   void stopped();
@@ -108,6 +110,8 @@ class TouchController final : public QObject
   Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
   Q_PROPERTY(bool canUndo READ canUndo NOTIFY stateChanged)
   Q_PROPERTY(bool canRedo READ canRedo NOTIFY stateChanged)
+  Q_PROPERTY(QVariantList history READ history NOTIFY historyChanged)
+  Q_PROPERTY(int historyEnd READ historyEnd NOTIFY historyChanged)
   Q_PROPERTY(bool canClose READ canClose NOTIFY stateChanged)
   Q_PROPERTY(int imageId READ imageId NOTIFY stateChanged)
   Q_PROPERTY(QVariantList images READ images NOTIFY imagesChanged)
@@ -130,6 +134,8 @@ public:
   bool busy() const { return m_busy; }
   bool canUndo() const { return m_canUndo; }
   bool canRedo() const { return m_canRedo; }
+  QVariantList history() const { return m_history; }
+  int historyEnd() const { return m_historyEnd; }
   bool canClose() const { return m_canClose; }
   int imageId() const { return m_imageId; }
   QVariantList images() const { return m_images; }
@@ -155,6 +161,7 @@ public:
   Q_INVOKABLE void reset();
   Q_INVOKABLE void undo();
   Q_INVOKABLE void redo();
+  Q_INVOKABLE void jumpHistory(int end);
   Q_INVOKABLE void requestThumbnail(int image);
   Q_INVOKABLE void exportTo(const QUrl &url, const QString &format);
   Q_INVOKABLE void navigateImage(int direction);
@@ -165,6 +172,7 @@ signals:
   void stateChanged();
   void imagesChanged();
   void moduleChanged();
+  void historyChanged();
   void previewChanged();
   void thumbnailChanged(int id);
   void closingReady();
@@ -177,6 +185,7 @@ signals:
   void enabledRequested(QString operation, bool enabled, quint64 revision);
   void resetRequested(QString operation, quint64 revision);
   void historyRequested(int direction, quint64 revision);
+  void historyJumpRequested(int end, quint64 revision);
   void thumbnailRequested(int id);
   void exportRequested(QString path, QString format);
   void shutdownRequested();
@@ -192,6 +201,7 @@ private:
   std::shared_ptr<std::atomic<quint64>> m_revision;
   QTimer m_editTimer;
   QVariantList m_images, m_tools, m_moduleCoverage;
+  QVariantList m_history;
   FieldModel m_fields;
   QSet<int> m_requestedThumbnails;
   QString m_operation = QStringLiteral("exposure");
@@ -200,6 +210,7 @@ private:
   QVariant m_pendingValue;
   QString m_message = tr("starting the photo engine");
   int m_imageId = 0;
+  int m_historyEnd = 0;
   quint64 m_frameRevision = 0;
   bool m_ready = false, m_busy = true, m_canUndo = false, m_canRedo = false;
   bool m_canClose = false, m_editorVisible = false, m_before = false, m_moduleEnabled = false;

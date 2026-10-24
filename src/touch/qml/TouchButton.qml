@@ -10,6 +10,7 @@ Button {
     opacity: enabled ? 1 : 0.35
     contentItem: Text {
         text: control.text
+        textFormat: Text.PlainText
         color: control.checked ? "#101915" : "#e6e8eb"
         font.family: "Segoe UI"
         font.pixelSize: 15

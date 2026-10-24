@@ -86,6 +86,7 @@ int main(int argc, char **argv)
   if(engine.rootObjects().isEmpty()) return 1;
   auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
   if(selfTest.isEmpty() && screenshot.isEmpty()) window->showMaximized();
+  if(!selfTest.isEmpty() && testCommandLine) window->resize(960, 540);
   bool startedImport = false, startedImage = false, finished = false, reportFailed = false;
   int stage = 0;
   QImage baseline, adjusted;
@@ -110,9 +111,9 @@ int main(int argc, char **argv)
       }
       else controller.importPath(testPhoto);
     }
-    if(stage == 5 && controller.message().startsWith(QStringLiteral("exported to")))
+    if(stage == 7 && controller.message().startsWith(QStringLiteral("exported to")))
     {
-      stage = 6;
+      stage = 8;
       QTimer::singleShot(400, &app, [&] {
         QFile exported(QDir(testDirectory.path()).filePath(QString::fromUtf8("ผู้ใช้/ส่งออก.png")));
         if(!exported.open(QIODevice::ReadOnly) || exported.read(8) != QByteArray::fromHex("89504e470d0a1a0a"))
@@ -120,9 +121,29 @@ int main(int argc, char **argv)
         exported.close();
         if(!screenshot.isEmpty() && !window->grabWindow().save(screenshot))
         { QTextStream(stderr) << "could not write the UI screenshot\n"; controller.shutdown(); return; }
-        finished = true;
-        QTextStream(stdout) << "passed: Touch import, preview, Exposure, undo, redo, and export\n";
-        controller.shutdown();
+        if(!screenshot.isEmpty()) QMetaObject::invokeMethod(window, "showHistory");
+        QTimer::singleShot(150, &app, [&] {
+          if(!screenshot.isEmpty())
+          {
+            const QFileInfo file(screenshot);
+            const QString historyShot = file.dir().filePath(file.completeBaseName() + QStringLiteral("-history.png"));
+            if(!window->grabWindow().save(historyShot))
+            { QTextStream(stderr) << "could not write the history screenshot\n"; controller.shutdown(); return; }
+          }
+          if(!screenshot.isEmpty()) QMetaObject::invokeMethod(window, "showQuickMenu");
+          QTimer::singleShot(150, &app, [&] {
+            if(!screenshot.isEmpty())
+            {
+              const QFileInfo file(screenshot);
+              const QString menuShot = file.dir().filePath(file.completeBaseName() + QStringLiteral("-menu.png"));
+              if(!window->grabWindow().save(menuShot))
+              { QTextStream(stderr) << "could not write the menu screenshot\n"; controller.shutdown(); return; }
+            }
+            finished = true;
+            QTextStream(stdout) << "passed: Touch import, preview, Exposure, history, undo, redo, and export\n";
+            controller.shutdown();
+          });
+        });
       });
     }
   });
@@ -134,7 +155,7 @@ int main(int argc, char **argv)
     }
   });
   QObject::connect(&controller, &TouchController::previewChanged, &app, [&] {
-    if(testPhoto.isEmpty() || controller.imageId() == 0 || stage >= 5) return;
+    if(testPhoto.isEmpty() || controller.imageId() == 0 || stage >= 7) return;
     QSize size;
     const QImage frame = store->requestImage(QStringLiteral("current"), &size, QSize());
     if(stage == 0)
@@ -156,7 +177,17 @@ int main(int argc, char **argv)
     else if(stage == 3)
     {
       if(frame != adjusted) { QTextStream(stderr) << "redo did not restore the edited preview\n"; controller.shutdown(); return; }
-      stage = 5;
+      stage = 4; controller.jumpHistory(0);
+    }
+    else if(stage == 4)
+    {
+      if(controller.historyEnd() != 0) { QTextStream(stderr) << "history selection did not reach original\n"; controller.shutdown(); return; }
+      stage = 6; controller.undo();
+    }
+    else if(stage == 6)
+    {
+      if(frame != adjusted) { QTextStream(stderr) << "undo did not restore the selected history state\n"; controller.shutdown(); return; }
+      stage = 7;
       const QString output = QDir(testDirectory.path()).filePath(QString::fromUtf8("ผู้ใช้/ส่งออก.png"));
       controller.exportTo(QUrl::fromLocalFile(output), QStringLiteral("png"));
     }

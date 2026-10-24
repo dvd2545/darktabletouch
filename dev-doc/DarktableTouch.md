@@ -75,13 +75,18 @@ editor includes native scalar/enum controls, reset, undo/redo, numeric
 entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
 markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 
+The edit-history panel lists the current engine session, including disabled
+steps and instance labels. Selecting a step uses native history replay and
+is itself undoable. Built-in preset labels use the same localization helper
+as Classic. History and quick-action panels scroll at smaller window sizes.
+
 ### Coverage status
 
 All six priority modules are **partial**, not completed ports:
 
 | Tool | Remaining specialized work |
 | --- | --- |
-| Exposure | Picker, presets, history UI, and complete workflow validation |
+| Exposure | Picker, presets, and complete workflow validation |
 | AgX | Range/tone/look organization, graphs, presets, and specialized interactions |
 | Lens Correction | Camera/lens selection, methods, presets, and complete workflow validation |
 | Denoise (profiled) | Profile selection, wavelet interactions, presets, and advanced workflows |
@@ -180,7 +185,11 @@ QT_QUICK_BACKEND=software build/bin/darktable-touch.exe -platform offscreen \
 
 The native bridge test checks preview changes, exact history restoration,
 thumbnail generation while an editor exists, session round-trips, and
-release of database handles. Launcher probes check Unicode executable and
+release of database handles. It checks history selection and out-of-range
+step rejection. Touch self-tests select original history and verify that
+Undo restores the edited preview exactly. Screenshots include the editor,
+history panel, and quick actions at 1280x720 and 960x540. Launcher probes
+check Unicode executable and
 argument paths, selection persistence, handoffs, failed children, and old
 requests. Package tests remove the developer toolchain from child-process
 PATH and exercise both UI startup and regular/command-line RAW workflows.

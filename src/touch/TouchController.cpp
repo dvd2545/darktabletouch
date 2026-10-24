@@ -224,6 +224,7 @@ void EngineWorker::loadModule(QString operation, quint64 revision)
   char *text = dt_touch_editor_module(m_editor, operation.toUtf8().constData(), &error);
   if(!text) { report(error); return; }
   emit moduleReady(takeJson(text).object(), revision);
+  emit historyReady(takeJson(dt_touch_editor_history(m_editor)).object(), revision);
 }
 
 void EngineWorker::beginEdit()
@@ -321,6 +322,17 @@ void EngineWorker::render(quint64 revision, int extent)
   emit frameReady(takePixels(pixels, width, height), revision);
 }
 
+void EngineWorker::jumpHistory(int end, quint64 revision)
+{
+  if(!m_editor) return;
+  beginEdit();
+  char *error = nullptr;
+  if(!dt_touch_editor_history_select(m_editor, end, &error)) { report(error); return; }
+  commitEdit();
+  loadModule(m_operation, revision);
+  render(revision);
+}
+
 void EngineWorker::thumbnail(int id)
 {
   if(!m_initialized) return;
@@ -390,6 +402,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(this, &TouchController::enabledRequested, m_worker, &EngineWorker::changeEnabled);
   connect(this, &TouchController::resetRequested, m_worker, &EngineWorker::resetModule);
   connect(this, &TouchController::historyRequested, m_worker, &EngineWorker::historyStep);
+  connect(this, &TouchController::historyJumpRequested, m_worker, &EngineWorker::jumpHistory);
   connect(this, &TouchController::thumbnailRequested, m_worker, &EngineWorker::thumbnail);
   connect(this, &TouchController::exportRequested, m_worker, &EngineWorker::exportImage);
   connect(this, &TouchController::shutdownRequested, m_worker, &EngineWorker::shutdown);
@@ -487,6 +500,12 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   });
   connect(m_worker, &EngineWorker::historyChanged, this, [this](bool undo, bool redo) {
     m_canUndo = undo; m_canRedo = redo; emit stateChanged();
+  });
+  connect(m_worker, &EngineWorker::historyReady, this, [this](QJsonObject history, quint64 revision) {
+    if(revision != m_revision->load()) return;
+    m_history = history.value(QStringLiteral("steps")).toArray().toVariantList();
+    m_historyEnd = history.value(QStringLiteral("end")).toInt();
+    emit historyChanged();
   });
   connect(m_worker, &EngineWorker::failed, this, [this](const QString &message) {
     m_failed = true; m_message = message; m_busy = false; emit stateChanged();
@@ -602,6 +621,11 @@ void TouchController::setEnabled(bool enabled)
 void TouchController::reset() { flush(true); emit resetRequested(m_operation, advance()); }
 void TouchController::undo() { flush(true); emit historyRequested(-1, advance()); }
 void TouchController::redo() { flush(true); emit historyRequested(1, advance()); }
+void TouchController::jumpHistory(int end)
+{
+  flush(true);
+  if(end != m_historyEnd) emit historyJumpRequested(end, advance());
+}
 
 void TouchController::requestThumbnail(int image)
 {

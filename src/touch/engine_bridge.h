@@ -30,6 +30,8 @@ int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, 
 dt_touch_editor_t *dt_touch_editor_new(int image_id, char **error);
 void dt_touch_editor_free(dt_touch_editor_t *editor);
 char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, char **error);
+char *dt_touch_editor_history(dt_touch_editor_t *editor);
+int dt_touch_editor_history_select(dt_touch_editor_t *editor, int end, char **error);
 int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
                         const char *field, const char *value_json, char **error);
 int dt_touch_editor_enable(dt_touch_editor_t *editor, const char *operation,

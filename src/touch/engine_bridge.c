@@ -309,6 +309,44 @@ char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, c
   return result;
 }
 
+char *dt_touch_editor_history(dt_touch_editor_t *editor)
+{
+  JsonObject *object = json_object_new();
+  json_object_set_int_member(object, "end", editor ? editor->dev.history_end : 0);
+  JsonArray *steps = json_array_new();
+  int index = 0;
+  for(GList *item = editor ? editor->dev.history : NULL; item; item = item->next)
+  {
+    const dt_dev_history_item_t *history = item->data;
+    JsonObject *step = json_object_new();
+    json_object_set_int_member(step, "index", ++index);
+    json_object_set_string_member(step, "operation", history->op_name);
+    const char *label = history->module ? history->module->name() : history->op_name;
+    char *instance = history->multi_name_hand_edited ? g_strdup(history->multi_name)
+      : dt_util_localize_segmented_name(history->multi_name, FALSE);
+    char *name = *instance && strcmp(instance, "0") ? g_strdup_printf("%s - %s", label, instance) : g_strdup(label);
+    json_object_set_string_member(step, "label", name);
+    json_object_set_boolean_member(step, "enabled", history->enabled);
+    json_object_set_int_member(step, "instance", history->multi_priority);
+    json_array_add_object_element(steps, step);
+    g_free(name); g_free(instance);
+  }
+  json_object_set_array_member(object, "steps", steps);
+  JsonNode *node = json_node_new(JSON_NODE_OBJECT);
+  json_node_take_object(node, object);
+  char *text = json_to_string(node, FALSE);
+  json_node_free(node);
+  return text;
+}
+
+int dt_touch_editor_history_select(dt_touch_editor_t *editor, int end, char **error)
+{
+  if(!editor || end < 0 || end > g_list_length(editor->dev.history))
+    return _error(error, N_("history step is outside the current editing session"));
+  dt_dev_pop_history_items_ext(&editor->dev, end);
+  return TRUE;
+}
+
 int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
                         const char *name, const char *value_json, char **error)
 {
