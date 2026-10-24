@@ -330,7 +330,7 @@ void EngineWorker::setParameter(QString operation, QString name, QVariant value,
   if(!dt_touch_editor_set(m_editor, operation.toUtf8().constData(), name.toUtf8().constData(),
                            scalar.constData(), &error)) { report(error); return; }
   if(commit) commitEdit();
-  loadModule(operation, revision);
+  loadModule(m_operation, revision);
   render(revision, commit ? 1280 : 640);
 }
 
@@ -708,12 +708,13 @@ void TouchController::selectTool(const QString &operation)
   emit moduleRequested(operation, m_revision->load());
 }
 
-void TouchController::setParameter(const QString &name, const QVariant &value, bool commit)
+void TouchController::setParameter(const QString &name, const QVariant &value, bool commit, const QString &operation)
 {
   if(!m_imageId) return;
-  if(!m_pendingName.isEmpty() && (m_pendingName != name || m_pendingOperation != m_operation)) flush(true);
+  const QString target = operation.isEmpty() ? m_operation : operation;
+  if(!m_pendingName.isEmpty() && (m_pendingName != name || m_pendingOperation != target)) flush(true);
   m_pendingName = name;
-  m_pendingOperation = m_operation;
+  m_pendingOperation = target;
   m_pendingValue = value;
   if(commit) flush(true);
   else if(!m_editTimer.isActive()) m_editTimer.start();

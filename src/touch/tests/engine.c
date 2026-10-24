@@ -230,6 +230,17 @@ int main(int argc, char **argv)
   g_assert_cmpint(width, ==, w2); g_assert_cmpint(height, ==, h2);
   g_assert_true(memcmp(original, edited, (size_t)width * height * 4) != 0);
   dt_touch_state_t *edited_state = dt_touch_editor_capture(editor);
+  char *rotation_schema = dt_touch_editor_module(editor, "flip", &message);
+  g_assert_nonnull(rotation_schema); g_assert_null(message);
+  g_assert_nonnull(strstr(rotation_schema, "precise angle"));
+  g_free(rotation_schema);
+  g_assert_true(dt_touch_editor_set(editor, "ashift", "rotation", "1.25", &message));
+  uint8_t *rotated = NULL;
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &rotated, &w2, &h2, &message));
+  g_assert_true(w2 != width || h2 != height || memcmp(edited, rotated, (size_t)w2 * h2 * 4) != 0);
+  g_free(rotated);
+  g_assert_true(dt_touch_editor_reset(editor, "flip", &message));
+  g_assert_true(dt_touch_editor_restore(editor, edited_state, &message));
   char *automatic_json = g_strdup_printf("%d", automatic_mode);
   g_assert_true(dt_touch_editor_set(editor, "exposure", "mode", automatic_json, &message));
   uint8_t *automatic = NULL, *brighter = NULL, *restored = NULL;

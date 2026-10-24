@@ -13,7 +13,7 @@ Item {
     property bool hasSlider: !booleanField && !enumField
         && typeof field.min === "number" && typeof field.max === "number"
         && Math.abs(field.min) <= 100000 && Math.abs(field.max) <= 100000 && field.max > field.min
-    property real increment: integerField ? 1 : field.name === "black" ? 0.0001 : 0.01
+    property real increment: typeof field.step === "number" ? field.step : integerField ? 1 : field.name === "black" ? 0.0001 : 0.01
     implicitHeight: booleanField ? 72 : enumField ? Math.max(96, fieldLoader.item ? fieldLoader.item.implicitHeight : 96) : 88
 
     Loader {
@@ -37,7 +37,7 @@ Item {
             checked: Boolean(root.field.value)
             font.pixelSize: 15
             focusPolicy: Qt.StrongFocus
-            onToggled: controller.setParameter(root.field.name, checked, true)
+            onToggled: controller.setParameter(root.field.name, checked, true, root.field.operation || "")
         }
     }
 
@@ -69,7 +69,7 @@ Item {
                     height: 64
                     width: parent.width
                 }
-                onActivated: function(index) { controller.setParameter(root.field.name, root.field.values[index].value, true) }
+                onActivated: function(index) { controller.setParameter(root.field.name, root.field.values[index].value, true, root.field.operation || "") }
             }
             Label {
                 visible: !!root.field.hint
@@ -121,11 +121,11 @@ Item {
                     Binding { target: slider; property: "value"; when: !slider.pressed; value: Number(root.field.value || 0); restoreMode: Binding.RestoreNone }
                     onMoved: {
                         lastMoved = value
-                        controller.setParameter(root.field.name, value, !pressed)
+                        controller.setParameter(root.field.name, value, !pressed, root.field.operation || "")
                     }
                     onPressedChanged: {
                         if(pressed) lastMoved = value
-                        else controller.setParameter(root.field.name, lastMoved, true)
+                        else controller.setParameter(root.field.name, lastMoved, true, root.field.operation || "")
                     }
                 }
                 TextField {
@@ -161,7 +161,7 @@ Item {
                     onEditingFinished: {
                         if(edited && acceptableInput) {
                             edited = false
-                            controller.setParameter(root.field.name, Number.fromLocaleString(Qt.locale("en_US"), text), true)
+                            controller.setParameter(root.field.name, Number.fromLocaleString(Qt.locale("en_US"), text), true, root.field.operation || "")
                         }
                     }
                 }

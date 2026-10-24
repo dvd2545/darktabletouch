@@ -128,9 +128,19 @@ ApplicationWindow {
         canvas.contentX = Math.max(0, Math.min(canvas.contentX, canvas.contentWidth - canvas.width))
         canvas.contentY = Math.max(0, Math.min(canvas.contentY, canvas.contentHeight - canvas.height))
     }
-    function zoomBy(amount) {
-        viewZoom = Math.max(1, Math.min(8, viewZoom * amount))
+    function placeZoom(zoom, x, y, imageX, imageY) {
+        viewZoom = Math.max(1, Math.min(8, zoom))
+        canvas.contentX = imageX * canvas.width * viewZoom - x
+        canvas.contentY = imageY * canvas.height * viewZoom - y
         clampPan()
+    }
+    function zoomAt(zoom, x, y) {
+        placeZoom(zoom, x, y, (canvas.contentX + x) / canvas.contentWidth,
+            (canvas.contentY + y) / canvas.contentHeight)
+    }
+    function zoomBy(amount, point) {
+        const anchor = point || Qt.point(canvas.width / 2, canvas.height / 2)
+        zoomAt(viewZoom * amount, anchor.x, anchor.y)
     }
 
     Connections {
@@ -268,7 +278,9 @@ ApplicationWindow {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     Flickable {
                         id: canvas
+                        objectName: "imageCanvas"
                         anchors.fill: parent
+                        interactive: !pinch.active
                         clip: true; boundsBehavior: Flickable.StopAtBounds
                         contentWidth: width * window.viewZoom
                         contentHeight: height * window.viewZoom
@@ -279,16 +291,41 @@ ApplicationWindow {
                             fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
                         }
                         PinchHandler {
+                            id: pinch
+                            parent: imageStage
                             target: null
                             property real startZoom: 1
-                            onActiveChanged: if(active) startZoom = window.viewZoom
-                            onActiveScaleChanged: window.viewZoom = Math.max(1, Math.min(8, startZoom * activeScale))
+                            property point imageAnchor: Qt.point(0.5, 0.5)
+                            function updateZoom() {
+                                if(!active) return
+                                const point = imageStage.mapFromItem(null, centroid.scenePosition.x, centroid.scenePosition.y)
+                                window.placeZoom(startZoom * activeScale, point.x, point.y, imageAnchor.x, imageAnchor.y)
+                            }
+                            onActiveChanged: if(active) {
+                                canvas.cancelFlick()
+                                startZoom = window.viewZoom
+                                const point = imageStage.mapFromItem(null, centroid.scenePosition.x, centroid.scenePosition.y)
+                                imageAnchor = Qt.point((canvas.contentX + point.x) / canvas.contentWidth,
+                                    (canvas.contentY + point.y) / canvas.contentHeight)
+                            }
+                            onActiveScaleChanged: updateZoom()
+                            onCentroidChanged: updateZoom()
                         }
                         TapHandler {
+                            parent: imageStage
                             onTapped: showImageInformation()
-                            onDoubleTapped: { window.viewZoom = window.viewZoom > 1 ? 1 : 2; clampPan() }
+                            onDoubleTapped: function(point) {
+                                const anchor = imageStage.mapFromItem(null, point.scenePosition.x, point.scenePosition.y)
+                                window.zoomAt(window.viewZoom > 1 ? 1 : 2, anchor.x, anchor.y)
+                            }
                         }
-                        WheelHandler { onWheel: function(event) { zoomBy(event.angleDelta.y > 0 ? 1.1 : 1 / 1.1) } }
+                        WheelHandler {
+                            parent: imageStage; target: null
+                            onWheel: function(event) {
+                                zoomBy(Math.pow(1.1, event.angleDelta.y / 120), Qt.point(event.x, event.y))
+                                event.accepted = true
+                            }
+                        }
                     }
                     Rectangle {
                         id: imageInformation
@@ -543,7 +580,6 @@ ApplicationWindow {
         id: importDialog
         title: qsTr("import photos")
         fileMode: FileDialog.OpenFiles
-        options: FileDialog.DontUseNativeDialog
         onAccepted: controller.reviewImport(selectedFiles, false)
     }
     Popup {
@@ -566,14 +602,12 @@ ApplicationWindow {
     FolderDialog {
         id: folderDialog
         title: qsTr("import a photo folder")
-        options: FolderDialog.DontUseNativeDialog
         onAccepted: controller.reviewImport([selectedFolder], window.importRecursive)
     }
     FileDialog {
         id: exportDialog
         title: qsTr("export photo")
         fileMode: FileDialog.SaveFile
-        options: FileDialog.DontUseNativeDialog
         nameFilters: [qsTr("JPEG image (*.jpg)"), qsTr("PNG image (*.png)"), qsTr("TIFF image (*.tif)")]
         defaultSuffix: "jpg"
         onAccepted: {

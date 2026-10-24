@@ -172,7 +172,7 @@ public:
   Q_INVOKABLE void libraryCommand(const QString &action, const QVariantMap &settings = {}, int image = 0);
   Q_INVOKABLE void selectImage(int id);
   Q_INVOKABLE void selectTool(const QString &operation);
-  Q_INVOKABLE void setParameter(const QString &name, const QVariant &value, bool commit);
+  Q_INVOKABLE void setParameter(const QString &name, const QVariant &value, bool commit, const QString &operation = QString());
   Q_INVOKABLE void setEnabled(bool enabled);
   Q_INVOKABLE void reset();
   Q_INVOKABLE void undo();

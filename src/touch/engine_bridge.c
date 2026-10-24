@@ -564,6 +564,31 @@ char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, c
           if(!strcmp(choice->name, "EXPOSURE_MODE_MANUAL")) json_object_set_int_member(field, "value", choice->value);
     }
   }
+  if(!strcmp(operation, "flip"))
+  {
+    char *angle_schema = dt_touch_editor_module(editor, "ashift", error);
+    if(!angle_schema)
+    { g_object_unref(defaults); g_object_unref(current); g_object_unref(parser); return NULL; }
+    JsonParser *angle = json_parser_new();
+    json_parser_load_from_data(angle, angle_schema, -1, NULL);
+    JsonArray *angle_fields = json_object_get_array_member(json_node_get_object(json_parser_get_root(angle)), "fields");
+    for(guint i = 0; i < json_array_get_length(angle_fields); i++)
+    {
+      JsonObject *field = json_array_get_object_element(angle_fields, i);
+      if(strcmp(json_object_get_string_member(field, "name"), "rotation")) continue;
+      JsonNode *copy = json_node_copy(json_array_get_element(angle_fields, i));
+      JsonObject *control = json_node_get_object(copy);
+      json_object_set_string_member(control, "operation", "ashift");
+      json_object_set_string_member(control, "label", _("precise angle"));
+      json_object_set_string_member(control, "unit", _("deg"));
+      json_object_set_double_member(control, "step", 0.01);
+      json_object_set_double_member(control, "soft_min", -15.0);
+      json_object_set_double_member(control, "soft_max", 15.0);
+      json_array_add_element(fields, copy);
+      break;
+    }
+    g_object_unref(angle); g_free(angle_schema);
+  }
   JsonGenerator *generator = json_generator_new();
   json_generator_set_root(generator, json_parser_get_root(parser));
   char *result = json_generator_to_data(generator, NULL);
@@ -703,6 +728,17 @@ int dt_touch_editor_reset(dt_touch_editor_t *editor, const char *operation, char
 {
   dt_iop_module_t *module = _module(editor, operation, error);
   if(!module) return FALSE;
+  if(!strcmp(operation, "flip"))
+  {
+    dt_iop_module_t *perspective = _module(editor, "ashift", error);
+    if(!perspective) return FALSE;
+    float *rotation = perspective->get_p(perspective->params, "rotation");
+    if(rotation && *rotation != 0.0f)
+    {
+      *rotation = 0.0f;
+      dt_dev_add_history_item_ext(&editor->dev, perspective, perspective->enabled, TRUE);
+    }
+  }
   memcpy(module->params, module->default_params, module->params_size);
   dt_iop_commit_blend_params(module, module->default_blendop_params, NULL);
   module->enabled = module->default_enabled;

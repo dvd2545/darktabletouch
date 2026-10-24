@@ -261,6 +261,19 @@ int main(int argc, char **argv)
            || menu->mapToScene(QPointF(menu->width(), 0)).x() > filmstrip->mapToScene(QPointF()).x()
            || strip->mapToScene(QPointF(strip->width(), 0)).x() > panel->mapToScene(QPointF()).x() + 1)
         { QTextStream(stderr) << "editor layout or image information is invalid\n"; controller.shutdown(); return; }
+        auto imageCanvas = window->findChild<QQuickItem *>(QStringLiteral("imageCanvas"));
+        if(!imageCanvas) { QTextStream(stderr) << "image canvas is unavailable\n"; controller.shutdown(); return; }
+        const double anchorX = imageCanvas->width() * 0.7, anchorY = imageCanvas->height() * 0.6;
+        QMetaObject::invokeMethod(window, "zoomAt", Q_ARG(QVariant, 2.0), Q_ARG(QVariant, anchorX), Q_ARG(QVariant, anchorY));
+        const double normalizedX = (imageCanvas->property("contentX").toDouble() + anchorX) / (imageCanvas->width() * 2);
+        const double normalizedY = (imageCanvas->property("contentY").toDouble() + anchorY) / (imageCanvas->height() * 2);
+        if(qAbs(normalizedX - 0.7) > 0.00001 || qAbs(normalizedY - 0.6) > 0.00001)
+        { QTextStream(stderr) << "zoom did not preserve its pointer anchor\n"; controller.shutdown(); return; }
+        QMetaObject::invokeMethod(window, "placeZoom", Q_ARG(QVariant, 3.0), Q_ARG(QVariant, anchorX - 20),
+          Q_ARG(QVariant, anchorY - 10), Q_ARG(QVariant, normalizedX), Q_ARG(QVariant, normalizedY));
+        if(qAbs((imageCanvas->property("contentX").toDouble() + anchorX - 20) / (imageCanvas->width() * 3) - normalizedX) > 0.00001)
+        { QTextStream(stderr) << "moving pinch anchor was not preserved\n"; controller.shutdown(); return; }
+        QMetaObject::invokeMethod(window, "zoomAt", Q_ARG(QVariant, 1.0), Q_ARG(QVariant, anchorX), Q_ARG(QVariant, anchorY));
         if(!screenshot.isEmpty())
         {
           const QFileInfo file(screenshot);
