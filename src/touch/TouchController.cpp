@@ -6,6 +6,7 @@
 
 #include "touch/TouchController.h"
 #include <QFileInfo>
+#include <QDirIterator>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QUrl>
@@ -169,21 +170,79 @@ void EngineWorker::initialize(QStringList arguments)
       }
     }
   emit initialized(images(), takeJson(dt_touch_modules()).array(), view);
+  emit libraryReady(takeJson(dt_touch_library()).object());
 }
 
 void EngineWorker::importPaths(QStringList paths)
 {
   if(!m_initialized) return;
+  int added = 0, existing = 0, failed = 0;
+  bool reported = false;
   for(const QString &path : paths)
   {
     char *error = nullptr;
     char *result = dt_touch_import(path.toUtf8().constData(), &error);
     const auto object = takeJson(result).object();
-    if(error) report(error);
-    else if(object.value(QStringLiteral("failed")).toInt() > 0)
-      emit failed(tr("some files could not be imported; check the source format and access permissions"));
+    if(error) { report(error); reported = true; }
+    added += object.value(QStringLiteral("imported")).toInt();
+    existing += object.value(QStringLiteral("already")).toInt();
+    failed += object.value(QStringLiteral("failed")).toInt();
   }
   emit imagesChanged(images());
+  emit libraryReady(takeJson(dt_touch_library()).object());
+  const QString summary = tr("%1 added, %2 already in library, %3 failed; the current collection and filters are unchanged")
+    .arg(added).arg(existing).arg(failed);
+  if(failed) emit this->failed(summary);
+  else if(!reported) emit completed(summary);
+}
+
+void EngineWorker::libraryCommand(QString action, QJsonObject settings, int image)
+{
+  if(!m_initialized) return;
+  char *error = nullptr;
+  const bool collection = action == QStringLiteral("collection");
+  const bool success = collection
+    ? dt_touch_collection_set(QJsonDocument(settings).toJson(QJsonDocument::Compact).constData(), &error)
+    : dt_touch_selection(action.toUtf8().constData(), image, &error);
+  if(!success) { report(error); return; }
+  if(collection) emit imagesChanged(images());
+  emit libraryReady(takeJson(dt_touch_library()).object());
+  emit completed(collection ? tr("collection updated") : tr("selection updated"));
+}
+
+void EngineWorker::reviewImport(QStringList paths, bool recursive)
+{
+  if(!m_initialized) return;
+  QJsonArray candidates;
+  QSet<QString> seen;
+  bool scanFailed = false;
+  const auto add = [&](const QString &path) {
+    const QString absolute = QFileInfo(path).absoluteFilePath();
+    if(!validText(absolute))
+    { emit failed(tr("an import filename cannot be represented as valid UTF-8")); scanFailed = true; return; }
+    if(seen.contains(absolute)) return;
+    seen.insert(absolute);
+    const int existing = dt_touch_import_candidate(absolute.toUtf8().constData());
+    if(existing < 0) return;
+    candidates.append(QJsonObject{{QStringLiteral("path"), absolute},
+      {QStringLiteral("filename"), QFileInfo(absolute).fileName()},
+      {QStringLiteral("existing"), existing > 0}});
+  };
+  for(const QString &path : paths)
+  {
+    const QFileInfo source(path);
+    if(!source.exists() || !source.isReadable())
+    { emit failed(tr("the import source is missing or cannot be read: %1").arg(path)); scanFailed = true; continue; }
+    if(source.isDir())
+    {
+      QDirIterator files(path, QDir::Files | QDir::NoSymLinks,
+        recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags);
+      while(files.hasNext()) add(files.next());
+    }
+    else add(path);
+  }
+  emit importReviewed(candidates);
+  if(!scanFailed) emit completed(tr("%1 supported photos found").arg(candidates.size()));
 }
 
 void EngineWorker::clearHistory()
@@ -399,6 +458,14 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
   connect(this, &TouchController::boot, m_worker, &EngineWorker::initialize);
   connect(this, &TouchController::importRequested, m_worker, &EngineWorker::importPaths);
+  connect(this, &TouchController::libraryRequested, m_worker, &EngineWorker::libraryCommand);
+  connect(this, &TouchController::importReviewRequested, m_worker, &EngineWorker::reviewImport);
+  connect(m_worker, &EngineWorker::libraryReady, this, [this](QJsonObject library) {
+    m_library = library.toVariantMap(); emit libraryChanged();
+  });
+  connect(m_worker, &EngineWorker::importReviewed, this, [this](QJsonArray candidates) {
+    m_importCandidates = candidates.toVariantList(); emit importReviewChanged();
+  });
   connect(this, &TouchController::openRequested, m_worker, &EngineWorker::openImage);
   connect(this, &TouchController::moduleRequested, m_worker, &EngineWorker::loadModule);
   connect(this, &TouchController::parameterRequested, m_worker, &EngineWorker::setParameter);
@@ -582,6 +649,42 @@ void TouchController::importUrls(const QVariantList &urls)
 void TouchController::importPath(const QString &path)
 {
   importUrls({QUrl::fromLocalFile(path)});
+}
+
+void TouchController::importSelectedPaths(const QStringList &paths)
+{
+  QVariantList urls;
+  for(const auto &path : paths) urls.append(QUrl::fromLocalFile(path));
+  importUrls(urls);
+}
+
+void TouchController::reviewImport(const QVariantList &urls, bool recursive)
+{
+  if(!m_ready || m_busy) return;
+  QStringList paths;
+  for(const auto &item : urls)
+  {
+    const QUrl url = item.toUrl();
+    if(!url.isValid() || !url.isLocalFile() || !validText(url.toLocalFile()))
+    { m_failed = true; m_message = tr("import requires a valid Unicode local file path"); emit stateChanged(); return; }
+    paths.append(url.toLocalFile());
+  }
+  if(paths.isEmpty()) return;
+  m_busy = true; m_failed = false; m_message = tr("scanning import sources"); emit stateChanged();
+  emit importReviewRequested(paths, recursive);
+}
+
+void TouchController::libraryCommand(const QString &action, const QVariantMap &settings, int image)
+{
+  if(!m_ready || m_busy) return;
+  if(action == QStringLiteral("collection"))
+    for(const QString &group : {QStringLiteral("collection"), QStringLiteral("filtering")})
+      for(const auto &rule : settings.value(group).toList())
+        if(!validText(rule.toMap().value(QStringLiteral("string")).toString()))
+        { m_failed = true; m_message = tr("a collection value cannot be represented as valid UTF-8"); emit stateChanged(); return; }
+  flush(true);
+  m_busy = true; m_failed = false; emit stateChanged();
+  emit libraryRequested(action, QJsonObject::fromVariantMap(settings), image);
 }
 
 void TouchController::selectImage(int id)

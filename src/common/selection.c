@@ -42,8 +42,11 @@ const dt_collection_t *dt_selection_get_collection(dt_selection_t *selection)
 static void _selection_raise_signal()
 {
   // discard cached images_to_act_on list
-  dt_act_on_reset_cache(TRUE);
-  dt_act_on_reset_cache(FALSE);
+  if(darktable.view_manager)
+  {
+    dt_act_on_reset_cache(TRUE);
+    dt_act_on_reset_cache(FALSE);
+  }
 
   DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_SELECTION_CHANGED);
 }

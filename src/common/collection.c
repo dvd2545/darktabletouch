@@ -2913,6 +2913,8 @@ gboolean dt_collection_hint_message_internal(void *message)
 
 void dt_collection_hint_message(const dt_collection_t *collection)
 {
+  if(!darktable.gui) return;
+
   /* collection hinting */
   gchar *message;
 

@@ -12,6 +12,8 @@
 #include "common/mipmap_cache.h"
 #include "common/touch_session.h"
 #include "common/collection.h"
+#include "common/selection.h"
+#include "control/conf.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
 #include "develop/pixelpipe_hb.h"
@@ -110,6 +112,216 @@ char *dt_touch_images(char **error)
 char *dt_touch_modules(void)
 {
   return dt_bridge_list_modules_json();
+}
+
+static JsonArray *_library_rules(const char *prefix, const gboolean sorting)
+{
+  JsonArray *rules = json_array_new();
+  char key[160];
+  g_snprintf(key, sizeof(key), "%s/num_%s", prefix, sorting ? "sort" : "rules");
+  const int count = CLAMP(dt_conf_get_int(key), 0, sorting ? DT_COLLECTION_SORT_LAST : DT_COLLECTION_MAX_RULES);
+  const char *members[] = { "item", "mode", "off", "top", "string", NULL };
+  for(int i = 0; i < count; i++)
+  {
+    JsonObject *rule = json_object_new();
+    if(sorting)
+    {
+      g_snprintf(key, sizeof(key), "%s/sort%d", prefix, i);
+      json_object_set_int_member(rule, "item", dt_conf_get_int(key));
+      g_snprintf(key, sizeof(key), "%s/sortorder%d", prefix, i);
+      json_object_set_int_member(rule, "order", dt_conf_get_int(key));
+    }
+    else for(int k = 0; members[k]; k++)
+    {
+      g_snprintf(key, sizeof(key), "%s/%s%d", prefix, members[k], i);
+      if(!strcmp(members[k], "string"))
+        json_object_set_string_member(rule, members[k], dt_conf_get_string_const(key));
+      else json_object_set_int_member(rule, members[k], dt_conf_get_int(key));
+    }
+    json_array_add_object_element(rules, rule);
+  }
+  return rules;
+}
+
+char *dt_touch_library(void)
+{
+  JsonObject *library = json_object_new();
+  json_object_set_array_member(library, "collection", _library_rules("plugins/lighttable/collect", FALSE));
+  json_object_set_array_member(library, "filtering", _library_rules("plugins/lighttable/filtering", FALSE));
+  json_object_set_array_member(library, "sort", _library_rules("plugins/lighttable/filtering", TRUE));
+  JsonArray *properties = json_array_new();
+  for(int i = 0; i < DT_COLLECTION_PROP_LAST; i++)
+  {
+    const char *name = dt_collection_name_untranslated(i);
+    if(!name) continue;
+    JsonObject *property = json_object_new();
+    json_object_set_int_member(property, "item", i);
+    json_object_set_string_member(property, "label", _(name));
+    JsonArray *values = json_array_new();
+    if(i == DT_COLLECTION_PROP_COLORLABEL)
+    {
+      const char *colors[] = { N_("red"), N_("yellow"), N_("green"), N_("blue"), N_("purple"), NULL };
+      for(int k = 0; colors[k]; k++) json_array_add_string_element(values, _(colors[k]));
+    }
+    else if(i == DT_COLLECTION_PROP_HISTORY)
+    {
+      json_array_add_string_element(values, _("basic"));
+      json_array_add_string_element(values, _("auto applied"));
+      json_array_add_string_element(values, _("altered"));
+    }
+    else if(i == DT_COLLECTION_PROP_RATING || i == DT_COLLECTION_PROP_RATING_RANGE)
+    {
+      const char *ratings[] = { "=0", ">=1", ">=2", ">=3", ">=4", "=5", "-1", NULL };
+      for(int k = 0; ratings[k]; k++) json_array_add_string_element(values, ratings[k]);
+    }
+    json_object_set_array_member(property, "values", values);
+    json_array_add_object_element(properties, property);
+  }
+  dt_pthread_mutex_lock(&darktable.metadata_threadsafe);
+  for(GList *item = dt_metadata_get_list(); item; item = item->next)
+  {
+    dt_metadata_t *metadata = item->data;
+    if(metadata->internal || !metadata->visible) continue;
+    JsonObject *property = json_object_new();
+    json_object_set_int_member(property, "item", DT_COLLECTION_PROP_METADATA_OFFSET + metadata->key);
+    json_object_set_string_member(property, "label", metadata->name);
+    json_array_add_object_element(properties, property);
+  }
+  dt_pthread_mutex_unlock(&darktable.metadata_threadsafe);
+  json_object_set_array_member(library, "properties", properties);
+  JsonParser *parser = json_parser_new();
+  char *folders = dt_bridge_list_film_rolls_json();
+  if(json_parser_load_from_data(parser, folders, -1, NULL))
+    json_object_set_member(library, "folders", json_node_copy(json_parser_get_root(parser)));
+  g_free(folders);
+  g_object_unref(parser);
+  JsonArray *selected = json_array_new();
+  GList *ids = dt_selection_get_list(darktable.selection, FALSE, FALSE);
+  for(GList *item = ids; item; item = item->next)
+    json_array_add_int_element(selected, GPOINTER_TO_INT(item->data));
+  g_list_free(ids);
+  json_object_set_array_member(library, "selected", selected);
+  JsonNode *root = json_node_new(JSON_NODE_OBJECT);
+  json_node_take_object(root, library);
+  char *result = json_to_string(root, FALSE);
+  json_node_free(root);
+  return result;
+}
+
+int dt_touch_collection_set(const char *json, char **error)
+{
+  JsonParser *parser = json_parser_new();
+  if(!json_parser_load_from_data(parser, json, -1, NULL)
+     || !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser)))
+  { g_object_unref(parser); return _error(error, N_("invalid collection settings")); }
+  JsonObject *settings = json_node_get_object(json_parser_get_root(parser));
+  const char *groups[] = { "collection", "filtering", "sort" };
+  // validate the entire request before changing Classic's shared preferences
+  for(int group = 0; group < 3; group++)
+  {
+    JsonNode *node = json_object_get_member(settings, groups[group]);
+    if(!node || !JSON_NODE_HOLDS_ARRAY(node)) goto invalid;
+    JsonArray *rules = json_node_get_array(node);
+    const guint count = json_array_get_length(rules);
+    if(count > (group == 2 ? DT_COLLECTION_SORT_LAST : DT_COLLECTION_MAX_RULES)
+       || (group == 0 && count == 0)) goto invalid;
+    for(guint i = 0; i < count; i++)
+    {
+      JsonNode *entry = json_array_get_element(rules, i);
+      if(!JSON_NODE_HOLDS_OBJECT(entry)) goto invalid;
+      JsonObject *rule = json_node_get_object(entry);
+      node = json_object_get_member(rule, "item");
+      if(!node || json_node_get_value_type(node) != G_TYPE_INT64) goto invalid;
+      const int property = json_node_get_int(node);
+      if(group == 2)
+      {
+        node = json_object_get_member(rule, "order");
+        if(property < 0 || property >= DT_COLLECTION_SORT_LAST || !node
+           || json_node_get_value_type(node) != G_TYPE_INT64
+           || json_node_get_int(node) < 0 || json_node_get_int(node) > 1) goto invalid;
+      }
+      else
+      {
+        if(!dt_collection_name_untranslated(property)
+           && !(property >= DT_COLLECTION_PROP_METADATA_OFFSET
+                && dt_metadata_get_metadata_by_keyid(property - DT_COLLECTION_PROP_METADATA_OFFSET))) goto invalid;
+        node = json_object_get_member(rule, "string");
+        if(!node || json_node_get_value_type(node) != G_TYPE_STRING
+           || !g_utf8_validate(json_node_get_string(node), -1, NULL)) goto invalid;
+        const char *numbers[] = { "mode", "off", "top" };
+        for(int k = 0; k < 3; k++)
+        {
+          node = json_object_get_member(rule, numbers[k]);
+          if(!node || json_node_get_value_type(node) != G_TYPE_INT64
+             || json_node_get_int(node) < 0 || json_node_get_int(node) > (k == 0 ? 2 : 1)) goto invalid;
+        }
+      }
+    }
+  }
+  for(int group = 0; group < 3; group++)
+  {
+    const char *prefix = group == 0 ? "plugins/lighttable/collect" : "plugins/lighttable/filtering";
+    JsonArray *rules = json_object_get_array_member(settings, groups[group]);
+    char key[160];
+    g_snprintf(key, sizeof(key), "%s/num_%s", prefix, group == 2 ? "sort" : "rules");
+    dt_conf_set_int(key, json_array_get_length(rules));
+    for(guint i = 0; i < json_array_get_length(rules); i++)
+    {
+      JsonObject *rule = json_array_get_object_element(rules, i);
+      const char *members[] = { "item", "mode", "off", "top", "string", NULL };
+      if(group == 2)
+      {
+        g_snprintf(key, sizeof(key), "%s/sort%d", prefix, i);
+        dt_conf_set_int(key, json_object_get_int_member(rule, "item"));
+        g_snprintf(key, sizeof(key), "%s/sortorder%d", prefix, i);
+        dt_conf_set_int(key, json_object_get_int_member(rule, "order"));
+      }
+      else for(int k = 0; members[k]; k++)
+      {
+        g_snprintf(key, sizeof(key), "%s/%s%d", prefix, members[k], i);
+        if(k == 4) dt_conf_set_string(key, json_object_get_string_member(rule, members[k]));
+        else dt_conf_set_int(key, json_object_get_int_member(rule, members[k]));
+      }
+    }
+  }
+  g_object_unref(parser);
+  dt_collection_update_query(darktable.collection, DT_COLLECTION_CHANGE_NEW_QUERY, DT_COLLECTION_PROP_UNDEF, NULL);
+  return TRUE;
+invalid:
+  g_object_unref(parser);
+  return _error(error, N_("invalid collection rule or sort order"));
+}
+
+int dt_touch_selection(const char *action, int image_id, char **error)
+{
+  if(!strcmp(action, "all")) dt_selection_select_all(darktable.selection);
+  else if(!strcmp(action, "none")) dt_selection_clear(darktable.selection);
+  else if(!strcmp(action, "invert")) dt_selection_invert(darktable.selection);
+  else if(!strcmp(action, "film")) dt_selection_select_filmroll(darktable.selection);
+  else if(!strcmp(action, "untouched")) dt_selection_select_unaltered(darktable.selection);
+  else if(image_id > 0 && dt_image_exists(image_id))
+  {
+    if(!strcmp(action, "toggle")) dt_selection_toggle(darktable.selection, image_id);
+    else if(!strcmp(action, "range")) dt_selection_select_range(darktable.selection, image_id);
+    else if(!strcmp(action, "single")) dt_selection_select_single(darktable.selection, image_id);
+    else return _error(error, N_("unknown selection action"));
+  }
+  else return _error(error, N_("unknown selection action or image"));
+  return TRUE;
+}
+
+int dt_touch_import_candidate(const char *path)
+{
+  if(!dt_supported_image(path)) return -1;
+  GFile *file = g_file_new_for_path(path);
+  char *canonical = g_file_get_path(file);
+  g_object_unref(file);
+#ifdef _WIN32
+  g_strdelimit(canonical, "/", G_DIR_SEPARATOR);
+#endif
+  const int existing = MAX(0, dt_image_get_id_full_path(canonical));
+  g_free(canonical);
+  return existing;
 }
 
 char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error)

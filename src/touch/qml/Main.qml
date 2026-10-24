@@ -25,6 +25,9 @@ ApplicationWindow {
     property real viewZoom: 1
     property int thumbnailRevision: 0
     property bool advanced: false
+    property bool selectionMode: false
+    property bool importRecursive: true
+    readonly property var selectedImages: controller.library.selected || []
     property string expandedTool: "exposure"
     property bool informationVisible: false
     property bool statusVisible: true
@@ -84,13 +87,14 @@ ApplicationWindow {
     onActiveFocusItemChanged: {
         revealItem(activeFocusItem, toolColumn, toolScroll)
         if(quickMenu.opened) revealItem(activeFocusItem, quickColumn, quickScroll.contentItem)
+        if(collectionDialog.opened) revealItem(activeFocusItem, collectionDialog.focusColumn, collectionDialog.focusViewport)
     }
 
     Timer { id: informationTimer; interval: 4000; onTriggered: window.informationVisible = false }
     Timer { id: statusTimer; interval: 3500; onTriggered: window.statusVisible = false }
 
     function showHistory() { historyDialog.open() }
-    function showQuickMenu() { historyDialog.close(); toolActions.close(); toolSearch.close(); quickMenu.open() }
+    function showQuickMenu() { historyDialog.close(); toolActions.close(); toolSearch.close(); collectionDialog.close(); importReview.close(); importSource.close(); quickMenu.open() }
 
     onClosing: function(close) {
         if(!controller.canClose) { close.accepted = false; saveView(); controller.shutdown() }
@@ -101,6 +105,7 @@ ApplicationWindow {
         function onThumbnailChanged(id) { window.thumbnailRevision++ }
         function onImageInformationChanged() { showImageInformation(); updateFilmstrip() }
         function onImagesChanged() { Qt.callLater(updateFilmstrip) }
+        function onImportReviewChanged() { importReview.open() }
         function onModuleChanged() { window.expandedTool = controller.operation }
         function onStateChanged() { window.statusVisible = true; statusTimer.restart() }
         function onViewRestored(zoom, centerX, centerY) {
@@ -150,8 +155,8 @@ ApplicationWindow {
     Shortcut {
         sequence: "Escape"
         enabled: !quickMenu.opened && !historyDialog.opened && !toolSearch.opened && !toolActions.opened
-            && !importDialog.visible && !folderDialog.visible && !exportDialog.visible
-        onActivated: { if(controller.before) controller.before = false; else controller.editorVisible = false }
+            && !importDialog.visible && !folderDialog.visible && !exportDialog.visible && !collectionDialog.opened && !importReview.opened && !importSource.opened
+        onActivated: { if(controller.before) controller.before = false; else if(!controller.editorVisible && window.selectionMode) window.selectionMode = false; else controller.editorVisible = false }
     }
 
     StackLayout {
@@ -167,8 +172,20 @@ ApplicationWindow {
                     Label { text: qsTr("photo library"); color: "#eceef0"; font.pixelSize: 28; font.weight: Font.DemiBold }
                     Label { text: controller.images.length === 1 ? qsTr("1 photo") : qsTr("%1 photos").arg(controller.images.length.toLocaleString(Qt.locale("en_US"), "f", 0)); color: "#9da6b3" }
                 }
-                TouchButton { text: qsTr("import folder"); enabled: controller.ready; onClicked: folderDialog.open() }
-                TouchButton { text: qsTr("import photos"); enabled: controller.ready; onClicked: importDialog.open() }
+                TouchButton { text: qsTr("collections"); enabled: controller.ready && !controller.busy; onClicked: collectionDialog.open() }
+                TouchButton { text: window.selectionMode ? qsTr("done") : qsTr("select"); checked: window.selectionMode; onClicked: window.selectionMode = !window.selectionMode }
+                TouchButton { text: qsTr("import"); enabled: controller.ready && !controller.busy; onClicked: importSource.open() }
+            }
+            RowLayout {
+                visible: window.selectionMode
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+                Label { text: qsTr("%1 selected").arg(window.selectedImages.length); color: "#00dbe5" }
+                TouchButton { text: qsTr("all"); enabled: !controller.busy; onClicked: controller.libraryCommand("all", {}, 0) }
+                TouchButton { text: qsTr("none"); enabled: !controller.busy; onClicked: controller.libraryCommand("none", {}, 0) }
+                TouchButton { text: qsTr("invert"); enabled: !controller.busy; onClicked: controller.libraryCommand("invert", {}, 0) }
+                TouchButton { text: qsTr("same film roll"); enabled: !controller.busy && window.selectedImages.length > 0; onClicked: controller.libraryCommand("film", {}, 0) }
+                TouchButton { text: qsTr("untouched"); enabled: !controller.busy; onClicked: controller.libraryCommand("untouched", {}, 0) }
+                Item { Layout.fillWidth: true }
             }
             GridView {
                 id: library
@@ -180,11 +197,41 @@ ApplicationWindow {
                 cacheBuffer: cellHeight
                 delegate: Item {
                     required property var modelData
+                    required property int index
                     width: library.cellWidth; height: library.cellHeight
                     TouchButton {
                         anchors.fill: parent; anchors.margins: 6; text: ""
+                        enabled: controller.ready && !controller.busy
                         Accessible.name: modelData.filename
-                        onClicked: { viewZoom = 1; controller.selectImage(modelData.imgid) }
+                        checked: window.selectionMode && window.selectedImages.indexOf(modelData.imgid) >= 0
+                        onClicked: {
+                            if(window.selectionMode) controller.libraryCommand("toggle", {}, modelData.imgid)
+                            else { viewZoom = 1; controller.selectImage(modelData.imgid) }
+                        }
+                        onPressAndHold: {
+                            window.selectionMode = true
+                            controller.libraryCommand("toggle", {}, modelData.imgid)
+                        }
+                        onActiveFocusChanged: if(activeFocus) { library.currentIndex = index; library.positionViewAtIndex(index, GridView.Contain) }
+                        Keys.onPressed: function(event) {
+                            if(window.selectionMode && (event.key === Qt.Key_Space || event.key === Qt.Key_Return)
+                               && (event.modifiers & Qt.ShiftModifier)) {
+                                event.accepted = true
+                                controller.libraryCommand("range", {}, modelData.imgid)
+                                return
+                            }
+                            const columns = Math.max(1, Math.round(library.width / library.cellWidth))
+                            const direction = event.key === Qt.Key_Down ? columns : event.key === Qt.Key_Up ? -columns
+                                : event.key === Qt.Key_Tab || event.key === Qt.Key_Right ? 1
+                                : event.key === Qt.Key_Backtab || event.key === Qt.Key_Left ? -1 : 0
+                            const next = index + direction
+                            if(direction && next >= 0 && next < library.count) {
+                                event.accepted = true
+                                library.currentIndex = next
+                                library.positionViewAtIndex(next, GridView.Contain)
+                                Qt.callLater(function() { const item = library.itemAtIndex(next); if(item) item.children[0].forceActiveFocus() })
+                            }
+                        }
                         ColumnLayout {
                             anchors.fill: parent; anchors.margins: 10; spacing: 8
                             Image {
@@ -192,7 +239,7 @@ ApplicationWindow {
                                 source: "image://photos/thumb/" + modelData.imgid + "?revision=" + window.thumbnailRevision
                                 fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
                             }
-                            Label { text: modelData.filename; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: 14; color: "#e2e5e9" }
+                            Label { text: modelData.filename; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: 14; color: window.selectionMode && window.selectedImages.indexOf(modelData.imgid) >= 0 ? "#07191b" : "#e2e5e9" }
                         }
                     }
                     Component.onCompleted: controller.requestThumbnail(modelData.imgid)
@@ -204,10 +251,10 @@ ApplicationWindow {
                 Label {
                     anchors.centerIn: parent
                     visible: controller.ready && controller.images.length === 0
-                    text: qsTr("a little space for your next favorite photo\nimport a folder or drop photos here")
+                    text: qsTr("no photos in this collection\nimport photos or change collections and filters")
                     horizontalAlignment: Text.AlignHCenter; lineHeight: 1.8; color: "#9da6b3"; font.pixelSize: 20
                 }
-                DropArea { anchors.fill: parent; onDropped: function(drop) { controller.importUrls(drop.urls) } }
+                DropArea { anchors.fill: parent; onDropped: function(drop) { controller.reviewImport(drop.urls, window.importRecursive) } }
                 ScrollBar.vertical: ScrollBar { }
             }
         }
@@ -476,12 +523,28 @@ ApplicationWindow {
         }
     }
 
+    LibraryDialog { id: collectionDialog; objectName: "collectionDialog"; photoController: controller }
+    ImportReview { id: importReview; objectName: "importReview"; photoController: controller }
+    Dialog {
+        id: importSource
+        modal: true; focus: true; anchors.centerIn: parent; title: qsTr("add to library")
+        width: Math.min(480, window.width - 32); padding: 20
+        background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
+        contentItem: ColumnLayout {
+            spacing: 12
+            Label { text: qsTr("choose a source, then review which photos to add"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#aebbc1" }
+            TouchButton { text: qsTr("choose photos"); Layout.fillWidth: true; onClicked: { importSource.close(); importDialog.open() } }
+            TouchButton { text: qsTr("choose folder"); Layout.fillWidth: true; onClicked: { importSource.close(); folderDialog.open() } }
+            TouchButton { text: qsTr("include subfolders"); checked: window.importRecursive; Layout.fillWidth: true; onClicked: window.importRecursive = !window.importRecursive }
+            TouchButton { text: qsTr("cancel"); Layout.fillWidth: true; onClicked: importSource.close() }
+        }
+    }
     FileDialog {
         id: importDialog
         title: qsTr("import photos")
         fileMode: FileDialog.OpenFiles
         options: FileDialog.DontUseNativeDialog
-        onAccepted: controller.importUrls(selectedFiles)
+        onAccepted: controller.reviewImport(selectedFiles, false)
     }
     Popup {
         id: toolActions
@@ -504,7 +567,7 @@ ApplicationWindow {
         id: folderDialog
         title: qsTr("import a photo folder")
         options: FolderDialog.DontUseNativeDialog
-        onAccepted: controller.importUrls([selectedFolder])
+        onAccepted: controller.reviewImport([selectedFolder], window.importRecursive)
     }
     FileDialog {
         id: exportDialog
@@ -520,6 +583,7 @@ ApplicationWindow {
     }
     Popup {
         id: quickMenu
+        objectName: "quickMenu"
         anchors.centerIn: parent
         width: Math.min(520, window.width - 48); height: Math.min(620, window.height - 48); padding: 24; modal: true; focus: true
         background: Rectangle { color: "#24272d"; radius: 20; border.color: "#424951" }
@@ -556,7 +620,8 @@ ApplicationWindow {
                     }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 10
-                        TouchButton { text: qsTr("import photos"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); importDialog.open() } }
+                    TouchButton { text: qsTr("collections and filters"); Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { quickMenu.close(); collectionDialog.open() } }
+                    TouchButton { text: qsTr("import photos"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); importDialog.open() } }
                         TouchButton { text: qsTr("import folder"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); folderDialog.open() } }
                     }
                     TouchButton {

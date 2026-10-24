@@ -101,6 +101,33 @@ steps and instance labels. Selecting a step uses native history replay and
 is itself undoable. Built-in preset labels use the same localization helper
 as Classic. History and quick-action panels scroll at smaller window sizes.
 
+### Library collections and import
+
+The library's "collections" button opens imported folders, collection rules,
+filters, and sort priorities. Folder selection replaces the collection rule
+and keeps filters separate; "reset all" clears both. Rules use Classic's
+properties and matching syntax, including AND, OR, AND NOT, `%` wildcards,
+numeric comparisons, and metadata fields. Rating, color-label, and history
+rules offer common values. Filters can be disabled without removing them.
+Changes are applied together or discarded with cancel. The same preferences
+and native collection query drive the filmstrip and Classic handoff.
+
+"select" enables multi-photo selection without opening the editor. Tap photos
+to toggle them, or use all, none, invert, same film roll, and untouched. Hold
+a thumbnail to enter selection mode; Shift+Space selects a range from the
+native anchor. Selection uses the catalog's existing selected-image table.
+It is separate from the active editor image. Export still targets that active
+image; selecting several images does not imply batch export.
+
+Import supports adding photos at their existing locations. Choose files or
+a folder, optionally include subfolders, and review supported files before
+adding them. Existing catalog entries are identified and skipped; select all
+new files, none, or individual files. Dropped paths use the same review step.
+The source files stay in place. Import does not replace a collection or clear
+filters, and reports added, existing, and failed counts. Copy-and-import,
+camera ingestion, import renaming/metadata templates, collection presets,
+and specialized value trees remain available through Classic.
+
 ### Coverage status
 
 All six priority modules are **partial**, not completed ports:

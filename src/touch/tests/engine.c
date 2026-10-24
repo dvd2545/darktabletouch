@@ -7,6 +7,8 @@
 #include "touch/engine_bridge.h"
 #include "common/touch_session.h"
 #include "common/image.h"
+#include "common/collection.h"
+#include "common/database.h"
 #include "control/conf.h"
 #include <glib.h>
 #include <gio/gio.h>
@@ -16,6 +18,126 @@
 #ifdef _WIN32
 #include "win/main_wrapper.h"
 #endif
+
+static JsonObject *_rule(int property, const char *value, int mode, int off)
+{
+  JsonObject *rule = json_object_new();
+  json_object_set_int_member(rule, "item", property);
+  json_object_set_int_member(rule, "mode", mode);
+  json_object_set_int_member(rule, "off", off);
+  json_object_set_int_member(rule, "top", 0);
+  json_object_set_string_member(rule, "string", value);
+  return rule;
+}
+
+static int _count(const char *query)
+{
+  sqlite3_stmt *statement = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(dt_database_get(darktable.db), query, -1, &statement, NULL), ==, SQLITE_OK);
+  g_assert_cmpint(sqlite3_step(statement), ==, SQLITE_ROW);
+  const int value = sqlite3_column_int(statement, 0);
+  sqlite3_finalize(statement);
+  return value;
+}
+
+static void _apply_collection(JsonObject *settings, int count)
+{
+  JsonNode *root = json_node_new(JSON_NODE_OBJECT);
+  json_node_set_object(root, settings);
+  char *text = json_to_string(root, FALSE), *error = NULL;
+  g_assert_true(dt_touch_collection_set(text, &error));
+  g_assert_null(error);
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM memory.collected_images"), ==, count);
+  g_free(text);
+  json_node_free(root);
+}
+
+static void _test_library(const char *filename, const char *folder, int first)
+{
+  char *other_folder = g_build_filename(folder, "second folder", NULL);
+  g_mkdir_with_parents(other_folder, 0700);
+  char *other = g_build_filename(other_folder, "second #%.CR2", NULL);
+  GFile *source = g_file_new_for_path(filename), *target = g_file_new_for_path(other);
+  g_assert_true(g_file_copy(source, target, G_FILE_COPY_NONE, NULL, NULL, NULL, NULL));
+  g_object_unref(source); g_object_unref(target);
+  g_assert_cmpint(dt_touch_import_candidate(other), ==, 0);
+  char *error = NULL, *result = dt_touch_import(other, &error);
+  g_assert_nonnull(result); g_assert_null(error); g_free(result);
+  const int second = dt_touch_import_candidate(other);
+  g_assert_cmpint(second, >, first);
+  g_assert_cmpint(dt_touch_import_candidate(filename), ==, first);
+#ifdef _WIN32
+  char *qt_path = g_strdup(filename);
+  g_strdelimit(qt_path, "\\", '/');
+  g_assert_cmpint(dt_touch_import_candidate(qt_path), ==, first);
+  g_free(qt_path);
+#endif
+  g_assert_cmpint(dt_touch_import_candidate("not-a-photo.xmp"), ==, -1);
+
+  JsonObject *settings = json_object_new();
+  JsonArray *rules = json_array_new(), *filters = json_array_new(), *sort = json_array_new();
+  json_object_set_array_member(settings, "collection", rules);
+  json_object_set_array_member(settings, "filtering", filters);
+  json_object_set_array_member(settings, "sort", sort);
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILMROLL, "%", 0, 0));
+  JsonObject *order = json_object_new();
+  json_object_set_int_member(order, "item", DT_COLLECTION_SORT_ID);
+  json_object_set_int_member(order, "order", 1);
+  json_array_add_object_element(sort, order);
+  _apply_collection(settings, 2);
+  g_assert_cmpint(_count("SELECT imgid FROM memory.collected_images ORDER BY rowid LIMIT 1"), ==, second);
+  g_assert_true(dt_touch_selection("all", 0, &error));
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM main.selected_images"), ==, 2);
+  g_assert_true(dt_touch_selection("invert", 0, &error));
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM main.selected_images"), ==, 0);
+  g_assert_true(dt_touch_selection("toggle", first, &error));
+  g_assert_true(dt_touch_selection("film", 0, &error));
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM main.selected_images"), ==, 1);
+  g_assert_true(dt_touch_selection("single", first, &error));
+  g_assert_true(dt_touch_selection("range", second, &error));
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM main.selected_images"), ==, 2);
+  g_assert_true(dt_touch_selection("none", 0, &error));
+  g_assert_true(dt_touch_selection("untouched", 0, &error));
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM main.selected_images"), ==,
+    _count("SELECT COUNT(*) FROM main.images i WHERE EXISTS (SELECT 1 FROM main.history_hash h"
+           " WHERE h.imgid = i.id AND (h.current_hash = h.auto_hash OR h.current_hash IS NULL))"));
+  json_array_remove_element(rules, 0);
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILENAME, "รูป.CR2", 0, 0));
+  _apply_collection(settings, 1);
+  g_assert_cmpint(_count("SELECT imgid FROM memory.collected_images"), ==, first);
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILENAME, "second%", 1, 0));
+  _apply_collection(settings, 2);
+  json_array_add_object_element(filters, _rule(DT_COLLECTION_PROP_FILENAME, "second%", 2, 0));
+  _apply_collection(settings, 1);
+  json_object_set_int_member(json_array_get_object_element(filters, 0), "off", 1);
+  _apply_collection(settings, 2);
+  json_object_set_int_member(json_array_get_object_element(rules, 1), "mode", 0);
+  _apply_collection(settings, 0);
+  char *state = dt_touch_library();
+  JsonParser *parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, state, -1, NULL));
+  JsonObject *library = json_node_get_object(json_parser_get_root(parser));
+  g_assert_cmpuint(json_array_get_length(json_object_get_array_member(library, "folders")), ==, 2);
+  g_assert_cmpuint(json_array_get_length(json_object_get_array_member(library, "properties")), >, 30);
+  g_free(state); g_object_unref(parser);
+  g_assert_false(dt_touch_collection_set("{\"collection\":[]}", &error));
+  g_assert_nonnull(error); g_free(error); error = NULL;
+  g_assert_cmpint(dt_conf_get_int("plugins/lighttable/collect/num_rules"), ==, 2);
+  json_array_remove_element(rules, 1);
+  json_array_remove_element(rules, 0);
+  json_array_remove_element(filters, 0);
+  GString *long_value = g_string_new("ผู้ใช้/$#%");
+  for(int i = 0; i < 200; i++) g_string_append(long_value, "ทดสอบ ภาพถ่าย/");
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILENAME, long_value->str, 0, 0));
+  _apply_collection(settings, 0);
+  g_assert_cmpstr(dt_conf_get_string_const("plugins/lighttable/collect/string0"), ==, long_value->str);
+  g_string_free(long_value, TRUE);
+  json_array_remove_element(rules, 0);
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILMROLL, "%", 0, 0));
+  _apply_collection(settings, 2);
+  json_object_unref(settings);
+  g_free(other_folder); g_free(other);
+}
 
 int main(int argc, char **argv)
 {
@@ -44,6 +166,7 @@ int main(int argc, char **argv)
   g_assert_no_error(error);
   JsonArray *images = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "images");
   const int image_id = json_object_get_int_member(json_array_get_object_element(images, 0), "imgid");
+  _test_library(filename, folder, image_id);
   char truncated[4] = "bad";
   gboolean cached = FALSE;
   dt_image_full_path(image_id, truncated, sizeof(truncated), &cached);
@@ -146,7 +269,7 @@ int main(int argc, char **argv)
   g_assert_cmpint(g_unlink(library), ==, 0);
   g_assert_cmpint(g_unlink(data), ==, 0);
   g_free(library); g_free(data);
-  printf("passed: persistent Touch preview, history restore, and Unicode session handoff\n");
+  printf("passed: native collections, filters, selection, sorting, persistent Touch preview, and Unicode session handoff\n");
   g_free(filename); g_free(cache); g_free(config); g_free(folder); g_free(root);
   return 0;
 }

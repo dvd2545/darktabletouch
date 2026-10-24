@@ -103,7 +103,120 @@ int main(int argc, char **argv)
   if(!selfTest.isEmpty() && testCommandLine) window->resize(960, 540);
   bool startedImport = false, startedImage = false, finished = false;
   int stage = 0;
+  int libraryStage = -1;
+  QTimer libraryTest;
+  libraryTest.setInterval(180);
+  const auto libraryScreenshot = [&](const QString &suffix) {
+    if(screenshot.isEmpty()) return true;
+    const QFileInfo file(screenshot);
+    return window->grabWindow().save(file.dir().filePath(file.completeBaseName() + suffix + QStringLiteral(".png")));
+  };
+  QObject::connect(&libraryTest, &QTimer::timeout, &app, [&] {
+    if(controller.busy()) return;
+    const auto fail = [&](const char *message) {
+      QTextStream(stderr) << message << '\n'; libraryTest.stop(); controller.shutdown();
+    };
+    auto collectionDialog = window->findChild<QObject *>(QStringLiteral("collectionDialog"));
+    auto review = window->findChild<QObject *>(QStringLiteral("importReview"));
+    if(!collectionDialog || !review) { fail("library dialogs are unavailable"); return; }
+    const int selected = controller.library().value(QStringLiteral("selected")).toList().size();
+    switch(libraryStage)
+    {
+      case 0:
+        if(auto menu = window->findChild<QObject *>(QStringLiteral("quickMenu"))) QMetaObject::invokeMethod(menu, "close");
+        controller.setEditorVisible(false);
+        controller.libraryCommand(QStringLiteral("all"));
+        break;
+      case 1:
+        if(selected != 1) { fail("select all did not select the collection"); return; }
+        if(!libraryScreenshot(QStringLiteral("-library"))) { fail("library screenshot failed"); return; }
+        controller.libraryCommand(QStringLiteral("invert"));
+        break;
+      case 2:
+        if(selected != 0) { fail("invert did not clear the selected collection"); return; }
+        controller.libraryCommand(QStringLiteral("single"), {}, controller.imageId());
+        break;
+      case 3:
+        if(selected != 1) { fail("single selection did not select the image"); return; }
+        QMetaObject::invokeMethod(collectionDialog, "open");
+        break;
+      case 4:
+        if(!libraryScreenshot(QStringLiteral("-folders"))) { fail("folder screenshot failed"); return; }
+        collectionDialog->setProperty("page", 1);
+        break;
+      case 5:
+      {
+        if(!libraryScreenshot(QStringLiteral("-collection"))) { fail("collection screenshot failed"); return; }
+        auto draft = controller.library();
+        int ratingProperty = -1;
+        for(const auto &property : draft.value(QStringLiteral("properties")).toList())
+          if(property.toMap().value(QStringLiteral("label")).toString() == QStringLiteral("rating"))
+            ratingProperty = property.toMap().value(QStringLiteral("item")).toInt();
+        if(ratingProperty < 0) { fail("rating filter is unavailable"); return; }
+        draft.insert(QStringLiteral("filtering"), QVariantList{QVariantMap{{QStringLiteral("item"), ratingProperty},
+          {QStringLiteral("mode"), 0}, {QStringLiteral("off"), 0}, {QStringLiteral("top"), 0}, {QStringLiteral("string"), QStringLiteral(">=0")}}});
+        collectionDialog->setProperty("draft", draft);
+        collectionDialog->setProperty("page", 2);
+        break;
+      }
+      case 6:
+        if(!libraryScreenshot(QStringLiteral("-filters"))) { fail("filter screenshot failed"); return; }
+        collectionDialog->setProperty("page", 3);
+        break;
+      case 7:
+      {
+        if(!libraryScreenshot(QStringLiteral("-sort"))) { fail("sort screenshot failed"); return; }
+        QMetaObject::invokeMethod(collectionDialog, "close");
+        auto settings = controller.library();
+        settings.insert(QStringLiteral("collection"), QVariantList{QVariantMap{{QStringLiteral("item"), 2},
+          {QStringLiteral("mode"), 0}, {QStringLiteral("off"), 0}, {QStringLiteral("top"), 0},
+          {QStringLiteral("string"), QStringLiteral("no-such-photo")}}});
+        controller.libraryCommand(QStringLiteral("collection"), settings);
+        break;
+      }
+      case 8:
+      {
+        if(!controller.images().isEmpty() || selected != 0) { fail("collection filtering did not update images and selection"); return; }
+        auto settings = controller.library();
+        settings.insert(QStringLiteral("collection"), QVariantList{QVariantMap{{QStringLiteral("item"), 0},
+          {QStringLiteral("mode"), 0}, {QStringLiteral("off"), 0}, {QStringLiteral("top"), 0}, {QStringLiteral("string"), QStringLiteral("%")}}});
+        controller.libraryCommand(QStringLiteral("collection"), settings);
+        break;
+      }
+      case 9:
+        if(controller.images().size() != 1) { fail("reset collection did not restore the imported photo"); return; }
+        controller.reviewImport({QUrl::fromLocalFile(QFileInfo(testPhoto).absolutePath())}, false);
+        break;
+      case 10:
+        if(controller.importCandidates().size() != 1 || !controller.importCandidates().first().toMap().value(QStringLiteral("existing")).toBool()
+           || controller.importCandidates().first().toMap().value(QStringLiteral("path")).toString() != testPhoto)
+        { fail("Unicode import review did not identify the existing photo"); return; }
+        break;
+      case 11:
+        if(!libraryScreenshot(QStringLiteral("-import-review"))) { fail("import review screenshot failed"); return; }
+        QMetaObject::invokeMethod(review, "close");
+        libraryTest.stop(); finished = true;
+        QTextStream(stdout) << "passed: Touch RAW editing/export, layout, collections, filters, selection, sorting, and Unicode import review\n";
+        controller.shutdown();
+        break;
+      default: return;
+    }
+    ++libraryStage;
+  });
   QImage baseline, adjusted;
+  QObject::connect(&controller, &TouchController::importReviewChanged, &app, [&] {
+    if(selfTest.isEmpty() || testCommandLine || startedImage) return;
+    QTimer::singleShot(200, &app, [&] {
+      auto review = window->findChild<QObject *>(QStringLiteral("importReview"));
+      auto confirm = window->findChild<QObject *>(QStringLiteral("confirmImport"));
+      if(controller.importCandidates().size() != 1
+         || controller.importCandidates().first().toMap().value(QStringLiteral("existing")).toBool()
+         || !review || review->property("selectedCount").toInt() != 1 || !confirm || !confirm->property("enabled").toBool()
+         || !libraryScreenshot(QStringLiteral("-import-new")))
+      { QTextStream(stderr) << "new-photo import review is invalid\n"; controller.shutdown(); return; }
+      QMetaObject::invokeMethod(confirm, "clicked");
+    });
+  });
   QObject::connect(&controller, &TouchController::stateChanged, &app, [&] {
     if(controller.ready() && !coverage.isEmpty())
     {
@@ -123,7 +236,7 @@ int main(int argc, char **argv)
         if(controller.images().isEmpty())
         { QTextStream(stderr) << "command-line RAW import failed\n"; controller.shutdown(); }
       }
-      else controller.importPath(testPhoto);
+      else controller.reviewImport({QUrl::fromLocalFile(testPhoto)}, false);
     }
     if(stage == 7 && controller.message().startsWith(QStringLiteral("exported to")))
     {
@@ -226,9 +339,8 @@ int main(int argc, char **argv)
               if(!window->grabWindow().save(menuShot))
               { QTextStream(stderr) << "could not write the menu screenshot\n"; controller.shutdown(); return; }
             }
-            finished = true;
-            QTextStream(stdout) << "passed: Touch import, preview, Exposure, history, undo, redo, export, editor layout, and fading image information\n";
-            controller.shutdown();
+            libraryStage = 0;
+            libraryTest.start();
           });
         });
       });

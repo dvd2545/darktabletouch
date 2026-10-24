@@ -58,6 +58,8 @@ public:
 public slots:
   void initialize(QStringList arguments);
   void importPaths(QStringList paths);
+  void libraryCommand(QString action, QJsonObject settings, int image);
+  void reviewImport(QStringList paths, bool recursive);
   void openImage(int id, quint64 revision);
   void loadModule(QString operation, quint64 revision);
   void setParameter(QString operation, QString name, QVariant value, bool commit, quint64 revision);
@@ -73,6 +75,8 @@ public slots:
 signals:
   void initialized(QJsonArray images, QJsonArray modules, QJsonObject session);
   void imagesChanged(QJsonArray images);
+  void libraryReady(QJsonObject library);
+  void importReviewed(QJsonArray candidates);
   void imageOpened(int id, quint64 revision);
   void informationReady(QJsonObject information, quint64 revision);
   void moduleReady(QJsonObject module, quint64 revision);
@@ -118,6 +122,8 @@ class TouchController final : public QObject
   Q_PROPERTY(QVariantMap imageInformation READ imageInformation NOTIFY imageInformationChanged)
   Q_PROPERTY(bool hasError READ hasError NOTIFY stateChanged)
   Q_PROPERTY(QVariantList images READ images NOTIFY imagesChanged)
+  Q_PROPERTY(QVariantMap library READ library NOTIFY libraryChanged)
+  Q_PROPERTY(QVariantList importCandidates READ importCandidates NOTIFY importReviewChanged)
   Q_PROPERTY(QVariantList tools READ tools NOTIFY stateChanged)
   Q_PROPERTY(QVariantList moduleCoverage READ moduleCoverage NOTIFY stateChanged)
   Q_PROPERTY(QAbstractItemModel *fields READ fields NOTIFY moduleChanged)
@@ -144,6 +150,8 @@ public:
   QVariantMap imageInformation() const { return m_imageInformation; }
   bool hasError() const { return m_failed; }
   QVariantList images() const { return m_images; }
+  QVariantMap library() const { return m_library; }
+  QVariantList importCandidates() const { return m_importCandidates; }
   QVariantList tools() const { return m_tools; }
   QVariantList moduleCoverage() const { return m_moduleCoverage; }
   QAbstractItemModel *fields() { return &m_fields; }
@@ -159,6 +167,9 @@ public:
   void setBefore(bool before);
   Q_INVOKABLE void importUrls(const QVariantList &urls);
   Q_INVOKABLE void importPath(const QString &path);
+  Q_INVOKABLE void importSelectedPaths(const QStringList &paths);
+  Q_INVOKABLE void reviewImport(const QVariantList &urls, bool recursive);
+  Q_INVOKABLE void libraryCommand(const QString &action, const QVariantMap &settings = {}, int image = 0);
   Q_INVOKABLE void selectImage(int id);
   Q_INVOKABLE void selectTool(const QString &operation);
   Q_INVOKABLE void setParameter(const QString &name, const QVariant &value, bool commit);
@@ -176,6 +187,8 @@ public:
 signals:
   void stateChanged();
   void imagesChanged();
+  void libraryChanged();
+  void importReviewChanged();
   void imageInformationChanged();
   void moduleChanged();
   void historyChanged();
@@ -185,6 +198,8 @@ signals:
   void viewRestored(double zoom, double centerX, double centerY);
   void boot(QStringList arguments);
   void importRequested(QStringList paths);
+  void libraryRequested(QString action, QJsonObject settings, int image);
+  void importReviewRequested(QStringList paths, bool recursive);
   void openRequested(int id, quint64 revision);
   void moduleRequested(QString operation, quint64 revision);
   void parameterRequested(QString operation, QString name, QVariant value, bool commit, quint64 revision);
@@ -209,6 +224,8 @@ private:
   QVariantList m_images, m_tools, m_moduleCoverage;
   QVariantList m_history;
   QVariantMap m_imageInformation;
+  QVariantMap m_library;
+  QVariantList m_importCandidates;
   FieldModel m_fields;
   QSet<int> m_requestedThumbnails;
   QString m_operation = QStringLiteral("exposure");
