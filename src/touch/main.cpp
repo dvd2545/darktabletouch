@@ -20,6 +20,7 @@
 #include <QSaveFile>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QWheelEvent>
 
 namespace {
 QQuickItem *findItem(QQuickItem *root, const QString &name)
@@ -63,7 +64,7 @@ int main(int argc, char **argv)
     return 0;
   }
   QTemporaryDir testDirectory;
-  QString testPhoto;
+  QString testPhoto, testNeighbor;
   if(!selfTest.isEmpty() || !screenshot.isEmpty()) qputenv("QT_FORCE_STDERR_LOGGING", "1");
   if(!selfTest.isEmpty())
   {
@@ -76,6 +77,10 @@ int main(int argc, char **argv)
       QTextStream(stderr) << "could not copy the self-test RAW fixture\n";
       return 1;
     }
+    const QString child = QDir(folder).filePath(QStringLiteral("child folder"));
+    QDir().mkpath(child);
+    testNeighbor = QDir(child).filePath(QStringLiteral("neighbor.") + QFileInfo(selfTest).suffix());
+    if(!QFile::copy(selfTest, testNeighbor)) return 1;
     core << QStringLiteral("--configdir") << temporary.filePath(QString::fromUtf8("ผู้ใช้/ตั้งค่า"))
          << QStringLiteral("--cachedir") << temporary.filePath(QString::fromUtf8("ผู้ใช้/แคช"))
          << QStringLiteral("--library") << temporary.filePath(QString::fromUtf8("ผู้ใช้/ตั้งค่า/library.db"))
@@ -122,13 +127,16 @@ int main(int argc, char **argv)
     const int selected = controller.library().value(QStringLiteral("selected")).toList().size();
     switch(libraryStage)
     {
+      case -1:
+        controller.importPath(testNeighbor);
+        break;
       case 0:
         if(auto menu = window->findChild<QObject *>(QStringLiteral("quickMenu"))) QMetaObject::invokeMethod(menu, "close");
         controller.setEditorVisible(false);
         controller.libraryCommand(QStringLiteral("all"));
         break;
       case 1:
-        if(selected != 1) { fail("select all did not select the collection"); return; }
+        if(selected != 2) { fail("select all did not select the collection"); return; }
         if(!libraryScreenshot(QStringLiteral("-library"))) { fail("library screenshot failed"); return; }
         controller.libraryCommand(QStringLiteral("invert"));
         break;
@@ -141,9 +149,25 @@ int main(int argc, char **argv)
         QMetaObject::invokeMethod(collectionDialog, "open");
         break;
       case 4:
+      {
+        const QString child = QFileInfo(testNeighbor).absolutePath();
+        const QString parent = QFileInfo(testPhoto).absolutePath();
+        collectionDialog->setProperty("expanded", QVariantMap{{parent, false}});
+        QMetaObject::invokeMethod(collectionDialog, "toggleFolder", Q_ARG(QVariant, child), Q_ARG(QVariant, false));
+        QVariant checkState;
+        QMetaObject::invokeMethod(collectionDialog, "folderState", Q_RETURN_ARG(QVariant, checkState), Q_ARG(QVariant, parent));
+        if(checkState.toInt() != Qt::PartiallyChecked) { fail("folder tree selection did not preserve a collapsed subfolder"); return; }
+        QMetaObject::invokeMethod(collectionDialog, "toggleFolder", Q_ARG(QVariant, child), Q_ARG(QVariant, true));
+        QMetaObject::invokeMethod(collectionDialog, "folderState", Q_RETURN_ARG(QVariant, checkState), Q_ARG(QVariant, parent));
+        if(checkState.toInt() != Qt::Checked) { fail("folder tree could not reselect a subfolder"); return; }
+        collectionDialog->setProperty("expanded", QVariantMap{});
+        auto folderDraft = collectionDialog->property("draft").toMap();
+        folderDraft.insert(QStringLiteral("filtering"), QVariantList{});
+        collectionDialog->setProperty("draft", folderDraft);
         if(!libraryScreenshot(QStringLiteral("-folders"))) { fail("folder screenshot failed"); return; }
         collectionDialog->setProperty("page", 1);
         break;
+      }
       case 5:
       {
         if(!libraryScreenshot(QStringLiteral("-collection"))) { fail("collection screenshot failed"); return; }
@@ -156,6 +180,7 @@ int main(int argc, char **argv)
         draft.insert(QStringLiteral("filtering"), QVariantList{QVariantMap{{QStringLiteral("item"), ratingProperty},
           {QStringLiteral("mode"), 0}, {QStringLiteral("off"), 0}, {QStringLiteral("top"), 0}, {QStringLiteral("string"), QStringLiteral(">=0")}}});
         collectionDialog->setProperty("draft", draft);
+        collectionDialog->setProperty("showFilters", true);
         collectionDialog->setProperty("page", 2);
         break;
       }
@@ -184,7 +209,7 @@ int main(int argc, char **argv)
         break;
       }
       case 9:
-        if(controller.images().size() != 1) { fail("reset collection did not restore the imported photo"); return; }
+        if(controller.images().size() != 2) { fail("reset collection did not restore the imported photos"); return; }
         controller.reviewImport({QUrl::fromLocalFile(QFileInfo(testPhoto).absolutePath())}, false);
         break;
       case 10:
@@ -195,6 +220,40 @@ int main(int argc, char **argv)
       case 11:
         if(!libraryScreenshot(QStringLiteral("-import-review"))) { fail("import review screenshot failed"); return; }
         QMetaObject::invokeMethod(review, "close");
+        QMetaObject::invokeMethod(window, "showImageActions", Q_ARG(QVariant, controller.images().first()));
+        break;
+      case 12:
+        if(!libraryScreenshot(QStringLiteral("-image-actions"))) { fail("image actions screenshot failed"); return; }
+        QMetaObject::invokeMethod(window, "chooseImageAction", Q_ARG(QVariant, QStringLiteral("remove")));
+        break;
+      case 13:
+        if(!libraryScreenshot(QStringLiteral("-remove-confirmation"))) { fail("confirmation screenshot failed"); return; }
+        if(auto confirmation = window->findChild<QObject *>(QStringLiteral("confirmImageAction"))) QMetaObject::invokeMethod(confirmation, "close");
+        if(controller.images().size() != 2) { fail("canceling image removal changed the collection"); return; }
+        controller.libraryCommand(QStringLiteral("reject"), {}, controller.imageId());
+        break;
+      case 14:
+      {
+        bool rejected = false;
+        for(const auto &image : controller.images())
+          if(image.toMap().value(QStringLiteral("imgid")).toInt() == controller.imageId()) rejected = image.toMap().value(QStringLiteral("rejected")).toBool();
+        if(!rejected) { fail("reject did not update the library"); return; }
+        controller.libraryCommand(QStringLiteral("unrate"), {}, controller.imageId());
+        break;
+      }
+      case 15:
+        for(const auto &image : controller.images())
+          if(image.toMap().value(QStringLiteral("imgid")).toInt() == controller.imageId() && image.toMap().value(QStringLiteral("rejected")).toBool())
+          { fail("unreject did not update the library"); return; }
+        controller.libraryCommand(QStringLiteral("remove"), {}, controller.imageId());
+        break;
+      case 16:
+        if(controller.imageId() != 0 || controller.editorVisible() || controller.images().size() != 1 || !QFile::exists(testPhoto))
+        { fail("catalog removal did not release the editing session or preserve the file"); return; }
+        controller.libraryCommand(QStringLiteral("trash"), {}, controller.images().first().toMap().value(QStringLiteral("imgid")).toInt());
+        break;
+      case 17:
+        if(!controller.images().isEmpty() || QFile::exists(testNeighbor)) { fail("disk deletion did not update the source and catalog"); return; }
         libraryTest.stop(); finished = true;
         QTextStream(stdout) << "passed: Touch RAW editing/export, layout, collections, filters, selection, sorting, and Unicode import review\n";
         controller.shutdown();
@@ -264,6 +323,14 @@ int main(int argc, char **argv)
         auto imageCanvas = window->findChild<QQuickItem *>(QStringLiteral("imageCanvas"));
         if(!imageCanvas) { QTextStream(stderr) << "image canvas is unavailable\n"; controller.shutdown(); return; }
         const double anchorX = imageCanvas->width() * 0.7, anchorY = imageCanvas->height() * 0.6;
+        const QPointF sceneAnchor = imageCanvas->mapToScene(QPointF(anchorX, anchorY));
+        QWheelEvent wheel(sceneAnchor, window->mapToGlobal(sceneAnchor.toPoint()), QPoint(), QPoint(0, 120),
+          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QGuiApplication::sendEvent(window, &wheel);
+        const double wheelZoom = window->property("viewZoom").toDouble();
+        if(wheelZoom <= 1 || qAbs((imageCanvas->property("contentX").toDouble() + anchorX) / (imageCanvas->width() * wheelZoom) - 0.7) > 0.00001)
+        { QTextStream(stderr) << "mouse wheel zoom did not preserve the cursor point\n"; controller.shutdown(); return; }
+        QMetaObject::invokeMethod(window, "zoomAt", Q_ARG(QVariant, 1.0), Q_ARG(QVariant, anchorX), Q_ARG(QVariant, anchorY));
         QMetaObject::invokeMethod(window, "zoomAt", Q_ARG(QVariant, 2.0), Q_ARG(QVariant, anchorX), Q_ARG(QVariant, anchorY));
         const double normalizedX = (imageCanvas->property("contentX").toDouble() + anchorX) / (imageCanvas->width() * 2);
         const double normalizedY = (imageCanvas->property("contentY").toDouble() + anchorY) / (imageCanvas->height() * 2);
@@ -354,7 +421,7 @@ int main(int argc, char **argv)
               if(!window->grabWindow().save(menuShot))
               { QTextStream(stderr) << "could not write the menu screenshot\n"; controller.shutdown(); return; }
             }
-            libraryStage = 0;
+            libraryStage = -1;
             libraryTest.start();
           });
         });

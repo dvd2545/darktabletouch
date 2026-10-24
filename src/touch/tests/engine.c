@@ -85,6 +85,28 @@ static void _test_library(const char *filename, const char *folder, int first)
   json_object_set_int_member(order, "order", 1);
   json_array_add_object_element(sort, order);
   _apply_collection(settings, 2);
+  const int properties[] = { DT_COLLECTION_PROP_CAMERA, DT_COLLECTION_PROP_LENS, DT_COLLECTION_PROP_ISO,
+    DT_COLLECTION_PROP_APERTURE, DT_COLLECTION_PROP_EXPOSURE, DT_COLLECTION_PROP_DAY, DT_COLLECTION_PROP_HISTORY,
+    DT_COLLECTION_PROP_MONTH, DT_COLLECTION_PROP_FOCAL_LENGTH, DT_COLLECTION_PROP_ASPECT_RATIO };
+  for(guint i = 0; i < G_N_ELEMENTS(properties); i++)
+  {
+    GList *values = dt_collection_get_property_values(properties[i]);
+    g_assert_nonnull(values);
+    uint32_t total = 0;
+    for(GList *item = values; item; item = item->next)
+    {
+      const dt_collection_value_t *value = item->data;
+      total += value->count;
+      json_array_remove_element(rules, 0);
+      json_array_add_object_element(rules, _rule(properties[i], value->value, 0, 0));
+      _apply_collection(settings, value->count);
+    }
+    g_assert_cmpuint(total, ==, _count("SELECT COUNT(*) FROM main.images"));
+    g_list_free_full(values, dt_collection_value_free);
+  }
+  json_array_remove_element(rules, 0);
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILMROLL, "%", 0, 0));
+  _apply_collection(settings, 2);
   g_assert_cmpint(_count("SELECT imgid FROM memory.collected_images ORDER BY rowid LIMIT 1"), ==, second);
   g_assert_true(dt_touch_selection("all", 0, &error));
   g_assert_cmpint(_count("SELECT COUNT(*) FROM main.selected_images"), ==, 2);
@@ -302,8 +324,31 @@ int main(int argc, char **argv)
   char *mode_json = g_strdup_printf("%d", automatic_mode);
   g_assert_false(dt_touch_editor_set(raster, "exposure", "mode", mode_json, &message));
   g_assert_nonnull(message); g_free(message); message = NULL;
-  g_free(mode_json); g_free(raster_schema); g_free(png);
+  g_free(mode_json); g_free(raster_schema);
   dt_touch_editor_free(raster);
+  const int png_id = dt_touch_import_candidate(png);
+  g_assert_true(dt_touch_image_action("reject", png_id, &message));
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM main.images WHERE flags & 8"), ==, 1);
+  g_assert_true(dt_touch_image_action("unrate", png_id, &message));
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM main.images WHERE flags & 8"), ==, 0);
+  g_assert_true(dt_touch_image_action("remove", png_id, &message));
+  g_assert_false(dt_touch_image_exists(png_id));
+  g_assert_true(g_file_test(png, G_FILE_TEST_IS_REGULAR));
+  char *trash_path = g_build_filename(folder, "ลบ #%.png", NULL);
+  GFile *trash_source = g_file_new_for_path(png), *trash_target = g_file_new_for_path(trash_path);
+  g_assert_true(g_file_copy(trash_source, trash_target, G_FILE_COPY_NONE, NULL, NULL, NULL, &error));
+  g_object_unref(trash_source); g_object_unref(trash_target);
+  char *trash_import = dt_touch_import(trash_path, &message);
+  g_assert_nonnull(trash_import); g_assert_null(message); g_free(trash_import);
+  const int trash_id = dt_touch_import_candidate(trash_path);
+  const int duplicate = dt_image_duplicate(trash_id);
+  g_assert_cmpint(duplicate, >, 0);
+  g_assert_true(dt_touch_image_action("trash", duplicate, &message));
+  g_assert_null(message); g_assert_true(g_file_test(trash_path, G_FILE_TEST_IS_REGULAR));
+  g_assert_true(dt_touch_image_action("trash", trash_id, &message));
+  g_assert_null(message); g_assert_false(g_file_test(trash_path, G_FILE_TEST_EXISTS));
+  g_assert_false(dt_touch_image_exists(trash_id));
+  g_free(trash_path); g_free(png);
   GString *long_path = g_string_new("C:/ผู้ใช้/");
   for(int i = 0; i < 100; i++) g_string_append(long_path, "ทดสอบ ภาพถ่าย/$#%");
   dt_conf_set_int("plugins/lighttable/collect/num_rules", 1);

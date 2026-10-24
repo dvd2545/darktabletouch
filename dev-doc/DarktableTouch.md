@@ -107,6 +107,11 @@ histogram percentile. Automatic mode is available for single-channel
 Numeric fields commit only after text is edited, so moving focus does not
 add a history item or round an unchanged parameter.
 
+Mouse-wheel zoom anchors the image under the pointer; pinch zoom tracks
+the midpoint between fingers, including midpoint movement. Rotation offers
+a numeric precise-angle field backed by the native rotate-and-perspective
+operation, in addition to orientation controls.
+
 The edit-history panel lists the current engine session, including disabled
 steps and instance labels. Selecting a step uses native history replay and
 is itself undoable. Built-in preset labels use the same localization helper
@@ -114,9 +119,14 @@ as Classic. History and quick-action panels scroll at smaller window sizes.
 
 ### Library collections and import
 
-The library's "collections" button opens imported folders, collection rules,
-filters, and sort priorities. Folder selection replaces the collection rule
-and keeps filters separate; "reset all" clears both. Rules use Classic's
+The funnel button at the upper-right of the library opens collections,
+filters, and sort priorities in one dialog. Filter rules appear above the
+checkable collection list; empty default filters start collapsed. Folder rows expand into subfolders; parent
+checkboxes select descendants and show partial selections. Other supported
+properties list catalog values and counts. Checking values replaces the
+base collection rules and keeps filters separate; "reset all" clears both.
+The engine supports up to ten collection rules; selecting a parent folder
+can combine subfolder selections. Counts refer to the entire catalog. Rules use Classic's
 properties and matching syntax, including AND, OR, AND NOT, `%` wildcards,
 numeric comparisons, and metadata fields. Rating, color-label, and history
 rules offer common values. Filters can be disabled without removing them.
@@ -125,11 +135,20 @@ and native collection query drive the filmstrip and Classic handoff.
 
 "select" enables multi-photo selection without opening the editor. Tap photos
 to toggle them, or use all, none, invert, same film roll, and untouched. Hold
-a thumbnail to enter selection mode; Shift+Space selects a range from the
-native anchor. Selection uses the catalog's existing selected-image table.
+a thumbnail, right-click it, or press Menu/Shift+F10 for image actions.
+Shift+Space selects a range from the native anchor. Selection uses the catalog's existing selected-image table.
 It is separate from the active editor image. Export still targets that active
 image; selecting several images does not imply batch export.
 
+Image actions include reject, unreject/unrate, remove from the catalog, and
+delete from disk. Unreject/unrate clears both rejection and stars. Removal
+keeps original files and sidecars. Disk deletion uses the Recycle Bin,
+including version sidecars, with no permanent-delete fallback. A shared
+original stays on disk while another catalog version refers to it. Both
+removal actions require confirmation. Removing the active image saves and
+closes its editor before changing the catalog.
+
+Windows photo, folder, and export browsing uses native file dialogs.
 Import supports adding photos at their existing locations. Choose files or
 a folder, optionally include subfolders, and review supported files before
 adding them. Existing catalog entries are identified and skipped; select all
@@ -149,7 +168,7 @@ All six priority modules are **partial**, not completed ports:
 | AgX | Range/tone/look organization, graphs, presets, and specialized interactions |
 | Lens Correction | Camera/lens selection, methods, presets, and complete workflow validation |
 | Denoise (profiled) | Profile selection, wavelet interactions, presets, and advanced workflows |
-| Rotation | Rotate-and-perspective adapter, straightening, and guides |
+| Rotation | Straightening, guides, presets, and full workflow validation |
 | Crop | Frame manipulation, aspect ratios, orientation swap, and apply/cancel |
 
 Other modules remain unported. `--coverage-report FILE` writes a registry

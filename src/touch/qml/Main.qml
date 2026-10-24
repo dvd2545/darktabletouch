@@ -26,6 +26,8 @@ ApplicationWindow {
     property int thumbnailRevision: 0
     property bool advanced: false
     property bool selectionMode: false
+    property var actionImage: ({})
+    property string pendingImageAction: ""
     property bool importRecursive: true
     readonly property var selectedImages: controller.library.selected || []
     property string expandedTool: "exposure"
@@ -94,7 +96,17 @@ ApplicationWindow {
     Timer { id: statusTimer; interval: 3500; onTriggered: window.statusVisible = false }
 
     function showHistory() { historyDialog.open() }
-    function showQuickMenu() { historyDialog.close(); toolActions.close(); toolSearch.close(); collectionDialog.close(); importReview.close(); importSource.close(); quickMenu.open() }
+    function showImageActions(image) {
+        if(controller.busy) return
+        actionImage = JSON.parse(JSON.stringify(image))
+        imageActions.open()
+    }
+    function chooseImageAction(action) {
+        imageActions.close()
+        if(action === "remove" || action === "trash") { pendingImageAction = action; confirmImageAction.open() }
+        else controller.libraryCommand(action, {}, actionImage.imgid)
+    }
+    function showQuickMenu() { imageActions.close(); confirmImageAction.close(); historyDialog.close(); toolActions.close(); toolSearch.close(); collectionDialog.close(); importReview.close(); importSource.close(); quickMenu.open() }
 
     onClosing: function(close) {
         if(!controller.canClose) { close.accepted = false; saveView(); controller.shutdown() }
@@ -165,7 +177,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Escape"
         enabled: !quickMenu.opened && !historyDialog.opened && !toolSearch.opened && !toolActions.opened
-            && !importDialog.visible && !folderDialog.visible && !exportDialog.visible && !collectionDialog.opened && !importReview.opened && !importSource.opened
+            && !importDialog.visible && !folderDialog.visible && !exportDialog.visible && !collectionDialog.opened && !importReview.opened && !importSource.opened && !imageActions.opened && !confirmImageAction.opened
         onActivated: { if(controller.before) controller.before = false; else if(!controller.editorVisible && window.selectionMode) window.selectionMode = false; else controller.editorVisible = false }
     }
 
@@ -182,9 +194,28 @@ ApplicationWindow {
                     Label { text: qsTr("photo library"); color: "#eceef0"; font.pixelSize: 28; font.weight: Font.DemiBold }
                     Label { text: controller.images.length === 1 ? qsTr("1 photo") : qsTr("%1 photos").arg(controller.images.length.toLocaleString(Qt.locale("en_US"), "f", 0)); color: "#9da6b3" }
                 }
-                TouchButton { text: qsTr("collections"); enabled: controller.ready && !controller.busy; onClicked: collectionDialog.open() }
                 TouchButton { text: window.selectionMode ? qsTr("done") : qsTr("select"); checked: window.selectionMode; onClicked: window.selectionMode = !window.selectionMode }
                 TouchButton { text: qsTr("import"); enabled: controller.ready && !controller.busy; onClicked: importSource.open() }
+                Item { Layout.fillWidth: true }
+                TouchButton {
+                    objectName: "libraryFilterButton"
+                    text: ""; implicitWidth: 64
+                    Accessible.name: qsTr("collections, filters, and image sorting")
+                    ToolTip.visible: hovered; ToolTip.text: Accessible.name
+                    enabled: controller.ready && !controller.busy
+                    onClicked: collectionDialog.open()
+                    contentItem: Canvas {
+                        implicitWidth: 32; implicitHeight: 32
+                        onPaint: {
+                            const context = getContext("2d")
+                            context.reset(); context.strokeStyle = "#e6eef0"; context.lineWidth = 2.5
+                            const x = width / 2, y = height / 2
+                            context.beginPath(); context.moveTo(x - 14, y - 12); context.lineTo(x + 14, y - 12)
+                            context.lineTo(x + 4, y); context.lineTo(x + 4, y + 11); context.lineTo(x - 4, y + 15)
+                            context.lineTo(x - 4, y); context.closePath(); context.stroke()
+                        }
+                    }
+                }
             }
             RowLayout {
                 visible: window.selectionMode
@@ -219,11 +250,14 @@ ApplicationWindow {
                             else { viewZoom = 1; controller.selectImage(modelData.imgid) }
                         }
                         onPressAndHold: {
-                            window.selectionMode = true
-                            controller.libraryCommand("toggle", {}, modelData.imgid)
+                            window.showImageActions(modelData)
                         }
+                        TapHandler { acceptedButtons: Qt.RightButton; onTapped: window.showImageActions(modelData) }
                         onActiveFocusChanged: if(activeFocus) { library.currentIndex = index; library.positionViewAtIndex(index, GridView.Contain) }
                         Keys.onPressed: function(event) {
+                            if(event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
+                                event.accepted = true; window.showImageActions(modelData); return
+                            }
                             if(window.selectionMode && (event.key === Qt.Key_Space || event.key === Qt.Key_Return)
                                && (event.modifiers & Qt.ShiftModifier)) {
                                 event.accepted = true
@@ -409,6 +443,8 @@ ApplicationWindow {
                             text: ""; padding: 4; checked: controller.imageId === modelData.imgid
                             Accessible.name: modelData.filename
                             onClicked: { if(controller.imageId !== modelData.imgid) { viewZoom = 1; controller.selectImage(modelData.imgid) } else showImageInformation() }
+                            onPressAndHold: window.showImageActions(modelData)
+                            TapHandler { acceptedButtons: Qt.RightButton; onTapped: window.showImageActions(modelData) }
                             onActiveFocusChanged: if(activeFocus) filmstrip.positionViewAtIndex(index, ListView.Contain)
                             ToolTip.visible: hovered; ToolTip.text: modelData.filename
                             Image {
@@ -560,6 +596,49 @@ ApplicationWindow {
         }
     }
 
+    Popup {
+        id: imageActions
+        objectName: "imageActions"
+        anchors.centerIn: parent; width: Math.min(500, window.width - 32)
+        padding: 20; modal: true; focus: true
+        background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
+        ColumnLayout {
+            width: parent.width; spacing: 10
+            Label { text: window.actionImage.filename || ""; textFormat: Text.PlainText; color: "#e6eef0"; font.pixelSize: 20; Layout.fillWidth: true; elide: Text.ElideMiddle }
+            TouchButton { text: qsTr("reject"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("reject") }
+            TouchButton { text: qsTr("unreject / unrate"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("unrate") }
+            TouchButton { text: qsTr("remove from collection"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("remove") }
+            TouchButton { text: qsTr("delete from disk"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("trash") }
+            TouchButton { text: qsTr("cancel"); Layout.fillWidth: true; onClicked: imageActions.close() }
+        }
+    }
+    Dialog {
+        id: confirmImageAction
+        objectName: "confirmImageAction"
+        title: window.pendingImageAction === "trash" ? qsTr("delete from disk") : qsTr("remove from collection")
+        anchors.centerIn: parent; width: Math.min(560, window.width - 32)
+        padding: 20; modal: true; focus: true
+        background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
+        contentItem: ColumnLayout {
+            spacing: 16
+            Label { text: window.actionImage.filename || ""; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#e6eef0"; font.pixelSize: 20 }
+            Label {
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#aebbc1"
+                text: window.pendingImageAction === "trash"
+                    ? qsTr("move this photo and its sidecars to the Recycle Bin? if other catalog versions use the source, only this version and its sidecars are removed")
+                    : qsTr("remove this photo from the library and all collections? the original file and sidecars stay on disk")
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                TouchButton { text: qsTr("cancel"); Layout.fillWidth: true; onClicked: confirmImageAction.close() }
+                TouchButton {
+                    text: window.pendingImageAction === "trash" ? qsTr("move to Recycle Bin") : qsTr("remove")
+                    Layout.fillWidth: true; enabled: !controller.busy
+                    onClicked: { confirmImageAction.close(); controller.libraryCommand(window.pendingImageAction, {}, window.actionImage.imgid) }
+                }
+            }
+        }
+    }
     LibraryDialog { id: collectionDialog; objectName: "collectionDialog"; photoController: controller }
     ImportReview { id: importReview; objectName: "importReview"; photoController: controller }
     Dialog {

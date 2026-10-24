@@ -2988,6 +2988,96 @@ int dt_collection_image_offset(const dt_imgid_t imgid)
   return dt_collection_image_offset_with_collection(darktable.collection, imgid);
 }
 
+void dt_collection_value_free(gpointer data)
+{
+  dt_collection_value_t *value = data;
+  g_free(value->value);
+  g_free(value);
+}
+
+GList *dt_collection_get_property_values(const dt_collection_properties_t property)
+{
+  const char *expression = NULL, *join = "";
+  gchar *metadata_join = NULL;
+  switch(property)
+  {
+    case DT_COLLECTION_PROP_FILMROLL:
+    case DT_COLLECTION_PROP_FOLDERS:
+      expression = "fr.folder"; join = " JOIN main.film_rolls fr ON fr.id = mi.film_id"; break;
+    case DT_COLLECTION_PROP_FILENAME: expression = "mi.filename"; break;
+    case DT_COLLECTION_PROP_CAMERA:
+      expression = "TRIM(cm.maker || ' ' || cm.model)";
+      join = " JOIN main.cameras cm ON cm.id = mi.camera_id"; break;
+    case DT_COLLECTION_PROP_LENS:
+      expression = "CASE LOWER(TRIM(ln.name)) WHEN 'n/a' THEN '' ELSE ln.name END";
+      join = " JOIN main.lens ln ON ln.id = mi.lens_id"; break;
+    case DT_COLLECTION_PROP_ISO: expression = "CAST(mi.iso AS INTEGER)"; break;
+    case DT_COLLECTION_PROP_APERTURE: expression = "ROUND(mi.aperture, 1)"; break;
+    case DT_COLLECTION_PROP_FOCAL_LENGTH: expression = "ROUND(mi.focal_length, 0)"; break;
+    case DT_COLLECTION_PROP_EXPOSURE: expression = "mi.exposure"; break;
+    case DT_COLLECTION_PROP_EXPOSURE_BIAS: expression = "mi.exposure_bias"; break;
+    case DT_COLLECTION_PROP_ASPECT_RATIO: expression = "ROUND(mi.aspect_ratio, 2)"; break;
+    case DT_COLLECTION_PROP_RATING:
+    case DT_COLLECTION_PROP_RATING_RANGE:
+      expression = "CASE WHEN mi.flags & 8 THEN -1 ELSE mi.flags & 7 END"; break;
+    case DT_COLLECTION_PROP_TAG:
+      expression = "t.name";
+      join = " JOIN main.tagged_images ti ON ti.imgid = mi.id JOIN data.tags t ON t.id = ti.tagid"; break;
+    case DT_COLLECTION_PROP_COLORLABEL:
+      expression = "CASE c.color WHEN 0 THEN 'red' WHEN 1 THEN 'yellow' WHEN 2 THEN 'green' WHEN 3 THEN 'blue' WHEN 4 THEN 'purple' END";
+      join = " JOIN main.color_labels c ON c.imgid = mi.id"; break;
+    case DT_COLLECTION_PROP_HISTORY:
+      expression = "CASE WHEN h.current_hash IS NULL OR h.current_hash = h.basic_hash THEN 'basic' WHEN h.current_hash = h.auto_hash THEN 'auto applied' ELSE 'altered' END";
+      join = " LEFT JOIN main.history_hash h ON h.imgid = mi.id"; break;
+    case DT_COLLECTION_PROP_DAY:
+      expression = "strftime('%Y:%m:%d', mi.datetime_taken / 86400000000.0 + julianday('0001-01-01'))"; break;
+    case DT_COLLECTION_PROP_TIME:
+      expression = "strftime('%Y:%m:%d %H:%M:%S', mi.datetime_taken / 86400000000.0 + julianday('0001-01-01'))"; break;
+    case DT_COLLECTION_PROP_MONTH:
+      expression = "CAST(strftime('%m', mi.datetime_taken / 86400000000.0 + julianday('0001-01-01')) AS INTEGER)"; break;
+    case DT_COLLECTION_PROP_WHITEBALANCE:
+      expression = "v.name"; join = " JOIN main.whitebalance v ON v.id = mi.whitebalance_id"; break;
+    case DT_COLLECTION_PROP_FLASH:
+      expression = "v.name"; join = " JOIN main.flash v ON v.id = mi.flash_id"; break;
+    case DT_COLLECTION_PROP_EXPOSURE_PROGRAM:
+      expression = "v.name"; join = " JOIN main.exposure_program v ON v.id = mi.exposure_program_id"; break;
+    case DT_COLLECTION_PROP_METERING_MODE:
+      expression = "v.name"; join = " JOIN main.metering_mode v ON v.id = mi.metering_mode_id"; break;
+    case DT_COLLECTION_PROP_GROUP_ID: expression = "mi.group_id"; break;
+    default:
+      if(property >= DT_COLLECTION_PROP_METADATA_OFFSET)
+      {
+        const int key = property - DT_COLLECTION_PROP_METADATA_OFFSET;
+        if(dt_metadata_get_metadata_by_keyid(key))
+        {
+          expression = "v.value";
+          metadata_join = g_strdup_printf(" JOIN main.meta_data v ON v.id = mi.id AND v.key = %d", key);
+          join = metadata_join;
+        }
+      }
+      break;
+  }
+  if(!expression) return NULL;
+  // values come from the catalog, not a partially edited rule in the UI
+  gchar *query = g_strdup_printf("SELECT value, COUNT(DISTINCT id) FROM "
+                                "(SELECT mi.id, %s AS value FROM main.images mi%s) "
+                                "GROUP BY value ORDER BY value COLLATE NOCASE", expression, join);
+  sqlite3_stmt *statement = NULL;
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db), query, -1, &statement, NULL);
+  GList *result = NULL;
+  while(statement && sqlite3_step(statement) == SQLITE_ROW)
+  {
+    const char *text = (const char *)sqlite3_column_text(statement, 0);
+    dt_collection_value_t *value = g_new0(dt_collection_value_t, 1);
+    value->value = g_strdup(text && *text ? text : _("unnamed"));
+    value->count = sqlite3_column_int(statement, 1);
+    result = g_list_prepend(result, value);
+  }
+  sqlite3_finalize(statement);
+  g_free(query); g_free(metadata_join);
+  return g_list_reverse(result);
+}
+
 static gboolean _property_is_collection_criterion
   (dt_collection_t *collection,
    const enum dt_collection_properties_t prop)

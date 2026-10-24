@@ -289,6 +289,17 @@ void dt_collection_memory_update();
 /** save the current collection for recentcollect module and collect history */
 void dt_collection_history_save();
 
+typedef struct dt_collection_value_t
+{
+  gchar *value;
+  uint32_t count;
+} dt_collection_value_t;
+
+/** distinct catalog values and image counts for a collection property;
+    free with g_list_free_full(list, dt_collection_value_free) */
+GList *dt_collection_get_property_values(const dt_collection_properties_t property);
+void dt_collection_value_free(gpointer data);
+
 // clang-format off
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py
 // vim: shiftwidth=2 expandtab tabstop=2 cindent

@@ -199,15 +199,37 @@ void EngineWorker::importPaths(QStringList paths)
 void EngineWorker::libraryCommand(QString action, QJsonObject settings, int image)
 {
   if(!m_initialized) return;
+  if(action == QStringLiteral("values"))
+  {
+    const int property = settings.value(QStringLiteral("property")).toInt();
+    emit collectionValuesReady(property, takeJson(dt_touch_collection_values(property)).array());
+    emit completed(tr("collection values loaded"));
+    return;
+  }
   char *error = nullptr;
   const bool collection = action == QStringLiteral("collection");
+  const bool imageAction = action == QStringLiteral("remove") || action == QStringLiteral("trash")
+    || action == QStringLiteral("reject") || action == QStringLiteral("unrate");
+  const bool closing = image == m_imageId && (action == QStringLiteral("remove") || action == QStringLiteral("trash"));
+  if(closing)
+  {
+    if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
+    clearHistory(); dt_touch_editor_free(m_editor); m_editor = nullptr;
+  }
   const bool success = collection
     ? dt_touch_collection_set(QJsonDocument(settings).toJson(QJsonDocument::Compact).constData(), &error)
+    : imageAction ? dt_touch_image_action(action.toUtf8().constData(), image, &error)
     : dt_touch_selection(action.toUtf8().constData(), image, &error);
-  if(!success) { report(error); return; }
-  if(collection) emit imagesChanged(images());
+  if(closing)
+  {
+    if(dt_touch_image_exists(image))
+      openImage(image, m_revision->load());
+    else { m_imageId = 0; m_editorVisible = false; emit imageClosed(); }
+  }
+  if(collection || imageAction) emit imagesChanged(images());
   emit libraryReady(takeJson(dt_touch_library()).object());
-  emit completed(collection ? tr("collection updated") : tr("selection updated"));
+  if(!success) { report(error); return; }
+  emit completed(collection ? tr("collection updated") : imageAction ? tr("image action completed") : tr("selection updated"));
 }
 
 void EngineWorker::reviewImport(QStringList paths, bool recursive)
@@ -464,6 +486,14 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(m_worker, &EngineWorker::libraryReady, this, [this](QJsonObject library) {
     m_library = library.toVariantMap(); emit libraryChanged();
   });
+  connect(m_worker, &EngineWorker::collectionValuesReady, this, [this](int property, QJsonArray values) {
+    m_collectionValues = {{QStringLiteral("property"), property}, {QStringLiteral("values"), values.toVariantList()}};
+    emit collectionValuesChanged();
+  });
+  connect(m_worker, &EngineWorker::imageClosed, this, [this] {
+    m_imageId = 0; m_editorVisible = false; m_imageInformation.clear(); m_fields.setFields({});
+    m_history.clear(); m_historyEnd = 0; emit moduleChanged(); emit historyChanged(); emit stateChanged();
+  });
   connect(m_worker, &EngineWorker::importReviewed, this, [this](QJsonArray candidates) {
     m_importCandidates = candidates.toVariantList(); emit importReviewChanged();
   });
@@ -490,7 +520,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
       QStringLiteral("range/tone/look organization, graphs, presets, and full workflow validation"),
       QStringLiteral("camera/lens selection, methods, presets, and full workflow validation"),
       QStringLiteral("profile selection, wavelet interactions, presets, and full workflow validation"),
-      QStringLiteral("rotate-and-perspective adapter, straightening, guides, presets, and full workflow validation"),
+      QStringLiteral("straightening, guides, presets, and full workflow validation"),
       QStringLiteral("frame manipulation, aspect ratios, apply/cancel, presets, and full workflow validation")};
     for(const auto &module : modules)
     {

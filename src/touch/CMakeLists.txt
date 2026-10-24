@@ -20,12 +20,13 @@ set_source_files_properties(qml/TouchButton.qml PROPERTIES QT_RESOURCE_ALIAS Tou
 set_source_files_properties(qml/FieldControl.qml PROPERTIES QT_RESOURCE_ALIAS FieldControl.qml)
 set_source_files_properties(qml/PanelHandle.qml PROPERTIES QT_RESOURCE_ALIAS PanelHandle.qml)
 set_source_files_properties(qml/LibraryDialog.qml PROPERTIES QT_RESOURCE_ALIAS LibraryDialog.qml)
+set_source_files_properties(qml/RuleEditor.qml PROPERTIES QT_RESOURCE_ALIAS RuleEditor.qml)
 set_source_files_properties(qml/ImportReview.qml PROPERTIES QT_RESOURCE_ALIAS ImportReview.qml)
 qt_add_qml_module(darktable-touch
   URI DarktableTouch
   VERSION 1.0
   RESOURCE_PREFIX /qt/qml
-  QML_FILES qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/ImportReview.qml)
+  QML_FILES qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
 
 qt_add_executable(darktabletouch launcher.cpp)
 target_link_libraries(darktabletouch PRIVATE Qt6::Core PkgConfig::TOUCH_JSON)

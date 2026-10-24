@@ -76,6 +76,8 @@ signals:
   void initialized(QJsonArray images, QJsonArray modules, QJsonObject session);
   void imagesChanged(QJsonArray images);
   void libraryReady(QJsonObject library);
+  void collectionValuesReady(int property, QJsonArray values);
+  void imageClosed();
   void importReviewed(QJsonArray candidates);
   void imageOpened(int id, quint64 revision);
   void informationReady(QJsonObject information, quint64 revision);
@@ -123,6 +125,7 @@ class TouchController final : public QObject
   Q_PROPERTY(bool hasError READ hasError NOTIFY stateChanged)
   Q_PROPERTY(QVariantList images READ images NOTIFY imagesChanged)
   Q_PROPERTY(QVariantMap library READ library NOTIFY libraryChanged)
+  Q_PROPERTY(QVariantMap collectionValues READ collectionValues NOTIFY collectionValuesChanged)
   Q_PROPERTY(QVariantList importCandidates READ importCandidates NOTIFY importReviewChanged)
   Q_PROPERTY(QVariantList tools READ tools NOTIFY stateChanged)
   Q_PROPERTY(QVariantList moduleCoverage READ moduleCoverage NOTIFY stateChanged)
@@ -151,6 +154,7 @@ public:
   bool hasError() const { return m_failed; }
   QVariantList images() const { return m_images; }
   QVariantMap library() const { return m_library; }
+  QVariantMap collectionValues() const { return m_collectionValues; }
   QVariantList importCandidates() const { return m_importCandidates; }
   QVariantList tools() const { return m_tools; }
   QVariantList moduleCoverage() const { return m_moduleCoverage; }
@@ -188,6 +192,7 @@ signals:
   void stateChanged();
   void imagesChanged();
   void libraryChanged();
+  void collectionValuesChanged();
   void importReviewChanged();
   void imageInformationChanged();
   void moduleChanged();
@@ -225,6 +230,7 @@ private:
   QVariantList m_history;
   QVariantMap m_imageInformation;
   QVariantMap m_library;
+  QVariantMap m_collectionValues;
   QVariantList m_importCandidates;
   FieldModel m_fields;
   QSet<int> m_requestedThumbnails;

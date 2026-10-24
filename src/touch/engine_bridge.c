@@ -13,6 +13,9 @@
 #include "common/touch_session.h"
 #include "common/collection.h"
 #include "common/selection.h"
+#include "common/film.h"
+#include "common/overlay.h"
+#include "common/dtdata.h"
 #include "control/conf.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
@@ -206,6 +209,93 @@ char *dt_touch_library(void)
   char *result = json_to_string(root, FALSE);
   json_node_free(root);
   return result;
+}
+
+char *dt_touch_collection_values(int property)
+{
+  GList *values = dt_collection_get_property_values(property);
+  JsonArray *array = json_array_new();
+  for(GList *item = values; item; item = item->next)
+  {
+    dt_collection_value_t *value = item->data;
+    JsonObject *entry = json_object_new();
+    json_object_set_string_member(entry, "value", value->value);
+    json_object_set_int_member(entry, "count", value->count);
+    json_array_add_object_element(array, entry);
+  }
+  g_list_free_full(values, dt_collection_value_free);
+  JsonNode *root = json_node_new(JSON_NODE_ARRAY);
+  json_node_take_array(root, array);
+  char *result = json_to_string(root, FALSE);
+  json_node_free(root);
+  return result;
+}
+
+static gboolean _trash_file(const char *path, char **error)
+{
+  if(!g_file_test(path, G_FILE_TEST_EXISTS)) return TRUE;
+  GFile *file = g_file_new_for_path(path);
+  GError *failure = NULL;
+  const gboolean success = g_file_trash(file, NULL, &failure);
+  g_object_unref(file);
+  if(!success)
+  {
+    if(error) *error = g_strdup(failure->message);
+    g_error_free(failure);
+  }
+  return success;
+}
+
+int dt_touch_image_exists(int image_id)
+{
+  return dt_image_exists(image_id);
+}
+
+int dt_touch_image_action(const char *action, int image_id, char **error)
+{
+  if(!dt_image_exists(image_id)) return _error(error, N_("image does not exist in this catalog"));
+  if(!strcmp(action, "reject") || !strcmp(action, "unrate"))
+  {
+    JsonArray *ids = json_array_new();
+    json_array_add_int_element(ids, image_id);
+    const int success = dt_bridge_set_rating(ids, 0, !strcmp(action, "reject"), error);
+    json_array_unref(ids);
+    return success;
+  }
+  if(strcmp(action, "remove") && strcmp(action, "trash")) return _error(error, N_("unknown image action"));
+  GList *overlays = dt_overlay_get_used_in_imgs(image_id, TRUE);
+  const gboolean used = overlays != NULL;
+  g_list_free(overlays);
+  if(used) return _error(error, N_("this image is used as an overlay and cannot be removed"));
+  if(!dt_image_safe_remove(image_id) || dt_image_local_copy_reset(image_id))
+    return _error(error, N_("the original image must be accessible before removing its local copy"));
+  char path[PATH_MAX] = { 0 }, versioned[PATH_MAX] = { 0 }, data[PATH_MAX] = { 0 };
+  gboolean cached = FALSE;
+  dt_image_full_path(image_id, path, sizeof(path), &cached);
+  if(!*path) return _error(error, N_("could not resolve the original image path"));
+  g_strlcpy(versioned, path, sizeof(versioned));
+  dt_image_path_append_version(image_id, versioned, sizeof(versioned));
+  dt_dtdata_path_for_image(versioned, data, sizeof(data));
+  char *xmp = g_strconcat(versioned, ".xmp", NULL);
+  const gboolean trash = !strcmp(action, "trash");
+  if(trash && dt_image_count_same_file(image_id) == 1)
+  {
+    if(cached || !g_file_test(path, G_FILE_TEST_IS_REGULAR))
+    { g_free(xmp); return _error(error, N_("the original image is missing or is not a regular file")); }
+    if(!_trash_file(path, error)) { g_free(xmp); return FALSE; }
+  }
+  dt_image_remove(image_id);
+  if(dt_image_exists(image_id)) { g_free(xmp); return _error(error, N_("could not remove the image from the catalog")); }
+  gboolean success = TRUE;
+  if(trash)
+  {
+    success = _trash_file(xmp, error);
+    if(success) success = _trash_file(data, error);
+  }
+  g_free(xmp);
+  dt_film_remove_empty();
+  dt_collection_update_query(darktable.collection, DT_COLLECTION_CHANGE_RELOAD, DT_COLLECTION_PROP_UNDEF, NULL);
+  return success;
 }
 
 int dt_touch_collection_set(const char *json, char **error)
