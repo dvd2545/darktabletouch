@@ -242,7 +242,8 @@ void EngineWorker::reviewImport(QStringList paths, bool recursive)
     else add(path);
   }
   emit importReviewed(candidates);
-  if(!scanFailed) emit completed(tr("%1 supported photos found").arg(candidates.size()));
+  if(!scanFailed) emit completed(candidates.size() == 1 ? tr("1 supported photo found")
+    : tr("%1 supported photos found").arg(candidates.size()));
 }
 
 void EngineWorker::clearHistory()

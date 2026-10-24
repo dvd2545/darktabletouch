@@ -65,7 +65,7 @@ Dialog {
             TouchButton { text: qsTr("cancel"); onClicked: dialog.close() }
             TouchButton {
                 objectName: "confirmImport"
-                text: qsTr("add %1 photos").arg(dialog.selectedCount); checked: true
+                text: dialog.selectedCount === 1 ? qsTr("add 1 photo") : qsTr("add %1 photos").arg(dialog.selectedCount); checked: true
                 enabled: dialog.selectedCount > 0 && !dialog.photoController.busy
                 onClicked: {
                     const urls = []
