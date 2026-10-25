@@ -23,7 +23,6 @@ ApplicationWindow {
     palette.highlight: "#00dbe5"
     palette.highlightedText: "#07191b"
     property real viewZoom: 1
-    property int thumbnailRevision: 0
     property int cropRatioN: 0
     property int cropRatioD: 0
     property bool advanced: false
@@ -40,6 +39,13 @@ ApplicationWindow {
     property real requestedModuleWidth: 0
     readonly property real maximumFilmstripHeight: Math.min(300, height * 0.45)
     readonly property real maximumModuleWidth: Math.min(640, width - 400)
+    readonly property bool textInputFocused: activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit
+    readonly property bool modalOpen: quickMenu.visible || historyDialog.visible || toolSearch.visible || toolActions.visible
+        || historyPasteDialog.visible || resetHistoryDialog.visible || imageActions.visible || confirmImageAction.visible
+        || collectionDialog.visible || quickSettings.visible || batchExportDialog.visible || importReview.visible || importSource.visible
+        || importDialog.visible || folderDialog.visible || exportDialog.visible || parameterPopupFocused()
+    readonly property bool imageShortcutsEnabled: controller.ready && controller.imageId > 0 && !controller.busy
+        && !controller.cropEditing && !modalOpen && !textInputFocused
 
     function resizeFilmstrip(delta) {
         requestedFilmstripHeight = Math.max(96, Math.min(maximumFilmstripHeight, filmstripBar.height + delta))
@@ -92,6 +98,9 @@ ApplicationWindow {
         revealItem(activeFocusItem, toolColumn, toolScroll)
         if(quickMenu.opened) revealItem(activeFocusItem, quickColumn, quickScroll.contentItem)
         if(collectionDialog.opened) revealItem(activeFocusItem, collectionDialog.focusColumn, collectionDialog.focusViewport)
+        if(historyPasteDialog.opened) revealItem(activeFocusItem, historyPasteDialog.focusColumn, historyPasteDialog.focusViewport)
+        if(batchExportDialog.opened) revealItem(activeFocusItem, batchExportDialog.focusColumn, batchExportDialog.focusViewport)
+        if(imageActions.opened) revealItem(activeFocusItem, imageActionColumn, imageActionScroll.contentItem)
     }
 
     Timer { id: informationTimer; interval: 4000; onTriggered: window.informationVisible = false }
@@ -100,15 +109,20 @@ ApplicationWindow {
     function showHistory() { if(controller.cropEditing) controller.cropCommand("cancel"); historyDialog.open() }
     function showImageActions(image) {
         if(controller.busy) return
+        if(controller.cropEditing) controller.cropCommand("cancel")
         actionImage = JSON.parse(JSON.stringify(image))
         imageActions.open()
     }
     function chooseImageAction(action) {
         imageActions.close()
+        if(action === "copy") { controller.historyCommand("copy", {}, actionImage.imgid); return }
+        if(action === "paste") { historyPasteDialog.imageId = actionImage.imgid; historyPasteDialog.scope = "current"; historyPasteDialog.open(); return }
+        if(action === "reset") { showResetHistory(actionImage.imgid); return }
         if(action === "remove" || action === "trash") { pendingImageAction = action; confirmImageAction.open() }
         else controller.libraryCommand(action, {}, actionImage.imgid)
     }
-    function showQuickMenu() { if(controller.cropEditing) controller.cropCommand("cancel"); batchExportDialog.close(); quickSettings.close(); imageActions.close(); confirmImageAction.close(); historyDialog.close(); toolActions.close(); toolSearch.close(); collectionDialog.close(); importReview.close(); importSource.close(); quickMenu.open() }
+    function showResetHistory(image) { if(controller.cropEditing) controller.cropCommand("cancel"); resetHistoryDialog.imageId = image; resetHistoryDialog.scope = "current"; resetHistoryDialog.open() }
+    function showQuickMenu() { if(controller.cropEditing) controller.cropCommand("cancel"); historyPasteDialog.close(); resetHistoryDialog.close(); batchExportDialog.close(); quickSettings.close(); imageActions.close(); confirmImageAction.close(); historyDialog.close(); toolActions.close(); toolSearch.close(); collectionDialog.close(); importReview.close(); importSource.close(); quickMenu.open() }
 
     onClosing: function(close) {
         if(!controller.canClose) { close.accepted = false; saveView(); controller.shutdown() }
@@ -116,7 +130,6 @@ ApplicationWindow {
     Connections {
         target: controller
         function onClosingReady() { window.close() }
-        function onThumbnailChanged(id) { window.thumbnailRevision++ }
         function onImageInformationChanged() { showImageInformation(); updateFilmstrip() }
         function onImagesChanged() { Qt.callLater(updateFilmstrip) }
         function onImportReviewChanged() { importReview.open() }
@@ -159,12 +172,13 @@ ApplicationWindow {
     }
 
     function parameterPopupFocused() { let item = activeFocusItem; while(item) { if(item.objectName === "choicePopupList") return true; item = item.parent } return false }
-    Binding { target: gamepad; property: "editing"; value: !controller.exportRunning && !parameterPopupFocused() && controller.editorVisible && !quickMenu.opened && !historyDialog.opened && !toolSearch.opened && !toolActions.opened && !imageActions.opened && !confirmImageAction.opened && !collectionDialog.opened && !quickSettings.opened && !batchExportDialog.opened && !importDialog.visible && !folderDialog.visible && !exportDialog.visible }
+    Binding { target: gamepad; property: "editing"; value: !controller.exportRunning && !window.modalOpen && !window.textInputFocused && controller.editorVisible && !controller.cropEditing }
     Connections {
         target: gamepad
         function onAction(name, pressed) {
-            if(name === "compare") controller.before = pressed
-            if(!pressed) return
+            if(name === "compare" && !pressed) { controller.before = false; return }
+            if(!pressed || window.modalOpen || window.textInputFocused || controller.cropEditing || controller.exportRunning) return
+            if(name === "compare") { if(controller.editorVisible) controller.before = true; return }
             if(name === "previous") { window.contentItem.forceActiveFocus(); controller.navigateImage(-1) }
             else if(name === "next") { window.contentItem.forceActiveFocus(); controller.navigateImage(1) }
             else if(name === "increase") { window.contentItem.forceActiveFocus(); controller.adjustLastParameter(1) }
@@ -174,18 +188,52 @@ ApplicationWindow {
             else if(name === "menu") showQuickMenu()
         }
         function onPan(delta) {
-            if(controller.editorVisible) { canvas.contentX += delta.x * 12; canvas.contentY += delta.y * 12; clampPan() }
+            if(gamepad.editing) { canvas.contentX += delta.x * 12; canvas.contentY += delta.y * 12; clampPan() }
         }
-        function onZoom(delta) { if(controller.editorVisible) zoomBy(1 + delta * 0.025) }
+        function onZoom(delta) { if(gamepad.editing) zoomBy(1 + delta * 0.025) }
     }
 
-    Shortcut { sequences: [StandardKey.Undo]; onActivated: controller.undo() }
-    Shortcut { sequences: [StandardKey.Redo]; onActivated: controller.redo() }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: window.imageShortcutsEnabled; onActivated: controller.undo() }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: window.imageShortcutsEnabled; onActivated: controller.redo() }
     Shortcut {
         sequence: "Escape"
-        enabled: !quickMenu.opened && !historyDialog.opened && !toolSearch.opened && !toolActions.opened
-            && !importDialog.visible && !folderDialog.visible && !exportDialog.visible && !collectionDialog.opened && !importReview.opened && !importSource.opened && !quickSettings.opened && !batchExportDialog.opened && !imageActions.opened && !confirmImageAction.opened
+        enabled: !window.modalOpen && !window.textInputFocused
         onActivated: { if(controller.cropEditing) { controller.cropCommand("cancel"); return } if(controller.before) controller.before = false; else if(!controller.editorVisible && window.selectionMode) window.selectionMode = false; else controller.editorVisible = false }
+    }
+
+    header: Rectangle {
+        objectName: "editorActionBar"
+        visible: controller.editorVisible
+        height: visible ? 72 : 0
+        color: "#101619"
+        RowLayout {
+            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+            TouchButton {
+                objectName: "editorLibraryButton"
+                text: qsTr("library"); iconName: "grid"; showLabel: true
+                enabled: !controller.exportRunning
+                onClicked: controller.editorVisible = false
+            }
+            TouchButton { objectName: "editorUndoButton"; text: qsTr("undo"); iconName: "undo"; enabled: controller.canUndo && !controller.busy && !controller.cropEditing; onClicked: controller.undo() }
+            TouchButton { objectName: "editorRedoButton"; text: qsTr("redo"); iconName: "redo"; enabled: controller.canRedo && !controller.busy && !controller.cropEditing; onClicked: controller.redo() }
+            TouchButton {
+                objectName: "editorCompareButton"
+                text: controller.before ? qsTr("show edited") : qsTr("show original")
+                checked: controller.before; enabled: controller.imageId > 0 && !controller.busy && !controller.cropEditing
+                onClicked: controller.before = !controller.before
+            }
+            Label {
+                text: controller.imageInformation.filename || ""; textFormat: Text.PlainText
+                Layout.fillWidth: true; elide: Text.ElideMiddle; color: "#aebbc1"
+            }
+            TouchButton {
+                objectName: "editorExportButton"
+                text: qsTr("export"); iconName: "export"; showLabel: true
+                enabled: controller.imageId > 0 && !controller.busy && !controller.cropEditing
+                onClicked: { batchExportDialog.scope = "current"; batchExportDialog.open() }
+            }
+            TouchButton { text: qsTr("more actions"); iconName: "menu"; onClicked: showQuickMenu() }
+        }
     }
 
     StackLayout {
@@ -202,10 +250,10 @@ ApplicationWindow {
                     Label { text: controller.images.length === 1 ? qsTr("1 photo") : qsTr("%1 photos").arg(controller.images.length.toLocaleString(Qt.locale("en_US"), "f", 0)); color: "#9da6b3" }
                 }
                 TouchButton { text: window.selectionMode ? qsTr("done") : qsTr("select"); checked: window.selectionMode; onClicked: window.selectionMode = !window.selectionMode }
-                TouchButton { iconName: "import"; text: qsTr("import"); enabled: controller.ready && !controller.busy; onClicked: importSource.open() }
+                TouchButton { iconName: "import"; showLabel: true; text: qsTr("import"); enabled: controller.ready && !controller.busy; onClicked: importSource.open() }
                 Item { Layout.fillWidth: true }
-                TouchButton { iconName: "export"; text: qsTr("batch export"); enabled: controller.images.length > 0 && !controller.busy; onClicked: { batchExportDialog.scope = window.selectionMode ? "selected" : "collection"; batchExportDialog.open() } }
-                TouchButton { iconName: "settings"; text: qsTr("quick settings"); onClicked: quickSettings.open() }
+                TouchButton { iconName: "export"; showLabel: true; text: window.selectionMode ? qsTr("export selected") : qsTr("export"); enabled: !controller.busy && (window.selectionMode ? window.selectedImages.length > 0 : controller.images.length > 0); onClicked: { batchExportDialog.scope = window.selectionMode ? "selected" : "collection"; batchExportDialog.open() } }
+                TouchButton { iconName: "gear"; text: qsTr("quick settings"); onClicked: quickSettings.open() }
                 TouchButton {
                     objectName: "libraryFilterButton"
                     text: ""; implicitWidth: 64
@@ -237,6 +285,22 @@ ApplicationWindow {
                 TouchButton { text: qsTr("untouched"); enabled: !controller.busy; onClicked: controller.libraryCommand("untouched", {}, 0) }
                 Item { Layout.fillWidth: true }
             }
+            RowLayout {
+                visible: window.selectionMode && window.selectedImages.length > 0
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; spacing: 8
+                TouchButton {
+                    objectName: "pasteSelectedButton"
+                    text: qsTr("paste history to selected"); iconName: "paste"; showLabel: true
+                    enabled: !controller.busy && !!controller.copiedHistory.source
+                    onClicked: { historyPasteDialog.imageId = controller.imageId; historyPasteDialog.scope = "selected"; historyPasteDialog.open() }
+                }
+                TouchButton {
+                    objectName: "resetSelectedButton"
+                    text: qsTr("reset selected"); iconName: "reset"; showLabel: true; enabled: !controller.busy
+                    onClicked: { showResetHistory(controller.imageId); resetHistoryDialog.scope = "selected" }
+                }
+                Item { Layout.fillWidth: true }
+            }
             GridView {
                 id: library
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: 16; Layout.rightMargin: 16
@@ -249,7 +313,8 @@ ApplicationWindow {
                     required property var modelData
                     required property int index
                     width: library.cellWidth; height: library.cellHeight
-                    TouchButton {
+                    ThumbnailButton {
+                        objectName: "thumbnail-" + modelData.imgid
                         anchors.fill: parent; anchors.margins: 6; text: ""
                         enabled: controller.ready && !controller.busy
                         Accessible.name: modelData.filename
@@ -287,20 +352,11 @@ ApplicationWindow {
                         }
                         ColumnLayout {
                             anchors.fill: parent; anchors.margins: 10; spacing: 8
-                            Image {
-                                Layout.fillWidth: true; Layout.fillHeight: true
-                                source: "image://photos/thumb/" + modelData.imgid + "?revision=" + window.thumbnailRevision
-                                fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
-
-                            }
+                            ThumbnailImage { Layout.fillWidth: true; Layout.fillHeight: true; imageId: modelData.imgid }
                             Label { text: modelData.filename; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: 14; color: window.selectionMode && window.selectedImages.indexOf(modelData.imgid) >= 0 ? "#07191b" : "#e2e5e9" }
                         }
                     }
-                    Component.onCompleted: controller.requestThumbnail(modelData.imgid)
-                    Connections {
-                        target: controller
-                        function onStateChanged() { if(controller.ready) controller.requestThumbnail(modelData.imgid) }
-                    }
+
                 }
                 Label {
                     anchors.centerIn: parent
@@ -454,7 +510,7 @@ ApplicationWindow {
                         boundsBehavior: Flickable.StopAtBounds
                         model: controller.images; cacheBuffer: 200
                         onWidthChanged: Qt.callLater(updateFilmstrip)
-                        delegate: TouchButton {
+                        delegate: ThumbnailButton {
                             required property var modelData
                             required property int index
                             width: Math.max(112, filmstrip.height * 1.6); height: filmstrip.height
@@ -465,22 +521,17 @@ ApplicationWindow {
                             TapHandler { acceptedButtons: Qt.RightButton; onTapped: window.showImageActions(modelData) }
                             onActiveFocusChanged: if(activeFocus) filmstrip.positionViewAtIndex(index, ListView.Contain)
                             ToolTip.visible: hovered; ToolTip.text: modelData.filename
-                            Image {
+                            ThumbnailImage {
                                 objectName: "filmThumbnail-" + modelData.imgid
-                                anchors.fill: parent; anchors.margins: 4
-                                source: "image://photos/thumb/" + modelData.imgid + "?revision=" + window.thumbnailRevision
-                                fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false
+                                anchors.fill: parent; anchors.margins: 4; imageId: modelData.imgid
                             }
+
                             background: Rectangle {
                                 radius: 8; color: "#182126"
                                 border.width: parent.checked || parent.activeFocus ? 2 : 1
                                 border.color: parent.checked ? "#00dbe5" : parent.activeFocus ? "#f0f6f8" : "#2a3439"
                             }
-                            Component.onCompleted: controller.requestThumbnail(modelData.imgid)
-                            Connections {
-                                target: controller
-                                function onStateChanged() { if(controller.ready) controller.requestThumbnail(modelData.imgid) }
-                            }
+
                         }
                     }
                 }
@@ -555,8 +606,9 @@ ApplicationWindow {
                                         }
                                         Switch {
                                             id: enabledSwitch
+                                            objectName: "enable-" + toolCard.modelData.operation
                                             enabled: controller.imageId > 0 && !controller.cropEditing && !controller.exportRunning
-                                            visible: toolCard.expanded || toolCard.modelData.operation === "lens"
+                                            visible: true
                                             checked: controller.cropEditing && toolCard.modelData.operation === "crop" ? true : controller.moduleStates[toolCard.modelData.operation] || false
                                             implicitWidth: 64; implicitHeight: 64; padding: 0
                                             Accessible.name: qsTr("enable %1").arg(toolCard.modelData.label)
@@ -643,7 +695,7 @@ ApplicationWindow {
             anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
             BusyIndicator { running: controller.busy; implicitWidth: 24; implicitHeight: 24; visible: running }
             Label { text: controller.message; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; color: controller.hasError ? "#ffa99e" : "#a8b0bc"; font.pixelSize: 12 }
-            TouchButton { text: qsTr("cancel export"); iconName: "close"; visible: controller.exportRunning; onClicked: controller.cancelExport() }
+            TouchButton { text: qsTr("cancel export"); iconName: "close"; showLabel: true; visible: controller.exportRunning; onClicked: controller.cancelExport() }
             Label { text: gamepad.connected ? qsTr("A select   B back   X before   Y tools   LB/RB photos") : qsTr("touch, keyboard, and mouse"); color: "#7f8b9c"; font.pixelSize: 12 }
         }
     }
@@ -652,16 +704,24 @@ ApplicationWindow {
         id: imageActions
         objectName: "imageActions"
         anchors.centerIn: parent; width: Math.min(500, window.width - 32)
+        height: Math.min(600, window.height - 32)
         padding: 20; modal: true; focus: true
         background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
-        ColumnLayout {
+        ScrollView {
+            id: imageActionScroll
+            anchors.fill: parent; contentWidth: availableWidth; clip: true
+            ColumnLayout {
+            id: imageActionColumn
             width: parent.width; spacing: 10
             Label { text: window.actionImage.filename || ""; textFormat: Text.PlainText; color: "#e6eef0"; font.pixelSize: 20; Layout.fillWidth: true; elide: Text.ElideMiddle }
-            TouchButton { iconName: "reject"; text: qsTr("reject"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("reject") }
-            TouchButton { iconName: "unrate"; text: qsTr("unreject / unrate"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("unrate") }
-            TouchButton { iconName: "trash"; text: qsTr("remove from collection"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("remove") }
-            TouchButton { iconName: "trash"; text: qsTr("delete from disk"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("trash") }
-            TouchButton { iconName: "close"; text: qsTr("cancel"); Layout.fillWidth: true; onClicked: imageActions.close() }
+            TouchButton { showLabel: true; iconName: "copy"; text: qsTr("copy history"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("copy") }
+            TouchButton { showLabel: true; iconName: "paste"; text: qsTr("paste selected history"); Layout.fillWidth: true; enabled: !controller.busy && !!controller.copiedHistory.source; onClicked: window.chooseImageAction("paste") }
+            TouchButton { showLabel: true; iconName: "reset"; text: qsTr("reset adjustments"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("reset") }
+            TouchButton { showLabel: true; iconName: "reject"; text: qsTr("reject"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("reject") }
+            TouchButton { showLabel: true; iconName: "unrate"; text: qsTr("unreject / unrate"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("unrate") }
+            TouchButton { showLabel: true; iconName: "trash"; text: qsTr("remove from collection"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("remove") }
+            TouchButton { showLabel: true; iconName: "trash"; text: qsTr("delete from disk"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("trash") }
+            }
         }
     }
     TouchDialog {
@@ -682,7 +742,6 @@ ApplicationWindow {
             }
             RowLayout {
                 Layout.fillWidth: true
-                TouchButton { iconName: "close"; text: qsTr("cancel"); Layout.fillWidth: true; onClicked: confirmImageAction.close() }
                 TouchButton {
                     text: window.pendingImageAction === "trash" ? qsTr("move to Recycle Bin") : qsTr("remove")
                     Layout.fillWidth: true; enabled: !controller.busy
@@ -697,7 +756,30 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             Switch { text: qsTr("show rejected images"); checked: controller.showRejected; implicitHeight: 64; onToggled: controller.showRejected = checked }
             Switch { text: qsTr("next image after rejecting"); checked: controller.advanceAfterReject; implicitHeight: 64; onToggled: controller.advanceAfterReject = checked }
-            TouchButton { text: qsTr("close"); iconName: "close"; onClicked: quickSettings.close() }
+        }
+    }
+    HistoryPasteDialog { id: historyPasteDialog; photoController: controller }
+    TouchDialog {
+        id: resetHistoryDialog
+        objectName: "resetHistoryDialog"
+        property int imageId: 0
+        property string scope: "current"
+        readonly property int targetCount: controller.images.filter(function(image) {
+            if(scope === "current") return image.imgid === (imageId || controller.imageId)
+            return scope === "collection" || window.selectedImages.indexOf(image.imgid) >= 0
+        }).length
+        title: qsTr("reset adjustments")
+        modal: true; focus: true; anchors.centerIn: parent; width: Math.min(560, window.width - 32)
+        contentItem: ColumnLayout {
+            spacing: 16
+            TouchComboBox {
+                Layout.fillWidth: true; implicitHeight: 64
+                model: [qsTr("current photo"), qsTr("selected photos"), qsTr("visible collection")]
+                currentIndex: ["current", "selected", "collection"].indexOf(resetHistoryDialog.scope)
+                onActivated: resetHistoryDialog.scope = ["current", "selected", "collection"][currentIndex]
+            }
+            Label { text: qsTr("reset adjustments on %1 photos to the engine defaults? original files, ratings, and collection membership are kept. undo restores the previous history in this session").arg(resetHistoryDialog.targetCount); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#aebbc1" }
+            TouchButton { objectName: "resetHistoryButton"; text: qsTr("reset adjustments"); iconName: "reset"; showLabel: true; Layout.fillWidth: true; enabled: !controller.busy && resetHistoryDialog.targetCount > 0; onClicked: { controller.historyCommand("reset", {scope: resetHistoryDialog.scope}, resetHistoryDialog.imageId); resetHistoryDialog.close() } }
         }
     }
     ExportDialog { id: batchExportDialog; photoController: controller }
@@ -712,9 +794,8 @@ ApplicationWindow {
             spacing: 12
             Label { text: qsTr("choose a source, then review which photos to add"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#aebbc1" }
             TouchButton { text: qsTr("choose photos"); Layout.fillWidth: true; onClicked: { importSource.close(); importDialog.open() } }
-            TouchButton { iconName: "folder"; text: qsTr("choose folder"); Layout.fillWidth: true; onClicked: { importSource.close(); folderDialog.open() } }
+            TouchButton { iconName: "folder"; showLabel: true; text: qsTr("choose folder"); Layout.fillWidth: true; onClicked: { importSource.close(); folderDialog.open() } }
             TouchButton { text: qsTr("include subfolders"); checked: window.importRecursive; Layout.fillWidth: true; onClicked: window.importRecursive = !window.importRecursive }
-            TouchButton { iconName: "close"; text: qsTr("cancel"); Layout.fillWidth: true; onClicked: importSource.close() }
         }
     }
     FileDialog {
@@ -731,13 +812,12 @@ ApplicationWindow {
         ColumnLayout {
             width: parent.width; spacing: 10
             Label { text: controller.toolLabel; Layout.fillWidth: true; color: "#e6eef0"; font.pixelSize: 20 }
-            TouchButton { iconName: "reset"; text: qsTr("reset tool"); Layout.fillWidth: true; onClicked: { toolActions.close(); controller.reset() } }
+            TouchButton { iconName: "reset"; showLabel: true; text: qsTr("reset tool"); Layout.fillWidth: true; onClicked: { toolActions.close(); controller.reset() } }
             TouchButton {
                 text: window.advanced ? qsTr("fewer controls") : qsTr("all controls")
                 Layout.fillWidth: true; visible: controller.operation === "exposure"
                 checked: window.advanced; onClicked: { window.advanced = !window.advanced; toolActions.close() }
             }
-            TouchButton { text: qsTr("close"); Layout.fillWidth: true; onClicked: toolActions.close() }
         }
     }
     FolderDialog {
@@ -777,14 +857,17 @@ ApplicationWindow {
                         TouchButton { text: qsTr("library"); Layout.fillWidth: true; checked: !controller.editorVisible; onClicked: { quickMenu.close(); controller.editorVisible = false } }
                         TouchButton { text: qsTr("editor"); Layout.fillWidth: true; enabled: controller.imageId > 0; checked: controller.editorVisible; onClicked: { quickMenu.close(); controller.editorVisible = true } }
                     }
-                    TouchButton { iconName: "settings"; text: qsTr("quick settings"); Layout.fillWidth: true; onClicked: { quickMenu.close(); quickSettings.open() } }
-                    TouchButton { iconName: "export"; text: qsTr("export photo"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { quickMenu.close(); batchExportDialog.scope = "current"; batchExportDialog.open() } }
+                    TouchButton { iconName: "gear"; showLabel: true; text: qsTr("quick settings"); Layout.fillWidth: true; onClicked: { quickMenu.close(); quickSettings.open() } }
+                    TouchButton { iconName: "export"; showLabel: true; text: qsTr("export photo"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { quickMenu.close(); batchExportDialog.scope = "current"; batchExportDialog.open() } }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 10
-                        TouchButton { iconName: "undo"; text: qsTr("undo"); Layout.fillWidth: true; enabled: controller.canUndo; onClicked: { quickMenu.close(); controller.undo() } }
-                        TouchButton { iconName: "redo"; text: qsTr("redo"); Layout.fillWidth: true; enabled: controller.canRedo; onClicked: { quickMenu.close(); controller.redo() } }
+                        TouchButton { iconName: "undo"; showLabel: true; text: qsTr("undo"); Layout.fillWidth: true; enabled: controller.canUndo; onClicked: { quickMenu.close(); controller.undo() } }
+                        TouchButton { iconName: "redo"; showLabel: true; text: qsTr("redo"); Layout.fillWidth: true; enabled: controller.canRedo; onClicked: { quickMenu.close(); controller.redo() } }
                     }
                     TouchButton { text: qsTr("edit history"); Layout.fillWidth: true; enabled: controller.imageId > 0; onClicked: { quickMenu.close(); showHistory() } }
+                    TouchButton { iconName: "copy"; showLabel: true; text: qsTr("copy history"); Layout.fillWidth: true; enabled: controller.imageId > 0 && !controller.busy; onClicked: { quickMenu.close(); controller.historyCommand("copy") } }
+                    TouchButton { iconName: "paste"; showLabel: true; text: qsTr("paste selected history"); Layout.fillWidth: true; enabled: !!controller.copiedHistory.source && !controller.busy; onClicked: { quickMenu.close(); historyPasteDialog.imageId = controller.imageId; historyPasteDialog.scope = window.selectionMode ? "selected" : "current"; historyPasteDialog.open() } }
+                    TouchButton { iconName: "reset"; showLabel: true; text: qsTr("reset adjustments"); Layout.fillWidth: true; enabled: controller.imageId > 0 && !controller.busy; onClicked: { quickMenu.close(); showResetHistory(controller.imageId) } }
                     TouchButton {
                         text: controller.before ? qsTr("show edited image") : qsTr("show before image"); Layout.fillWidth: true; enabled: controller.imageId > 0
                         onClicked: { controller.before = !controller.before; quickMenu.close() }
@@ -796,15 +879,14 @@ ApplicationWindow {
                     }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 10
-                    TouchButton { text: qsTr("collections and filters"); Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { quickMenu.close(); collectionDialog.open() } }
-                    TouchButton { text: qsTr("import photos"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); importDialog.open() } }
-                        TouchButton { text: qsTr("import folder"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); folderDialog.open() } }
+                    TouchButton { visible: !controller.editorVisible; text: qsTr("collections and filters"); Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { quickMenu.close(); collectionDialog.open() } }
+                    TouchButton { visible: !controller.editorVisible; text: qsTr("import photos"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); importDialog.open() } }
+                        TouchButton { visible: !controller.editorVisible; text: qsTr("import folder"); Layout.fillWidth: true; enabled: controller.ready; onClicked: { quickMenu.close(); folderDialog.open() } }
                     }
                     TouchButton {
                         text: qsTr("switch to classic"); Layout.fillWidth: true; visible: managedSession; enabled: controller.ready
                         onClicked: { quickMenu.close(); saveView(); controller.switchInterface("classic") }
                     }
-                    TouchButton { text: qsTr("close menu"); Layout.fillWidth: true; onClicked: quickMenu.close() }
                 }
             }
         }
@@ -828,7 +910,6 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Label { text: qsTr("edit history"); color: "#f0f1f3"; font.pixelSize: 24; Layout.fillWidth: true }
-                TouchButton { text: qsTr("close"); onClicked: historyDialog.close() }
             }
             Label { text: qsTr("choose a step; undo returns to your previous edit"); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#aeb4be" }
             ListView {

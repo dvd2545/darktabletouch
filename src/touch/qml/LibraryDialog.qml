@@ -178,7 +178,7 @@ TouchDialog {
                         currentIndex: libraryDialog.propertyIndex(libraryDialog.browseProperty)
                         Accessible.name: qsTr("collection property")
                         onActivated: { libraryDialog.browseProperty = libraryDialog.properties[currentIndex].item; libraryDialog.search = ""; libraryDialog.loadValues() }
-                        delegate: ItemDelegate { required property var modelData; width: parent.width; height: 64; text: modelData.label }
+                        delegate: ChoiceDelegate { required property var modelData; width: parent.width; height: 64; text: modelData.label }
                     }
                     TextField {
                         Layout.fillWidth: true; implicitHeight: 64; placeholderText: qsTr("search collection values")
@@ -234,7 +234,6 @@ TouchDialog {
             TouchButton { iconName: "reset"; text: qsTr("reset all"); onClicked: libraryDialog.resetAll() }
             TouchButton { text: qsTr("remove collection from catalog"); iconName: "trash"; onClicked: { libraryDialog.removePath = ""; removeDialog.open() } }
             Item { Layout.fillWidth: true }
-            TouchButton { iconName: "close"; text: qsTr("cancel"); onClicked: libraryDialog.close() }
             TouchButton { iconName: "check"; text: qsTr("apply"); checked: true; enabled: libraryDialog.photoController.ready && !libraryDialog.photoController.busy; onClicked: { libraryDialog.photoController.libraryCommand("collection", libraryDialog.draft); libraryDialog.close() } }
         }
     }
@@ -246,7 +245,6 @@ TouchDialog {
             Label { text: libraryDialog.removePath || qsTr("current collection"); textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#e6eef0" }
             Label { text: qsTr("remove these photos from the catalog? folder removal includes imported subfolders and all their photos, including filtered or rejected images. original files and sidecars stay on disk"); Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#aebbc1" }
             RowLayout {
-                TouchButton { text: qsTr("cancel"); iconName: "close"; onClicked: removeDialog.close() }
                 TouchButton { text: qsTr("remove"); iconName: "trash"; enabled: !photoController.busy; onClicked: { photoController.libraryCommand(libraryDialog.removePath ? "remove-folder" : "remove-collection", {folder: libraryDialog.removePath}); removeDialog.close(); libraryDialog.close() } }
             }
         }

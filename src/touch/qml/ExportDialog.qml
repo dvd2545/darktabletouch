@@ -12,6 +12,25 @@ TouchDialog {
     anchors.centerIn: parent
     property url folder
     property string scope: "selected"
+    property alias focusColumn: exportColumn
+    readonly property var focusViewport: exportScroll.contentItem
+    readonly property int targetCount: scope === "current" ? (photoController.imageId > 0 ? 1 : 0)
+        : photoController.images.filter(function(image) {
+            return dialog.scope === "collection"
+                || (dialog.scope === "selected" && (dialog.photoController.library.selected || []).indexOf(image.imgid) >= 0)
+        }).length
+    readonly property bool validPattern: pattern.text.trim().length > 0
+        && !/[\u0000-\u001f<>:"/\\|?*{}]/.test(pattern.text.replace(/\{(name|sequence|id)\}/g, ""))
+        && !/[. ]$/.test(pattern.text)
+    readonly property string validationMessage: {
+        if(photoController.busy) return qsTr("wait for the current operation to finish before exporting")
+        if(targetCount === 0) return scope === "selected" ? qsTr("select photos or choose another export scope")
+            : scope === "current" ? qsTr("open a photo or choose another export scope") : qsTr("the visible collection has no photos to export")
+        if(storage.currentIndex === 0 && !folder.toString().trim()) return qsTr("choose a destination folder before exporting")
+        if(!maxWidth.acceptableInput || !maxHeight.acceptableInput) return qsTr("enter dimensions from 0 to 100000 in advanced options")
+        if(!validPattern) return qsTr("enter a valid filename pattern in advanced options; use only {name}, {sequence}, or {id} tokens and no filename separators")
+        return ""
+    }
     background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
     FolderDialog { id: destination; title: qsTr("export destination"); onAccepted: dialog.folder = selectedFolder }
     contentItem: ColumnLayout {
@@ -19,55 +38,96 @@ TouchDialog {
             id: exportScroll
             Layout.fillWidth: true; Layout.fillHeight: true; contentWidth: availableWidth; clip: true
             ColumnLayout {
+                id: exportColumn
                 width: exportScroll.availableWidth; spacing: 10
-                Label { text: qsTr("photos"); color: "#00dbe5" }
                 TouchComboBox {
                     id: scopeControl
+                    objectName: "exportScope"
+                    Accessible.name: qsTr("photos to export")
                     Layout.fillWidth: true; implicitHeight: 64
                     model: [qsTr("selected photos"), qsTr("visible collection"), qsTr("current photo")]
                     currentIndex: dialog.scope === "current" ? 2 : dialog.scope === "collection" ? 1 : 0
                     onActivated: dialog.scope = ["selected", "collection", "current"][currentIndex]
                 }
-                Label { text: qsTr("storage"); color: "#00dbe5" }
-                TouchComboBox { id: storage; Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("one destination folder"), qsTr("exported subfolder beside each source")] }
+                Label {
+                    text: dialog.targetCount === 1 ? qsTr("1 photo to export") : qsTr("%1 photos to export").arg(dialog.targetCount)
+                    color: "#aebbc1"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                }
+                Label { text: qsTr("destination"); color: "#00dbe5" }
+                Label {
+                    visible: storage.currentIndex !== 0
+                    text: qsTr("exported subfolder beside each source")
+                    color: "#e6eef0"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                }
                 RowLayout {
                     visible: storage.currentIndex === 0; Layout.fillWidth: true
-                    Label { text: dialog.folder.toString() || qsTr("choose a destination"); textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#e6eef0" }
-                    TouchButton { text: qsTr("choose folder"); iconName: "folder"; onClicked: destination.open() }
+                    Label { text: dialog.folder.toString() || qsTr("choose a destination"); textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; color: "#e6eef0" }
+                    TouchButton { text: qsTr("choose folder"); iconName: "folder"; showLabel: true; Layout.minimumWidth: 160; onClicked: destination.open() }
                 }
-                TouchComboBox { id: collision; Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("use a unique filename if it exists"), qsTr("skip existing files"), qsTr("stop if a file exists")] }
-                Label { text: qsTr("name modifier"); color: "#00dbe5" }
-                TextField { id: pattern; Layout.fillWidth: true; implicitHeight: 64; text: "{name}_edited"; selectByMouse: true; Accessible.name: qsTr("export name pattern") }
-                Label { text: qsTr("tokens: {name}, {sequence}, {id}; original filenames remain unchanged"); color: "#aebbc1"; Layout.fillWidth: true; wrapMode: Text.Wrap }
                 Label { text: qsTr("format options"); color: "#00dbe5" }
                 RowLayout {
-                    TouchComboBox { id: format; Layout.fillWidth: true; implicitHeight: 64; model: ["JPEG", "PNG", "TIFF"] }
-                    TouchComboBox { id: bits; enabled: format.currentIndex !== 0; Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("8 bit"), qsTr("16 bit")] }
+                    TouchComboBox { id: format; objectName: "exportFormat"; Accessible.name: qsTr("export format"); Layout.fillWidth: true; implicitHeight: 64; model: ["JPEG", "PNG", "TIFF"] }
+                    TouchComboBox { id: bits; objectName: "exportBitDepth"; Accessible.name: qsTr("export bit depth"); enabled: format.currentIndex !== 0; Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("8 bit"), qsTr("16 bit")] }
                 }
                 RowLayout {
                     visible: format.currentIndex === 0
                     Label { text: qsTr("quality"); color: "#e6eef0" }
                     SpinBox { id: quality; from: 1; to: 100; value: 95; editable: true; implicitHeight: 64 }
                 }
-                Label { text: qsTr("global options"); color: "#00dbe5" }
-                Label { text: qsTr("maximum dimensions in pixels; 0 keeps the original size"); color: "#aebbc1" }
-                RowLayout {
-                    TextField { id: maxWidth; Layout.fillWidth: true; implicitHeight: 64; text: "0"; placeholderText: qsTr("width"); Accessible.name: qsTr("maximum width"); validator: IntValidator { bottom: 0; top: 100000 } }
-                    TextField { id: maxHeight; Layout.fillWidth: true; implicitHeight: 64; text: "0"; placeholderText: qsTr("height"); Accessible.name: qsTr("maximum height"); validator: IntValidator { bottom: 0; top: 100000 } }
+                TouchButton {
+                    id: advanced
+                    objectName: "exportAdvanced"
+                    text: checked ? qsTr("hide advanced options") : qsTr("show advanced options")
+                    checkable: true; Layout.fillWidth: true
                 }
-                Switch { id: upscale; text: qsTr("allow upscaling"); implicitHeight: 64 }
-                Switch { id: highQuality; text: qsTr("high quality resampling"); checked: true; implicitHeight: 64 }
-                TouchComboBox { id: profile; Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("sRGB output profile"), qsTr("image output profile")] }
+                ColumnLayout {
+                    visible: advanced.checked
+                    Layout.fillWidth: true; spacing: 10
+                    Label { text: qsTr("storage"); color: "#00dbe5" }
+                    TouchComboBox { id: storage; objectName: "exportStorage"; Accessible.name: qsTr("export storage"); Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("one destination folder"), qsTr("exported subfolder beside each source")] }
+                    Label { text: qsTr("existing files"); color: "#00dbe5" }
+                    TouchComboBox { id: collision; Accessible.name: qsTr("existing file handling"); Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("use a unique filename if it exists"), qsTr("skip existing files"), qsTr("stop if a file exists")] }
+                    Label { text: qsTr("name modifier"); color: "#00dbe5" }
+                    TextField { id: pattern; objectName: "exportPattern"; Layout.fillWidth: true; implicitHeight: 64; text: "{name}_edited"; selectByMouse: true; Accessible.name: qsTr("export name pattern") }
+                    Label { text: qsTr("tokens: {name}, {sequence}, {id}; original filenames remain unchanged"); color: "#aebbc1"; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    Label { text: qsTr("resize and output profile"); color: "#00dbe5" }
+                    Label { text: qsTr("maximum dimensions in pixels; 0 keeps the original size"); color: "#aebbc1"; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    RowLayout {
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Label { objectName: "exportWidthLabel"; text: qsTr("width (pixels)"); color: "#aebbc1" }
+                            TextField { id: maxWidth; objectName: "exportMaxWidth"; Layout.fillWidth: true; implicitHeight: 64; text: "0"; Accessible.name: qsTr("maximum width in pixels"); validator: IntValidator { bottom: 0; top: 100000 } }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Label { objectName: "exportHeightLabel"; text: qsTr("height (pixels)"); color: "#aebbc1" }
+                            TextField { id: maxHeight; objectName: "exportMaxHeight"; Layout.fillWidth: true; implicitHeight: 64; text: "0"; Accessible.name: qsTr("maximum height in pixels"); validator: IntValidator { bottom: 0; top: 100000 } }
+                        }
+                    }
+                    Switch { id: upscale; text: qsTr("allow upscaling"); implicitHeight: 64 }
+                    Switch { id: highQuality; text: qsTr("high quality resampling"); checked: true; implicitHeight: 64 }
+                    TouchComboBox { id: profile; Accessible.name: qsTr("export output profile"); Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("sRGB output profile"), qsTr("image output profile")] }
+                }
             }
+        }
+        Label {
+            objectName: "exportValidation"
+            text: dialog.validationMessage
+            visible: text.length > 0
+            color: "#ffd08a"; Layout.fillWidth: true; wrapMode: Text.Wrap
+            Accessible.name: text
         }
         RowLayout {
             Layout.fillWidth: true
-            TouchButton { text: qsTr("cancel"); iconName: "close"; onClicked: dialog.close() }
+            TouchButton { text: qsTr("cancel"); Layout.minimumWidth: 96; onClicked: dialog.close() }
             Item { Layout.fillWidth: true }
             TouchButton {
-                text: qsTr("start export"); iconName: "export"; checked: true
-                enabled: !photoController.busy && maxWidth.acceptableInput && maxHeight.acceptableInput && !!pattern.text && (storage.currentIndex !== 0 || !!dialog.folder.toString())
+                objectName: "exportStartButton"
+                text: qsTr("start export"); iconName: "export"; showLabel: true; checked: true
+                Layout.minimumWidth: 176
+                enabled: dialog.validationMessage.length === 0
                 onClicked: {
+                    if(dialog.validationMessage.length > 0) return
                     photoController.exportBatch({scope: dialog.scope, folder: dialog.folder, storage: storage.currentIndex ? "source" : "folder",
                         collision: ["unique", "skip", "error"][collision.currentIndex], pattern: pattern.text,
                         format: ["jpeg", "png", "tiff"][format.currentIndex], bits: bits.currentIndex ? 16 : 8, quality: quality.value,

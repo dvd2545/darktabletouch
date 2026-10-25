@@ -14,7 +14,8 @@ Item {
         && typeof field.min === "number" && typeof field.max === "number"
         && Math.abs(field.min) <= 100000 && Math.abs(field.max) <= 100000 && field.max > field.min
     property real increment: typeof field.step === "number" ? field.step : integerField ? 1 : field.name === "black" ? 0.0001 : 0.01
-    implicitHeight: booleanField ? 72 : enumField ? Math.max(96, fieldLoader.item ? fieldLoader.item.implicitHeight : 96) : 88
+    implicitHeight: Math.max(booleanField ? 72 : enumField ? 96 : 88,
+                             fieldLoader.item ? fieldLoader.item.implicitHeight : 0)
 
     Loader {
         id: fieldLoader
@@ -33,11 +34,14 @@ Item {
     Component {
         id: booleanControl
         Switch {
+            objectName: "parameter-" + root.field.name
             text: root.label
+            Accessible.name: root.label
             checked: Boolean(root.field.value)
             font.pixelSize: 15
             focusPolicy: Qt.StrongFocus
-            onToggled: controller.setParameter(root.field.name, checked, true, root.field.operation || "")
+            enabled: root.field.editable !== false
+            onToggled: if(enabled) controller.setParameter(root.field.name, checked, true, root.field.operation || "")
         }
     }
 
@@ -48,6 +52,7 @@ Item {
             Label { text: root.label; color: "#aeb4be"; font.pixelSize: 14 }
             TouchComboBox {
                 objectName: "parameter-" + root.field.name
+                Accessible.name: root.label
                 Layout.fillWidth: true
                 Layout.preferredHeight: 64
                 model: root.field.values || []
@@ -63,13 +68,13 @@ Item {
                 font.pixelSize: 15
                 focusPolicy: Qt.StrongFocus
                 enabled: root.field.editable !== false
-                delegate: ItemDelegate {
+                delegate: ChoiceDelegate {
                     required property int index
                     text: root.field.values[index].name
                     height: 64
                     width: parent.width
                 }
-                onActivated: function(index) { controller.setParameter(root.field.name, root.field.values[index].value, true, root.field.operation || "") }
+                onActivated: function(index) { if(enabled) controller.setParameter(root.field.name, root.field.values[index].value, true, root.field.operation || "") }
             }
             Label {
                 visible: !!root.field.hint
@@ -92,15 +97,36 @@ Item {
                     elide: Text.ElideRight
                     font.pixelSize: 14
                 }
+                TouchButton {
+                    objectName: "reset-" + root.field.name
+                    text: qsTr("reset")
+                    Accessible.name: qsTr("reset %1 to default").arg(root.label)
+                    Layout.preferredWidth: 64
+                    Layout.preferredHeight: 64
+                    padding: 6
+                    enabled: root.field.editable !== false
+                        && typeof root.field.default === "number" && isFinite(root.field.default)
+                        && Number(root.field.value) !== root.field.default
+                    onClicked: {
+                        if(!enabled) return
+                        numeric.edited = false
+                        numeric.validationRequested = false
+                        controller.setParameter(root.field.name, root.field.default, true, root.field.operation || "")
+                        numeric.text = numeric.engineText()
+                    }
+                }
             }
             RowLayout {
                 Layout.fillWidth: true
                 Slider {
                     id: slider
                     objectName: "parameter-" + root.field.name
+                    Accessible.name: root.label
+                    Accessible.description: root.field.unit || ""
                     Layout.fillWidth: true
                     Layout.preferredHeight: 64
                     visible: root.hasSlider
+                    enabled: root.field.editable !== false
                     from: Math.min(root.field.soft_min === undefined ? (root.field.min || 0) : root.field.soft_min, Number(root.field.value || 0))
                     to: Math.max(root.field.soft_max === undefined ? (root.field.max === undefined ? 1 : root.field.max) : root.field.soft_max, Number(root.field.value || 0))
                     stepSize: root.increment
@@ -121,19 +147,59 @@ Item {
                     }
                     Binding { target: slider; property: "value"; when: !slider.pressed; value: Number(root.field.value || 0); restoreMode: Binding.RestoreNone }
                     onMoved: {
+                        if(!enabled) return
                         lastMoved = value
                         controller.setParameter(root.field.name, value, !pressed, root.field.operation || "")
                     }
                     onPressedChanged: {
                         if(pressed) lastMoved = value
-                        else controller.setParameter(root.field.name, lastMoved, true, root.field.operation || "")
+                        else if(enabled) controller.setParameter(root.field.name, lastMoved, true, root.field.operation || "")
                     }
                 }
                 TextField {
                     id: numeric
                     objectName: "numeric-" + root.field.name
+                    Accessible.name: root.label
+                    Accessible.description: validation.visible ? validation.text : root.field.unit || ""
+                    enabled: root.field.editable !== false
                     property bool edited: false
-                    onActiveFocusChanged: if(activeFocus) { edited = false; controller.rememberParameter(root.field.name, root.field.operation || "", root.increment) }
+                    property bool validationRequested: false
+                    readonly property real parsedValue: {
+                        try { return Number.fromLocaleString(Qt.locale("en_US"), text) }
+                        catch(error) { return NaN }
+                    }
+                    readonly property string validationError: {
+                        if(!text.trim().length) return qsTr("enter a number")
+                        if(!isFinite(parsedValue)) return qsTr("enter a valid number using a decimal point")
+                        if(root.integerField && Math.floor(parsedValue) !== parsedValue) return qsTr("enter a whole number")
+                        if(root.field.min !== undefined && parsedValue < root.field.min)
+                            return qsTr("enter a value of at least %1").arg(root.field.min)
+                        if(root.field.max !== undefined && parsedValue > root.field.max)
+                            return qsTr("enter a value of at most %1").arg(root.field.max)
+                        return acceptableInput ? "" : qsTr("enter a valid number using a decimal point")
+                    }
+                    function engineText() {
+                        return String(Number(root.field.value || 0))
+                    }
+                    function finishEdit() {
+                        if(!edited || !enabled) return
+                        validationRequested = true
+                        if(validationError.length) return
+                        controller.setParameter(root.field.name, parsedValue, true, root.field.operation || "")
+                        edited = false
+                        validationRequested = false
+                    }
+                    function discardEdit() {
+                        edited = false
+                        validationRequested = false
+                        text = engineText()
+                        forceActiveFocus()
+                        selectAll()
+                    }
+                    onActiveFocusChanged: {
+                        if(activeFocus) controller.rememberParameter(root.field.name, root.field.operation || "", root.increment)
+                        else finishEdit()
+                    }
                     onTextEdited: edited = true
                     Layout.preferredWidth: root.hasSlider ? 100 : 220
                     Layout.preferredHeight: 64
@@ -146,7 +212,7 @@ Item {
                     background: Rectangle {
                         radius: 8; color: "#253035"
                         border.width: numeric.activeFocus ? 2 : 1
-                        border.color: numeric.edited && !numeric.acceptableInput ? "#ffa99e" : numeric.activeFocus ? "#00dbe5" : "#35434a"
+                        border.color: numeric.edited && numeric.validationError.length ? "#ffa99e" : numeric.activeFocus ? "#00dbe5" : "#35434a"
                     }
                     validator: DoubleValidator {
                         bottom: root.field.min === undefined ? -1.7976931348623157e308 : root.field.min
@@ -156,17 +222,34 @@ Item {
                     }
                     Binding {
                         target: numeric; property: "text"; when: !numeric.activeFocus && !numeric.edited
-                        value: Number(root.field.value || 0).toLocaleString(Qt.locale("en_US"), "g", 6)
+                        value: numeric.engineText()
                         restoreMode: Binding.RestoreNone
                     }
-                    onEditingFinished: {
-                        if(edited && acceptableInput) {
-                            const next = Number.fromLocaleString(Qt.locale("en_US"), text)
-                            controller.setParameter(root.field.name, next, true, root.field.operation || "")
-                            edited = false
-                        }
-                    }
+                    onEditingFinished: finishEdit()
+                    Keys.onReturnPressed: function(event) { finishEdit(); event.accepted = true }
+                    Keys.onEnterPressed: function(event) { finishEdit(); event.accepted = true }
+                    Keys.onEscapePressed: function(event) { discardEdit(); event.accepted = true }
                 }
+            }
+            Label {
+                id: validation
+                objectName: "validation-" + root.field.name
+                visible: numeric.edited && numeric.validationRequested && !!numeric.validationError
+                text: numeric.validationError
+                textFormat: Text.PlainText
+                color: "#ffa99e"
+                font.pixelSize: 13
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            TouchButton {
+                objectName: "discard-" + root.field.name
+                text: qsTr("discard invalid edit")
+                Accessible.name: qsTr("discard invalid edit for %1").arg(root.label)
+                visible: validation.visible
+                Layout.fillWidth: true
+                Layout.preferredHeight: 64
+                onClicked: numeric.discardEdit()
             }
         }
     }

@@ -25,8 +25,13 @@ Canvas {
         else if(name === "folder") line([3,19,3,5,10,5,12,8,21,8,21,19,3,19])
         else if(name === "crop") { line([6,2,6,18,22,18]); line([2,6,18,6,18,22]) }
         else if(name === "filter") line([3,3,21,3,15,11,15,19,9,22,9,11,3,3])
+        else if(name === "copy") { c.strokeRect(8,8,12,13); line([15,8,15,3,3,3,3,16,8,16]) }
+        else if(name === "paste") { c.strokeRect(5,5,14,16); c.fillRect(9,3,6,4); line([9,12,15,12]); line([9,16,15,16]) }
         else if(name === "undo" || name === "reset" || name === "redo") { if(name === "redo") { c.translate(24,0); c.scale(-1,1) } line([8,4,3,9,8,14]); c.beginPath(); c.moveTo(3,9); c.bezierCurveTo(22,4,24,21,11,21); c.stroke() }
         else if(name === "star" || name === "unrate") { c.beginPath(); for(let i=0;i<10;i++) { const a=-Math.PI/2+i*Math.PI/5,r=i%2?4:10; const x=12+Math.cos(a)*r,y=12+Math.sin(a)*r; if(i)c.lineTo(x,y);else c.moveTo(x,y) } c.closePath(); c.stroke(); if(name === "unrate") line([3,3,21,21]) }
+        else if(name === "gear") {
+            c.beginPath(); for(let i=0;i<32;i++) { const a=i*Math.PI/16, r=(i%4===0 || i%4===3)?10:8; const x=12+Math.cos(a)*r,y=12+Math.sin(a)*r; if(i)c.lineTo(x,y);else c.moveTo(x,y) } c.closePath(); c.stroke(); c.beginPath(); c.arc(12,12,3.5,0,Math.PI*2); c.stroke()
+        }
         else if(name === "settings") { for(let y=5;y<22;y+=7) line([3,y,21,y]); c.fillRect(7,2,3,6); c.fillRect(15,9,3,6); c.fillRect(9,16,3,6) }
         else if(name === "grid") { for(let x=4;x<20;x+=10) for(let y=4;y<20;y+=10) c.strokeRect(x,y,6,6) }
     }

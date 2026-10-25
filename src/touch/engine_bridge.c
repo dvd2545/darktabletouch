@@ -7,6 +7,9 @@
 #include "touch/engine_bridge.h"
 #include "common/darktable.h"
 #include "common/history.h"
+#include "common/history_snapshot.h"
+#include "common/iop_order.h"
+#include "common/undo.h"
 #include "common/filepath.h"
 #include "common/image.h"
 #include "common/mipmap_cache.h"
@@ -19,6 +22,7 @@
 #include "control/conf.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
+#include "develop/masks.h"
 #include "develop/pixelpipe_hb.h"
 #include "imageio/imageio_module.h"
 #include "mcp/dt_bridge.h"
@@ -32,13 +36,18 @@ struct dt_touch_editor_t
   dt_mipmap_buffer_t input;
   gboolean pipe_ready;
   gboolean input_ready;
+  guint64 generation;
 };
+
+static guint64 _editor_generation = 0;
 
 struct dt_touch_state_t
 {
   dt_imgid_t image;
   GList *history;
   int history_end;
+  int snapshot;
+  guint64 generation;
 };
 
 static int _error(char **error, const char *message)
@@ -490,6 +499,7 @@ dt_touch_editor_t *dt_touch_editor_new(int image_id, char **error)
     return NULL;
   }
   dt_touch_editor_t *editor = g_new0(dt_touch_editor_t, 1);
+  editor->generation = ++_editor_generation;
   dt_dev_init(&editor->dev, FALSE);
   dt_dev_load_image(&editor->dev, image_id);
   dt_dev_pop_history_items_ext(&editor->dev, editor->dev.history_end);
@@ -971,6 +981,9 @@ dt_touch_state_t *dt_touch_editor_capture(dt_touch_editor_t *editor)
   state->image = editor->dev.image_storage.id;
   state->history = dt_history_duplicate(editor->dev.history);
   state->history_end = editor->dev.history_end;
+  state->generation = editor->generation;
+  dt_dev_write_history_ext(&editor->dev, state->image);
+  dt_history_snapshot_undo_create(state->image, &state->snapshot, &state->history_end);
   return state;
 }
 
@@ -978,6 +991,11 @@ int dt_touch_editor_restore(dt_touch_editor_t *editor, const dt_touch_state_t *s
 {
   if(!editor || !state || state->image != editor->dev.image_storage.id)
     return _error(error, N_("history snapshot belongs to a different image"));
+  if(state->generation != editor->generation)
+  {
+    dt_history_snapshot_restore(state->image, state->image, state->snapshot, state->history_end);
+    return dt_touch_editor_reload(editor, error);
+  }
   g_list_free_full(editor->dev.history, dt_dev_free_history_item);
   editor->dev.history = dt_history_duplicate(state->history);
   dt_dev_pop_history_items_ext(&editor->dev, state->history_end);
@@ -987,6 +1005,7 @@ int dt_touch_editor_restore(dt_touch_editor_t *editor, const dt_touch_state_t *s
 void dt_touch_state_free(dt_touch_state_t *state)
 {
   if(!state) return;
+  dt_history_snapshot_clear(state->image, state->snapshot);
   g_list_free_full(state->history, dt_dev_free_history_item);
   g_free(state);
 }
@@ -1120,4 +1139,202 @@ void dt_touch_settings_set(int show_rejected, int advance_after_reject)
 {
   dt_conf_set_bool("touch/show_rejected", show_rejected);
   dt_conf_set_bool("touch/advance_after_reject", advance_after_reject);
+}
+
+int dt_touch_editor_reload(dt_touch_editor_t *editor, char **error)
+{
+  if(!editor) return TRUE;
+  const int id = editor->dev.image_storage.id;
+  if(!dt_image_exists(id)) return _error(error, N_("the editing image no longer exists"));
+  if(editor->pipe_ready) dt_dev_pixelpipe_cleanup(&editor->pipe);
+  if(editor->input_ready) dt_mipmap_cache_release(&editor->input);
+  dt_dev_cleanup(&editor->dev);
+  memset(editor, 0, sizeof(*editor)); editor->generation = ++_editor_generation;
+  dt_dev_init(&editor->dev, FALSE); dt_dev_load_image(&editor->dev, id);
+  dt_dev_pop_history_items_ext(&editor->dev, editor->dev.history_end);
+  return TRUE;
+}
+
+static char *_history_token(dt_touch_editor_t *source)
+{
+  // the render hash omits disabled states and older rows that determine indices
+  GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
+  g_checksum_update(checksum, (const guchar *)&source->dev.history_end, sizeof(source->dev.history_end));
+  for(const GList *item = source->dev.history; item; item = item->next) {
+    const dt_dev_history_item_t *history = item->data;
+    g_checksum_update(checksum, (const guchar *)history->op_name, strlen(history->op_name) + 1);
+    g_checksum_update(checksum, (const guchar *)&history->num, sizeof(history->num));
+    g_checksum_update(checksum, (const guchar *)&history->enabled, sizeof(history->enabled));
+    g_checksum_update(checksum, (const guchar *)&history->iop_order, sizeof(history->iop_order));
+    g_checksum_update(checksum, (const guchar *)&history->multi_priority, sizeof(history->multi_priority));
+    g_checksum_update(checksum, (const guchar *)history->multi_name, strlen(history->multi_name) + 1);
+    g_checksum_update(checksum, (const guchar *)&history->multi_name_hand_edited, sizeof(history->multi_name_hand_edited));
+    const int size = history->module && history->params ? history->module->params_size : 0;
+    g_checksum_update(checksum, (const guchar *)&size, sizeof(size));
+    if(size) g_checksum_update(checksum, (const guchar *)history->params, size);
+    if(history->blend_params)
+      g_checksum_update(checksum, (const guchar *)history->blend_params, sizeof(*history->blend_params));
+    const int forms = g_list_length(history->forms);
+    g_checksum_update(checksum, (const guchar *)&forms, sizeof(forms));
+    for(const GList *f = history->forms; f; f = f->next) {
+      const dt_masks_form_t *form = f->data;
+      g_checksum_update(checksum, (const guchar *)&form->type, sizeof(form->type));
+      g_checksum_update(checksum, (const guchar *)&form->version, sizeof(form->version));
+      g_checksum_update(checksum, (const guchar *)&form->formid, sizeof(form->formid));
+      g_checksum_update(checksum, (const guchar *)form->name, strlen(form->name) + 1);
+      g_checksum_update(checksum, (const guchar *)form->source, sizeof(form->source));
+      const int points = g_list_length(form->points);
+      g_checksum_update(checksum, (const guchar *)&points, sizeof(points));
+      for(const GList *point = form->points; point; point = point->next)
+        g_checksum_update(checksum, point->data, form->functions->point_struct_size);
+    }
+  }
+  char *order = dt_ioppr_serialize_text_iop_order_list(source->dev.iop_order_list);
+  if(order) g_checksum_update(checksum, (const guchar *)order, strlen(order) + 1);
+  char *token = g_strdup(g_checksum_get_string(checksum));
+  g_free(order); g_checksum_free(checksum);
+  return token;
+}
+
+char *dt_touch_history_clipboard(int image_id, char **error)
+{
+  dt_touch_editor_t *source = dt_touch_editor_new(image_id, error);
+  if(!source) return NULL;
+  dt_dev_write_history_ext(&source->dev, image_id);
+  char *text = dt_touch_editor_history(source);
+  JsonParser *parser = json_parser_new(); json_parser_load_from_data(parser, text, -1, NULL); g_free(text);
+  JsonObject *object = json_node_get_object(json_parser_get_root(parser));
+  JsonArray *steps = json_object_get_array_member(object, "steps");
+  const int end = source->dev.history_end;
+  for(guint i = 0; i < json_array_get_length(steps); i++)
+  {
+    JsonObject *step = json_array_get_object_element(steps, i);
+    const dt_dev_history_item_t *history = g_list_nth_data(source->dev.history, i);
+    gboolean latest = TRUE;
+    int later_index = i + 1;
+    for(GList *later = g_list_nth(source->dev.history, i + 1); later && later_index < end; later = later->next, later_index++) {
+      const dt_dev_history_item_t *h = later->data;
+      if(!strcmp(h->op_name, history->op_name) && h->multi_priority == history->multi_priority) { latest = FALSE; break; }
+    }
+    // native module copy uses the final enabled/name state, not an older row's
+    const gboolean selectable = latest && (int)i < end && history->module && !dt_iop_is_hidden(history->module);
+    json_object_set_boolean_member(step, "selectable", selectable);
+    json_object_set_boolean_member(step, "safe", selectable && !dt_history_module_skip_copy(history->module->flags()));
+    json_object_set_boolean_member(step, "latest", latest);
+  }
+  char *token = _history_token(source);
+  json_object_set_string_member(object, "token", token); g_free(token);
+  json_object_set_int_member(object, "source", image_id);
+  json_object_set_string_member(object, "filename", source->dev.image_storage.filename);
+  text = json_to_string(json_parser_get_root(parser), FALSE);
+  g_object_unref(parser); dt_touch_editor_free(source); return text;
+}
+
+struct dt_touch_catalog_edit_t { GList *records; };
+
+static void _clear_native_before(gpointer user, dt_undo_type_t type, dt_undo_data_t data)
+{
+  if(data && type == DT_UNDO_LT_HISTORY) {
+    dt_undo_lt_history_t *record = data;
+    dt_history_snapshot_clear(record->imgid, record->before);
+  }
+}
+
+dt_touch_catalog_edit_t *dt_touch_history_apply(const char *request_json, char **error)
+{
+  JsonParser *parser = json_parser_new();
+  if(!json_parser_load_from_data(parser, request_json, -1, NULL) || !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser)))
+  { g_object_unref(parser); _error(error, N_("invalid history request")); return NULL; }
+  JsonObject *request = json_node_get_object(json_parser_get_root(parser));
+  const gboolean reset = json_object_get_boolean_member_with_default(request, "reset", FALSE);
+  const int source = json_object_get_int_member_with_default(request, "source", 0);
+  GList *ops = NULL;
+  if(!reset)
+  {
+    char *descriptor = dt_touch_history_clipboard(source, error);
+    if(!descriptor) { g_object_unref(parser); return NULL; }
+    JsonParser *check = json_parser_new(); json_parser_load_from_data(check, descriptor, -1, NULL); g_free(descriptor);
+    JsonObject *current = json_node_get_object(json_parser_get_root(check));
+    if(g_strcmp0(json_object_get_string_member_with_default(request, "token", ""), json_object_get_string_member(current, "token")))
+    { g_object_unref(check); g_object_unref(parser); _error(error, N_("the source history changed; copy it again before pasting")); return NULL; }
+    JsonArray *selected = json_object_get_array_member(request, "steps");
+    JsonArray *available = json_object_get_array_member(current, "steps");
+    if(selected) for(guint i = 0; i < json_array_get_length(selected); i++) {
+      JsonObject *choice = json_array_get_object_element(selected, i);
+      const int index = json_object_get_int_member_with_default(choice, "index", 0) - 1;
+      if(index < 0 || index >= (int)json_array_get_length(available)
+         || !json_object_get_boolean_member(json_array_get_object_element(available, index), "selectable"))
+      { g_list_free(ops); g_object_unref(check); g_object_unref(parser); _error(error, N_("a selected history step is unavailable")); return NULL; }
+      const gboolean automatic = index > 0 && json_object_get_boolean_member_with_default(choice, "auto_init", FALSE);
+      ops = g_list_append(ops, GINT_TO_POINTER(automatic ? -index : index));
+    }
+    g_object_unref(check);
+    if(!ops) { g_object_unref(parser); _error(error, N_("select at least one history step")); return NULL; }
+  }
+  JsonArray *targets = json_object_get_array_member(request, "targets");
+  if(!targets || !json_array_get_length(targets)) { g_list_free(ops); g_object_unref(parser); _error(error, N_("select a destination image")); return NULL; }
+  dt_touch_catalog_edit_t *edit = g_new0(dt_touch_catalog_edit_t, 1);
+  dt_undo_t *saved_undo = darktable.undo; darktable.undo = dt_undo_init();
+  gboolean success = TRUE;
+  for(guint i = 0; i < json_array_get_length(targets); i++)
+  {
+    const int id = json_array_get_int_element(targets, i);
+    if(!reset && id == source) continue;
+    if(!dt_image_exists(id)) { success = _error(error, N_("a destination image no longer exists")); break; }
+    dt_undo_lt_history_t *record = g_new0(dt_undo_lt_history_t, 1); record->imgid = id; record->after = -1;
+    dt_history_snapshot_undo_create(id, &record->before, &record->before_history_end);
+    edit->records = g_list_append(edit->records, record);
+    if(reset) dt_history_delete_on_image_ext(id, FALSE, TRUE);
+    else if(!dt_dtdata_merge(source, id) || !dt_history_copy_and_paste_on_image(source, id,
+      json_object_get_boolean_member_with_default(request, "merge", TRUE), ops,
+      json_object_get_boolean_member_with_default(request, "copy_order", FALSE), TRUE, FALSE))
+    { success = _error(error, N_("could not paste the selected history and masks")); break; }
+    dt_history_snapshot_undo_create(id, &record->after, &record->after_history_end);
+    if(dt_image_write_sidecar_file(id)) { success = _error(error, N_("could not save the updated image sidecar")); break; }
+  }
+  dt_undo_iterate(darktable.undo, DT_UNDO_LT_HISTORY, NULL, _clear_native_before);
+  dt_undo_cleanup(darktable.undo); darktable.undo = saved_undo;
+  g_list_free(ops); g_object_unref(parser);
+  if(!success || !edit->records) {
+    dt_touch_catalog_restore(edit, FALSE, NULL); dt_touch_catalog_free(edit);
+    if(success) _error(error, N_("choose a destination different from the copied image"));
+    return NULL;
+  }
+  return edit;
+}
+
+int dt_touch_catalog_restore(dt_touch_catalog_edit_t *edit, int redo, char **error)
+{
+  for(GList *item = edit ? edit->records : NULL; item; item = item->next) {
+    dt_undo_lt_history_t *record = item->data;
+    if(!dt_image_exists(record->imgid)) return _error(error, N_("an image in this history action was removed"));
+  }
+  for(GList *item = edit ? edit->records : NULL; item; item = item->next) {
+    dt_undo_lt_history_t *record = item->data;
+    dt_history_snapshot_restore(record->imgid, record->imgid, redo ? record->after : record->before,
+                                redo ? record->after_history_end : record->before_history_end);
+    dt_mipmap_cache_remove(record->imgid);
+  }
+  gboolean saved = TRUE;
+  for(GList *item = edit ? edit->records : NULL; item; item = item->next) {
+    const dt_undo_lt_history_t *record = item->data;
+    if(dt_image_write_sidecar_file(record->imgid)) saved = FALSE;
+  }
+  if(!saved) {
+    _error(error, N_("history restored in the catalog, but some sidecars could not be saved"));
+    return -1;
+  }
+  return 1;
+}
+
+void dt_touch_catalog_free(dt_touch_catalog_edit_t *edit)
+{
+  if(!edit) return;
+  for(GList *item = edit->records; item; item = item->next) {
+    dt_undo_lt_history_t *record = item->data;
+    dt_history_snapshot_clear(record->imgid, record->before);
+    if(record->after >= 0) dt_history_snapshot_clear(record->imgid, record->after);
+    g_free(record);
+  }
+  g_list_free(edit->records); g_free(edit);
 }

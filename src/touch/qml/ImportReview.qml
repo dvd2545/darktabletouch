@@ -62,7 +62,6 @@ TouchDialog {
         }
         RowLayout {
             Item { Layout.fillWidth: true }
-            TouchButton { iconName: "close"; text: qsTr("cancel"); onClicked: dialog.close() }
             TouchButton {
                 objectName: "confirmImport"
                 text: dialog.selectedCount === 1 ? qsTr("add 1 photo") : qsTr("add %1 photos").arg(dialog.selectedCount); checked: true

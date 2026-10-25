@@ -131,6 +131,11 @@ bool PreviewStore::hasThumbnail(int image) const
   QReadLocker lock(&m_lock);
   return m_thumbnails.contains(image);
 }
+void PreviewStore::removeThumbnail(int image)
+{
+  QWriteLocker lock(&m_lock); m_thumbnails.remove(image);
+}
+
 
 EngineWorker::EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::shared_ptr<std::atomic<bool>> cancel) : m_exportCancel(std::move(cancel)), m_revision(std::move(revision)) {}
 
@@ -314,7 +319,7 @@ void EngineWorker::clearHistory()
   for(const auto &edit : m_edits)
   {
     dt_touch_state_free(edit.before);
-    dt_touch_state_free(edit.after);
+    dt_touch_state_free(edit.after); dt_touch_catalog_free(edit.catalog);
   }
   m_edits.clear();
   m_position = 0;
@@ -368,7 +373,7 @@ void EngineWorker::commitEdit()
   while(m_edits.size() > m_position)
   {
     dt_touch_state_free(m_edits.back().before);
-    dt_touch_state_free(m_edits.back().after);
+    dt_touch_state_free(m_edits.back().after); dt_touch_catalog_free(m_edits.back().catalog);
     m_edits.pop_back();
   }
   m_edits.push_back({m_before, dt_touch_editor_capture(m_editor)});
@@ -376,7 +381,7 @@ void EngineWorker::commitEdit()
   if(m_edits.size() > 100)
   {
     dt_touch_state_free(m_edits.front().before);
-    dt_touch_state_free(m_edits.front().after);
+    dt_touch_state_free(m_edits.front().after); dt_touch_catalog_free(m_edits.front().catalog);
     m_edits.erase(m_edits.begin());
   }
   m_position = m_edits.size();
@@ -430,18 +435,31 @@ void EngineWorker::resetModule(QString operation, quint64 revision)
 void EngineWorker::historyStep(int direction, quint64 revision)
 {
   abortCrop();
-  if(!m_editor || (direction < 0 && !m_position)
-     || (direction > 0 && m_position == m_edits.size())) return;
-  const auto state = direction < 0 ? m_edits[m_position - 1].before : m_edits[m_position].after;
+  if((direction < 0 && !m_position) || (direction > 0 && m_position == m_edits.size())) return;
+  const auto &edit = m_edits[direction < 0 ? m_position - 1 : m_position];
   char *error = nullptr;
-  if(!dt_touch_editor_restore(m_editor, state, &error)) { report(error); return; }
-  if(direction < 0) --m_position;
-  else ++m_position;
-  if(!dt_touch_editor_save(m_editor, &error)) report(error);
-  else emit completed(tr("edits saved"));
+  char *warning = nullptr;
+  if(edit.catalog) {
+    if(!dt_touch_catalog_restore(edit.catalog, direction > 0, &error)) { report(error); return; }
+    warning = error; error = nullptr;
+  } else {
+    if(!m_editor || !dt_touch_editor_restore(m_editor, direction < 0 ? edit.before : edit.after, &error)) { report(error); return; }
+  }
+  if(direction < 0) --m_position; else ++m_position;
   emit historyChanged(m_position > 0, m_position < m_edits.size());
-  loadModule(m_operation, revision);
-  render(revision);
+  if(edit.catalog) {
+    if(!dt_touch_editor_reload(m_editor, &error)) { dt_touch_free(warning); report(error); return; }
+    emit imagesChanged(images()); emit libraryReady(takeJson(dt_touch_library()).object());
+  } else if(!dt_touch_editor_save(m_editor, &error)) {
+    warning = error; error = nullptr;
+  }
+  if(m_editor) {
+    loadModule(m_operation, revision);
+    if(!render(revision)) { dt_touch_free(warning); return; }
+  }
+  if(edit.catalog) emit historyActionDone(edit.targets);
+  if(warning) report(warning);
+  else emit completed(tr("edits saved"));
 }
 
 bool EngineWorker::render(quint64 revision, int extent)
@@ -563,6 +581,12 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(m_worker, &EngineWorker::importReviewed, this, [this](QJsonArray candidates) {
     m_importCandidates = candidates.toVariantList(); emit importReviewChanged();
   });
+  connect(this, &TouchController::historyRequestedAction, m_worker, &EngineWorker::historyCommand);
+  connect(m_worker, &EngineWorker::clipboardReady, this, [this](QJsonObject clipboard) { m_copiedHistory = clipboard.toVariantMap(); emit clipboardChanged(); });
+  connect(m_worker, &EngineWorker::historyActionDone, this, [this](QJsonArray changed) {
+    for(const auto &id : changed) { m_store->removeThumbnail(id.toInt()); requestThumbnail(id.toInt()); }
+    m_waitingFrame = false; m_busy = false; emit stateChanged();
+  });
   connect(this, &TouchController::cropRequested, m_worker, &EngineWorker::cropCommand);
   connect(m_worker, &EngineWorker::cropReady, this, [this](QJsonArray bounds, QSize originalSize) { if(originalSize.isValid()) m_cropOriginalSize = originalSize; m_cropBounds = bounds.toVariantList(); m_cropEditing = !bounds.isEmpty(); emit cropChanged(); });
   connect(this, &TouchController::openRequested, m_worker, &EngineWorker::openImage);
@@ -663,6 +687,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(m_worker, &EngineWorker::thumbnailReady, this, [this](int id, QImage image) {
     m_requestedThumbnails.remove(id);
     if(!image.isNull()) m_store->setThumbnail(id, image);
+    ++m_thumbnailVersions[id];
     emit thumbnailChanged(id);
   });
   connect(m_worker, &EngineWorker::historyChanged, this, [this](bool undo, bool redo) {
@@ -1080,4 +1105,53 @@ void EngineWorker::exportBatch(QJsonObject settings)
   }
   emit completed(tr("export finished: %1 written, %2 skipped%3").arg(done).arg(skipped).arg(m_exportCancel->load() ? tr("; canceled") : QString()));
   emit exportFinished();
+}
+
+void TouchController::historyCommand(const QString &action, const QVariantMap &settings, int image)
+{
+  if(!m_ready || m_busy) return;
+  QVariantMap request = settings;
+  if(action == QStringLiteral("copy")) request.insert(QStringLiteral("source"), image > 0 ? image : m_imageId);
+  else {
+    QVariantList targets;
+    const QString scope = settings.value(QStringLiteral("scope"), QStringLiteral("current")).toString();
+    if(scope == QStringLiteral("current")) { const int id = image > 0 ? image : m_imageId; if(id > 0) targets.append(id); }
+    else for(const auto &entry : m_images) {
+      const int id = entry.toMap().value(QStringLiteral("imgid")).toInt();
+      if(scope == QStringLiteral("collection") || m_library.value(QStringLiteral("selected")).toList().contains(id)) targets.append(id);
+    }
+    if(targets.isEmpty()) { m_failed = true; m_message = tr("select at least one destination image"); emit stateChanged(); return; }
+    request.insert(QStringLiteral("targets"), targets); request.insert(QStringLiteral("reset"), action == QStringLiteral("reset"));
+    if(action == QStringLiteral("paste")) { request.insert(QStringLiteral("source"), m_copiedHistory.value(QStringLiteral("source"))); request.insert(QStringLiteral("token"), m_copiedHistory.value(QStringLiteral("token"))); }
+  }
+  flush(true); m_busy = true; m_waitingFrame = action != QStringLiteral("copy"); emit stateChanged();
+  emit historyRequestedAction(action, QJsonObject::fromVariantMap(request), action == QStringLiteral("copy") ? m_revision->load() : advance());
+}
+
+void EngineWorker::historyCommand(QString action, QJsonObject settings, quint64 revision)
+{
+  abortCrop(); char *error = nullptr;
+  if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
+  if(action == QStringLiteral("copy")) {
+    char *text = dt_touch_history_clipboard(settings.value(QStringLiteral("source")).toInt(), &error);
+    if(!text) { report(error); return; }
+    emit clipboardReady(takeJson(text).object()); emit completed(tr("history copied; choose the steps to paste")); return;
+  }
+  dt_touch_catalog_edit_t *catalog = dt_touch_history_apply(QJsonDocument(settings).toJson(QJsonDocument::Compact).constData(), &error);
+  if(!catalog) { report(error); return; }
+  while(m_edits.size() > m_position) { dt_touch_state_free(m_edits.back().before); dt_touch_state_free(m_edits.back().after); dt_touch_catalog_free(m_edits.back().catalog); m_edits.pop_back(); }
+  m_edits.push_back({nullptr, nullptr, catalog, settings.value(QStringLiteral("targets")).toArray()});
+  if(m_edits.size() > 100) {
+    dt_touch_state_free(m_edits.front().before);
+    dt_touch_state_free(m_edits.front().after);
+    dt_touch_catalog_free(m_edits.front().catalog);
+    m_edits.erase(m_edits.begin());
+  }
+  m_position = m_edits.size();
+  if(!dt_touch_editor_reload(m_editor, &error)) { report(error); return; }
+  emit historyChanged(true, false);
+  emit imagesChanged(images()); emit libraryReady(takeJson(dt_touch_library()).object());
+  if(m_editor) { loadModule(m_operation, revision); render(revision); }
+  emit historyActionDone(settings.value(QStringLiteral("targets")).toArray());
+  emit completed(action == QStringLiteral("reset") ? tr("adjustments reset; undo restores the previous history") : tr("selected history pasted"));
 }

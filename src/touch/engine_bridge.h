@@ -13,6 +13,7 @@ extern "C" {
 
 typedef struct dt_touch_editor_t dt_touch_editor_t;
 typedef struct dt_touch_state_t dt_touch_state_t;
+typedef struct dt_touch_catalog_edit_t dt_touch_catalog_edit_t;
 
 /* all text crossing this boundary is UTF-8; returned text and pixels use dt_touch_free */
 int dt_touch_initialize(int argc, char **argv);
@@ -42,6 +43,12 @@ dt_touch_editor_t *dt_touch_editor_new(int image_id, char **error);
 void dt_touch_editor_free(dt_touch_editor_t *editor);
 char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error);
 char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, char **error);
+char *dt_touch_history_clipboard(int image_id, char **error);
+dt_touch_catalog_edit_t *dt_touch_history_apply(const char *request_json, char **error);
+/* 0: unchanged; 1: restored and saved; -1: restored, with a sidecar error */
+int dt_touch_catalog_restore(dt_touch_catalog_edit_t *edit, int redo, char **error);
+void dt_touch_catalog_free(dt_touch_catalog_edit_t *edit);
+int dt_touch_editor_reload(dt_touch_editor_t *editor, char **error);
 char *dt_touch_editor_history(dt_touch_editor_t *editor);
 int dt_touch_editor_history_select(dt_touch_editor_t *editor, int end, char **error);
 int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,

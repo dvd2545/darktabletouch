@@ -45,6 +45,7 @@ public:
   void setFrame(const QImage &image, bool before = false);
   void setThumbnail(int image, const QImage &thumbnail);
   bool hasThumbnail(int image) const;
+  void removeThumbnail(int image);
 private:
   mutable QReadWriteLock m_lock;
   QImage m_frame, m_before;
@@ -70,6 +71,7 @@ public slots:
   void jumpHistory(int end, quint64 revision);
   void thumbnail(int id);
   void cropCommand(QString action, QJsonObject settings, quint64 revision);
+  void historyCommand(QString action, QJsonObject settings, quint64 revision);
   void exportImage(QString path, QString format);
   void exportBatch(QJsonObject settings);
   void saveView(int image, bool editor, double zoom, double centerX, double centerY);
@@ -85,6 +87,8 @@ signals:
   void cropReady(QJsonArray bounds, QSize originalSize = QSize());
   void exportProgress(int done, int total);
   void exportFinished();
+  void clipboardReady(QJsonObject clipboard);
+  void historyActionDone(QJsonArray changed);
   void importReviewed(QJsonArray candidates);
   void imageOpened(int id, quint64 revision);
   void informationReady(QJsonObject information, quint64 revision);
@@ -97,7 +101,7 @@ signals:
   void failed(QString message);
   void stopped();
 private:
-  struct Edit { dt_touch_state_t *before; dt_touch_state_t *after; };
+  struct Edit { dt_touch_state_t *before; dt_touch_state_t *after; dt_touch_catalog_edit_t *catalog = nullptr; QJsonArray targets; };
   bool render(quint64 revision, int extent = 1280);
   void abortCrop();
   void beginEdit();
@@ -123,6 +127,7 @@ private:
 class TouchController final : public QObject
 {
   Q_OBJECT
+  Q_PROPERTY(QVariantMap copiedHistory READ copiedHistory NOTIFY clipboardChanged)
   Q_PROPERTY(bool exportRunning READ exportRunning NOTIFY stateChanged)
   Q_PROPERTY(bool cropEditing READ cropEditing NOTIFY cropChanged)
   Q_PROPERTY(QSize cropOriginalSize READ cropOriginalSize NOTIFY cropChanged)
@@ -159,6 +164,8 @@ public:
   explicit TouchController(PreviewStore *store, QObject *parent = nullptr);
   ~TouchController() override;
   void initialize(const QStringList &arguments);
+  QVariantMap copiedHistory() const { return m_copiedHistory; }
+  Q_INVOKABLE void historyCommand(const QString &action, const QVariantMap &settings = {}, int image = 0);
   bool exportRunning() const { return m_exportRunning; }
   Q_INVOKABLE void exportBatch(const QVariantMap &settings);
   Q_INVOKABLE void cancelExport() { m_exportCancel->store(true); }
@@ -215,12 +222,15 @@ public:
   Q_INVOKABLE void redo();
   Q_INVOKABLE void jumpHistory(int end);
   Q_INVOKABLE void requestThumbnail(int image);
+  Q_INVOKABLE int thumbnailVersion(int image) const { return m_thumbnailVersions.value(image); }
   Q_INVOKABLE void exportTo(const QUrl &url, const QString &format);
   Q_INVOKABLE void navigateImage(int direction);
   Q_INVOKABLE void shutdown();
   Q_INVOKABLE void saveView(double zoom, double centerX, double centerY);
   Q_INVOKABLE void switchInterface(const QString &mode);
 signals:
+  void clipboardChanged();
+  void historyRequestedAction(QString action, QJsonObject settings, quint64 revision);
   void cropChanged();
   void cropRequested(QString action, QJsonObject settings, quint64 revision);
   void stateChanged();
@@ -278,11 +288,13 @@ private:
   QSize m_cropOriginalSize;
   QVariantList m_cropBounds;
   QVariantMap m_moduleStates;
+  QVariantMap m_copiedHistory;
   QVariantMap m_library;
   QVariantMap m_collectionValues;
   QVariantList m_importCandidates;
   FieldModel m_fields;
   QSet<int> m_requestedThumbnails;
+  QHash<int, int> m_thumbnailVersions;
   QString m_operation = QStringLiteral("exposure");
   QString m_toolLabel = QStringLiteral("exposure");
   QString m_pendingName, m_pendingOperation;

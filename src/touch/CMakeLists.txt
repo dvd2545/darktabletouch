@@ -28,11 +28,15 @@ set_source_files_properties(qml/CropOverlay.qml PROPERTIES QT_RESOURCE_ALIAS Cro
 set_source_files_properties(qml/Icon.qml PROPERTIES QT_RESOURCE_ALIAS Icon.qml)
 set_source_files_properties(qml/TouchDialog.qml PROPERTIES QT_RESOURCE_ALIAS TouchDialog.qml)
 set_source_files_properties(qml/TouchPopup.qml PROPERTIES QT_RESOURCE_ALIAS TouchPopup.qml)
+set_source_files_properties(qml/ThumbnailButton.qml PROPERTIES QT_RESOURCE_ALIAS ThumbnailButton.qml)
+set_source_files_properties(qml/ThumbnailImage.qml PROPERTIES QT_RESOURCE_ALIAS ThumbnailImage.qml)
+set_source_files_properties(qml/ChoiceDelegate.qml PROPERTIES QT_RESOURCE_ALIAS ChoiceDelegate.qml)
+set_source_files_properties(qml/HistoryPasteDialog.qml PROPERTIES QT_RESOURCE_ALIAS HistoryPasteDialog.qml)
 qt_add_qml_module(darktable-touch
   URI DarktableTouch
   VERSION 1.0
   RESOURCE_PREFIX /qt/qml
-  QML_FILES qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
+  QML_FILES qml/HistoryPasteDialog.qml qml/ThumbnailButton.qml qml/ThumbnailImage.qml qml/ChoiceDelegate.qml qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
 
 qt_add_executable(darktabletouch launcher.cpp)
 target_link_libraries(darktabletouch PRIVATE Qt6::Core PkgConfig::TOUCH_JSON)

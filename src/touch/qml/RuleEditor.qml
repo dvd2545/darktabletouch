@@ -26,7 +26,7 @@ ColumnLayout {
                         model: [qsTr("AND"), qsTr("OR"), qsTr("AND NOT")]
                         currentIndex: card.modelData.mode || 0
                         onActivated: dialog.change(card.group, card.index, "mode", currentIndex)
-                        delegate: ItemDelegate { required property string modelData; width: parent.width; height: 64; text: modelData }
+                        delegate: ChoiceDelegate { required property string modelData; width: parent.width; height: 64; text: modelData }
                     }
                     TouchComboBox {
                         Layout.fillWidth: true; implicitHeight: 64
@@ -34,7 +34,7 @@ ColumnLayout {
                         textRole: card.group === "sort" ? "" : "label"
                         currentIndex: card.group === "sort" ? card.modelData.item : dialog.propertyIndex(card.modelData.item)
                         onActivated: dialog.change(card.group, card.index, "item", card.group === "sort" ? currentIndex : dialog.properties[currentIndex].item)
-                        delegate: ItemDelegate {
+                        delegate: ChoiceDelegate {
                             required property var modelData
                             width: parent.width; height: 64; text: card.group === "sort" ? modelData : modelData.label
                         }
@@ -61,7 +61,7 @@ ColumnLayout {
                         implicitHeight: 64; Layout.preferredWidth: 150
                         model: card.suggestions; displayText: qsTr("choose value")
                         onActivated: dialog.change(card.group, card.index, "string", card.suggestions[currentIndex])
-                        delegate: ItemDelegate { required property string modelData; width: parent.width; height: 64; text: modelData }
+                        delegate: ChoiceDelegate { required property string modelData; width: parent.width; height: 64; text: modelData }
                     }
                     TouchButton {
                         visible: card.group === "filtering"; text: checked ? qsTr("enabled") : qsTr("disabled")

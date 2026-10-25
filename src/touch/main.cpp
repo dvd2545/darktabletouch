@@ -13,6 +13,7 @@
 #include <QLocale>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlProperty>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QQuickItem>
@@ -21,6 +22,8 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QWheelEvent>
+#include <QMouseEvent>
+#include <QKeyEvent>
 
 namespace {
 QQuickItem *findItem(QQuickItem *root, const QString &name)
@@ -113,6 +116,21 @@ int main(int argc, char **argv)
   QImage cropBaseline;
   QVariantMap batchSettings;
   QByteArray batchOriginal;
+  int historyTarget = 0, historyVersion = 0, historyWait = 0;
+  QImage historyBaseline;
+  QString blockedSidecar, sidecarBackup;
+  double fieldBaseline = 0, fieldDefault = 0;
+  bool controlsFailed = false;
+  QElapsedTimer pointerClock;
+  pointerClock.start();
+  QPointF touchPosition;
+  const auto pointer = [&](QEvent::Type type, QPointF position) {
+    QMouseEvent event(type, position, window->mapToGlobal(position),
+      type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+      type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+    event.setTimestamp(pointerClock.elapsed() + 1);
+    QCoreApplication::sendEvent(window, &event);
+  };
   QTimer libraryTest;
   libraryTest.setInterval(180);
   const auto libraryScreenshot = [&](const QString &suffix) {
@@ -223,7 +241,7 @@ int main(int argc, char **argv)
         break;
       case 11:
       {
-        QMetaObject::invokeMethod(review, "close");
+        if(review->property("visible").toBool()) { QMetaObject::invokeMethod(review, "close"); return; }
         cropBaseline = store->requestImage(QStringLiteral("current"), nullptr, QSize()).copy();
         controller.rememberParameter(QStringLiteral("exposure"), QStringLiteral("exposure"), 0.01);
         const double originalValue = controller.values().value(QStringLiteral("exposure")).toDouble();
@@ -237,6 +255,11 @@ int main(int argc, char **argv)
       {
         auto overlay = window->findChild<QObject *>(QStringLiteral("cropOverlay"));
         if(!controller.cropEditing() || !overlay) { fail("interactive crop did not start"); return; }
+        for(const auto &name : {"editorUndoButton", "editorCompareButton", "editorExportButton"})
+        {
+          auto action = window->findChild<QObject *>(QString::fromLatin1(name));
+          if(!action || action->property("enabled").toBool()) { fail("editor actions must respect the active crop transaction"); return; }
+        }
         QMetaObject::invokeMethod(overlay, "setBounds", Q_ARG(QVariant, (QVariantList{0.1,0.1,0.9,0.9})));
         if(!libraryScreenshot(QStringLiteral("-crop"))) { fail("crop screenshot failed"); return; }
         controller.cropCommand(QStringLiteral("apply"), {{QStringLiteral("bounds"), QVariantList{0.1,0.1,0.9,0.9}}, {QStringLiteral("ratio_n"),0}, {QStringLiteral("ratio_d"),0}});
@@ -262,13 +285,37 @@ int main(int argc, char **argv)
         QMetaObject::invokeMethod(dialog, "open"); break;
       }
       case 18:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("batchExportDialog"));
+        dialog->setProperty("scope", QStringLiteral("collection"));
+        auto start = dialog->findChild<QObject *>(QStringLiteral("exportStartButton"));
+        bool workflowFailed = false;
+        if(dialog->property("targetCount").toInt() != 2 || dialog->property("validationMessage").toString().isEmpty()
+           || !start || start->property("enabled").toBool() || !start->property("showLabel").toBool())
+        { QTextStream(stderr) << "export must show its target count and explain the missing destination\n"; workflowFailed = true; }
+        if(!dialog->findChild<QObject *>(QStringLiteral("dialogCloseButton")))
+        { QTextStream(stderr) << "export dialog needs an explicit close action\n"; workflowFailed = true; }
+        auto paste = window->findChild<QObject *>(QStringLiteral("pasteHistoryButton"));
+        if(!paste || paste->property("implicitWidth").toDouble() < 120)
+        { QTextStream(stderr) << "labeled icon actions must reserve room for their text\n"; workflowFailed = true; }
+        if(!window->findChild<QObject *>(QStringLiteral("editorActionBar")))
+        { QTextStream(stderr) << "editor needs persistent navigation and editing actions\n"; workflowFailed = true; }
+        if(workflowFailed) { fail("workflow discoverability regression"); return; }
         if(!libraryScreenshot(QStringLiteral("-batch-export"))) { fail("batch export screenshot failed"); return; }
-        if(auto dialog = window->findChild<QObject *>(QStringLiteral("batchExportDialog"))) QMetaObject::invokeMethod(dialog, "close");
         batchSettings = {{QStringLiteral("scope"),QStringLiteral("collection")}, {QStringLiteral("storage"),QStringLiteral("folder")},
           {QStringLiteral("folder"), QUrl::fromLocalFile(QDir(testDirectory.path()).filePath(QString::fromUtf8("ส่งออกชุด #100%")))},
           {QStringLiteral("pattern"),QString::fromUtf8("ภาพ_{sequence}")}, {QStringLiteral("format"),QStringLiteral("png")},
           {QStringLiteral("bits"),16}, {QStringLiteral("width"),128}, {QStringLiteral("height"),128}};
-        controller.exportBatch(batchSettings); break;
+        dialog->setProperty("folder", batchSettings.value(QStringLiteral("folder")));
+        dialog->findChild<QObject *>(QStringLiteral("exportPattern"))->setProperty("text", batchSettings.value(QStringLiteral("pattern")));
+        dialog->findChild<QObject *>(QStringLiteral("exportFormat"))->setProperty("currentIndex", 1);
+        dialog->findChild<QObject *>(QStringLiteral("exportBitDepth"))->setProperty("currentIndex", 1);
+        dialog->findChild<QObject *>(QStringLiteral("exportMaxWidth"))->setProperty("text", QStringLiteral("128"));
+        dialog->findChild<QObject *>(QStringLiteral("exportMaxHeight"))->setProperty("text", QStringLiteral("128"));
+        if(!start->property("enabled").toBool()) { fail("valid export settings did not enable the start action"); return; }
+        QMetaObject::invokeMethod(start, "clicked");
+        break;
+      }
       case 19:
       {
         const QDir output(batchSettings.value(QStringLiteral("folder")).toUrl().toLocalFile());
@@ -311,6 +358,7 @@ int main(int argc, char **argv)
         if(controller.images().size() != 1) { fail("quick rejected filter did not hide the image"); return; }
         controller.setShowRejected(true); controller.setAdvanceAfterReject(false);
         controller.libraryCommand(QStringLiteral("unrate"), {}, rejectedTestId);
+        libraryStage = 39;
         break;
       }
       case 25:
@@ -327,8 +375,382 @@ int main(int argc, char **argv)
       case 27:
         if(!controller.images().isEmpty() || !QFile::exists(testNeighbor)) { fail("folder removal did not preserve the source and update the catalog"); return; }
         libraryTest.stop(); finished = true;
-        QTextStream(stdout) << "passed: Touch RAW editing/export, layout, collections, filters, selection, sorting, and Unicode import review\n";
+        QTextStream(stdout) << "passed: Touch RAW editing/export, layout, library, selective history/reset, thumbnail undo/redo, pointer tap/hold/drag, dropdown contrast, and Unicode import review\n";
         controller.shutdown();
+        break;
+      case 40:
+        controller.selectTool(QStringLiteral("exposure"));
+        break;
+      case 41:
+        controller.setParameter(QStringLiteral("exposure"), 1.35, true);
+        break;
+      case 42:
+        controller.historyCommand(QStringLiteral("copy"));
+        break;
+      case 43:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("historyPasteDialog"));
+        if(controller.copiedHistory().isEmpty()) { if(++historyWait < 20) return; fail("history copy did not complete"); return; }
+        historyWait = 0;
+        if(!dialog) { fail("selective history paste dialog is unavailable"); return; }
+        QMetaObject::invokeMethod(dialog, "open");
+        break;
+      }
+      case 44:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("historyPasteDialog"));
+        if(!dialog->property("opened").toBool() || dialog->property("selectedCount").toInt() < 1
+           || !libraryScreenshot(QStringLiteral("-history-paste"))) { fail("history selection defaults are invalid"); return; }
+        const auto list = dialog->findChild<QQuickItem *>(QStringLiteral("pasteHistorySteps"));
+        if(!list || list->height() < 128) { fail("history selection list has no usable height"); return; }
+        auto choices = dialog->property("choices").toList();
+        for(auto &entry : choices) {
+          auto step = entry.toMap();
+          step.insert(QStringLiteral("selected"), step.value(QStringLiteral("operation")).toString() == QStringLiteral("exposure") && step.value(QStringLiteral("latest")).toBool());
+          entry = step;
+        }
+        dialog->setProperty("choices", choices);
+        for(const auto &entry : controller.images()) {
+          const int id = entry.toMap().value(QStringLiteral("imgid")).toInt();
+          if(id != controller.imageId()) historyTarget = id;
+        }
+        dialog->setProperty("imageId", historyTarget);
+        historyVersion = controller.thumbnailVersion(historyTarget);
+        QMetaObject::invokeMethod(dialog->findChild<QObject *>(QStringLiteral("pasteHistoryButton")), "clicked");
+        break;
+      }
+      case 45:
+        if(controller.hasError()) { fail("selective paste failed"); return; }
+        if(controller.thumbnailVersion(historyTarget) <= historyVersion) { if(++historyWait < 20) return; fail("paste did not refresh its destination thumbnail"); return; }
+        historyWait = 0; historyVersion = controller.thumbnailVersion(historyTarget);
+        controller.undo();
+        break;
+      case 46:
+        if(controller.thumbnailVersion(historyTarget) <= historyVersion) { if(++historyWait < 20) return; fail("catalog undo did not refresh its destination thumbnail"); return; }
+        historyWait = 0; historyVersion = controller.thumbnailVersion(historyTarget);
+        controller.redo();
+        break;
+      case 47:
+        if(controller.thumbnailVersion(historyTarget) <= historyVersion) { if(++historyWait < 20) return; fail("catalog redo did not refresh its destination thumbnail"); return; }
+        historyBaseline = store->requestImage(QStringLiteral("current"), nullptr, QSize()).copy();
+        QMetaObject::invokeMethod(window, "showResetHistory", Q_ARG(QVariant, controller.imageId()));
+        break;
+      case 48:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("resetHistoryDialog"));
+        if(!dialog || !dialog->property("opened").toBool() || !libraryScreenshot(QStringLiteral("-history-reset"))) { fail("reset confirmation is unavailable"); return; }
+        QMetaObject::invokeMethod(dialog->findChild<QObject *>(QStringLiteral("resetHistoryButton")), "clicked");
+        break;
+      }
+      case 49:
+      {
+        if(controller.hasError() || historyBaseline == store->requestImage(QStringLiteral("current"), nullptr, QSize())) { fail("reset did not update the current preview"); return; }
+        const QString name = controller.imageInformation().value(QStringLiteral("filename")).toString();
+        if(name != QFileInfo(testPhoto).fileName() && name != QFileInfo(testNeighbor).fileName()) { fail("active test sidecar could not be identified"); return; }
+        blockedSidecar = (name == QFileInfo(testPhoto).fileName() ? testPhoto : testNeighbor) + QStringLiteral(".xmp");
+        sidecarBackup = blockedSidecar + QStringLiteral(".backup");
+        if(!QFile::rename(blockedSidecar, sidecarBackup) || !QDir().mkdir(blockedSidecar)) { fail("could not create the sidecar failure fixture"); return; }
+        controller.undo();
+        break;
+      }
+      case 50:
+        if(historyBaseline != store->requestImage(QStringLiteral("current"), nullptr, QSize()) || !controller.hasError() || !controller.canRedo()) { fail("failed sidecar undo left the editor or undo position stale"); return; }
+        if(!QDir().rmdir(blockedSidecar) || !QFile::rename(sidecarBackup, blockedSidecar)) { fail("could not restore the test sidecar"); return; }
+        controller.redo(); libraryStage = 69;
+        break;
+      case 70:
+        if(historyBaseline == store->requestImage(QStringLiteral("current"), nullptr, QSize()) || controller.hasError()) { fail("redo after a sidecar error failed"); return; }
+        controller.undo();
+        break;
+      case 71:
+        if(historyBaseline != store->requestImage(QStringLiteral("current"), nullptr, QSize()) || controller.hasError()) { fail("undo after sidecar recovery failed"); return; }
+        controller.setEditorVisible(false);
+        window->setProperty("selectionMode", true);
+        controller.libraryCommand(QStringLiteral("none"));
+        libraryStage = 50;
+        break;
+      case 51:
+      {
+        auto item = findItem(window->contentItem(), QStringLiteral("thumbnail-%1").arg(controller.imageId()));
+        if(!item) { fail("gallery thumbnail is unavailable for pointer injection"); return; }
+        touchPosition = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+        pointer(QEvent::MouseButtonPress, touchPosition);
+        break;
+      }
+      case 52:
+        pointer(QEvent::MouseButtonRelease, touchPosition);
+        break;
+      case 53:
+        if(selected != 1) { fail("pointer tap did not activate exactly once"); return; }
+        if(auto item = findItem(window->contentItem(), QStringLiteral("thumbnail-%1").arg(controller.imageId())))
+          touchPosition = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+        pointer(QEvent::MouseButtonPress, touchPosition);
+        break;
+      case 54: case 55: case 56:
+        break;
+      case 57:
+      {
+        auto menu = window->findChild<QObject *>(QStringLiteral("imageActions"));
+        if(!menu || !menu->property("visible").toBool() || selected != 1) { fail("pointer hold did not open image options before release without tapping"); return; }
+        pointer(QEvent::MouseButtonRelease, touchPosition);
+        break;
+      }
+      case 58:
+      {
+        if(selected != 1) { fail("pointer hold release triggered a tap"); return; }
+        const QPointF outside(2, 2);
+        QMouseEvent press(QEvent::MouseButtonPress, outside, window->mapToGlobal(outside), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, outside, window->mapToGlobal(outside), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &press); QCoreApplication::sendEvent(window, &release);
+        break;
+      }
+      case 59:
+        if(window->findChild<QObject *>(QStringLiteral("imageActions"))->property("opened").toBool()) { fail("outside press did not dismiss image options"); return; }
+        pointer(QEvent::MouseButtonPress, touchPosition);
+        break;
+      case 60:
+        touchPosition += QPointF(0, 100);
+        pointer(QEvent::MouseMove, touchPosition);
+        break;
+      case 61: case 62: case 63: case 64:
+        break;
+      case 65:
+        pointer(QEvent::MouseButtonRelease, touchPosition);
+        break;
+      case 66:
+        if(window->findChild<QObject *>(QStringLiteral("imageActions"))->property("opened").toBool() || selected != 1) { fail("pointer drag triggered a hold or a tap"); return; }
+        window->setProperty("selectionMode", false);
+        if(auto dialog = window->findChild<QObject *>(QStringLiteral("historyPasteDialog"))) QMetaObject::invokeMethod(dialog, "open");
+        break;
+      case 67:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("historyPasteDialog"));
+        auto combo = dialog->findChild<QObject *>(QStringLiteral("historyScopeControl"));
+        auto popup = combo ? combo->property("popup").value<QObject *>() : nullptr;
+        if(!popup) { fail("history destination dropdown is unavailable"); return; }
+        QMetaObject::invokeMethod(popup, "open");
+        break;
+      }
+      case 68:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("historyPasteDialog"));
+        auto combo = dialog->findChild<QObject *>(QStringLiteral("historyScopeControl"));
+        auto popup = combo->property("popup").value<QObject *>();
+        auto list = popup->property("contentItem").value<QQuickItem *>();
+        auto choice = list ? list->property("currentItem").value<QQuickItem *>() : nullptr;
+        auto text = choice ? choice->property("contentItem").value<QQuickItem *>() : nullptr;
+        auto background = choice ? choice->property("background").value<QQuickItem *>() : nullptr;
+        auto comboBackground = combo->property("background").value<QQuickItem *>();
+        if(!text || !background || text->property("color").value<QColor>() != QColor(QStringLiteral("#07191b"))
+           || background->property("color").value<QColor>() != QColor(QStringLiteral("#00dbe5"))
+           || !comboBackground || comboBackground->property("color").value<QColor>() != QColor(QStringLiteral("#202329"))
+           || !libraryScreenshot(QStringLiteral("-dropdown"))) { fail("dropdown selection contrast is invalid"); return; }
+        QMetaObject::invokeMethod(popup, "close"); QMetaObject::invokeMethod(dialog, "close");
+        controller.setEditorVisible(true);
+        libraryStage = 79;
+        break;
+      }
+      case 80:
+      {
+        auto bar = window->findChild<QQuickItem *>(QStringLiteral("editorActionBar"));
+        auto compare = window->findChild<QObject *>(QStringLiteral("editorCompareButton"));
+        auto back = window->findChild<QObject *>(QStringLiteral("editorLibraryButton"));
+        if(!bar || !bar->isVisible() || !compare || !back || bar->height() < 48 || bar->width() > window->width())
+        { fail("persistent editor actions are not usable at the supported window size"); return; }
+        qreal right = 0;
+        for(const auto &name : {"editorLibraryButton", "editorUndoButton", "editorRedoButton", "editorCompareButton", "editorExportButton"})
+        {
+          auto action = window->findChild<QQuickItem *>(QString::fromLatin1(name));
+          if(!action || !action->isVisible()) { fail("persistent editor action is missing"); return; }
+          const auto position = action->mapToItem(bar, QPointF());
+          if(position.x() < right || position.y() < 0 || position.x() + action->width() > bar->width()
+             || position.y() + action->height() > bar->height())
+          { fail("persistent editor actions overlap or exceed their toolbar"); return; }
+          right = position.x() + action->width();
+        }
+        auto target = qobject_cast<QQuickItem *>(compare);
+        if(!target || !target->isEnabled() || !back->property("enabled").toBool())
+        { fail("persistent navigation actions are unexpectedly disabled"); return; }
+        const auto position = target->mapToScene(QPointF(target->width() / 2, target->height() / 2));
+        pointer(QEvent::MouseButtonPress, position);
+        pointer(QEvent::MouseButtonRelease, position);
+        break;
+      }
+      case 81:
+        if(!controller.before()) { fail("persistent compare did not show the original"); return; }
+        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("editorCompareButton")), "clicked");
+        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("editorLibraryButton")), "clicked");
+        break;
+      case 82:
+      {
+        if(controller.editorVisible() || controller.before() || !controller.imageId())
+        { fail("returning to the library lost the editing context"); return; }
+        window->setProperty("selectionMode", true);
+        auto paste = window->findChild<QObject *>(QStringLiteral("pasteSelectedButton"));
+        auto reset = window->findChild<QObject *>(QStringLiteral("resetSelectedButton"));
+        if(!paste || !reset) { fail("selection actions are unavailable"); return; }
+        QMetaObject::invokeMethod(paste, "clicked");
+        auto pasteDialog = window->findChild<QObject *>(QStringLiteral("historyPasteDialog"));
+        if(pasteDialog->property("scope").toString() != QStringLiteral("selected"))
+        { fail("selection paste did not retain its target scope"); return; }
+        QMetaObject::invokeMethod(pasteDialog, "close");
+        QMetaObject::invokeMethod(reset, "clicked");
+        auto resetDialog = window->findChild<QObject *>(QStringLiteral("resetHistoryDialog"));
+        if(resetDialog->property("scope").toString() != QStringLiteral("selected"))
+        { fail("selection reset did not retain its target scope"); return; }
+        QMetaObject::invokeMethod(resetDialog, "close");
+        window->setProperty("selectionMode", false);
+        controller.libraryCommand(QStringLiteral("none"));
+        break;
+      }
+      case 83:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("batchExportDialog"));
+        controller.setEditorVisible(true);
+        dialog->setProperty("scope", QStringLiteral("selected"));
+        QMetaObject::invokeMethod(dialog, "open");
+        break;
+      }
+      case 84:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("batchExportDialog"));
+        QMetaObject::invokeMethod(&gamepad, "action", Q_ARG(QString, QStringLiteral("compare")), Q_ARG(bool, true));
+        if(controller.before())
+        { QTextStream(stderr) << "controller compare must not change the image behind a modal\n"; controlsFailed = true; }
+        const double zoom = window->property("viewZoom").toDouble();
+        QMetaObject::invokeMethod(&gamepad, "zoom", Q_ARG(double, 1.0));
+        if(window->property("viewZoom").toDouble() != zoom)
+        { QTextStream(stderr) << "controller zoom must not change the image behind a modal\n"; controlsFailed = true; }
+        controller.setBefore(false);
+        auto start = dialog->findChild<QObject *>(QStringLiteral("exportStartButton"));
+        if(dialog->property("targetCount").toInt() != 0 || dialog->property("validationMessage").toString().isEmpty()
+           || !start || start->property("enabled").toBool())
+        { fail("empty selection export must explain why it cannot start"); return; }
+        dialog->setProperty("scope", QStringLiteral("current"));
+        dialog->setProperty("folder", QUrl::fromLocalFile(testDirectory.path()));
+        if(dialog->property("targetCount").toInt() != 1 || !start->property("enabled").toBool())
+        { fail("current-photo export did not become available with a destination"); return; }
+        auto pattern = dialog->findChild<QObject *>(QStringLiteral("exportPattern"));
+        auto width = dialog->findChild<QObject *>(QStringLiteral("exportMaxWidth"));
+        if(!pattern || !width) { fail("advanced export controls are unavailable"); return; }
+        pattern->setProperty("text", QStringLiteral("../escape"));
+        if(start->property("enabled").toBool()) { fail("export accepted a filename separator"); return; }
+        pattern->setProperty("text", QStringLiteral("{name}_edited"));
+        width->setProperty("text", QStringLiteral("-1"));
+        if(start->property("enabled").toBool()) { fail("export accepted an invalid dimension"); return; }
+        width->setProperty("text", QStringLiteral("0"));
+        if(!start->property("enabled").toBool()) { fail("corrected export settings did not recover"); return; }
+        dialog->findChild<QObject *>(QStringLiteral("exportAdvanced"))->setProperty("checked", true);
+        break;
+      }
+      case 85:
+      {
+        auto field = window->findChild<QQuickItem *>(QStringLiteral("exportMaxHeight"));
+        if(!field) { fail("export height control is unavailable"); return; }
+        field->forceActiveFocus();
+        break;
+      }
+      case 86:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("batchExportDialog"));
+        auto field = dialog->findChild<QQuickItem *>(QStringLiteral("exportMaxHeight"));
+        auto viewport = dialog->property("focusViewport").value<QQuickItem *>();
+        if(!field || !viewport) { fail("export focus viewport is unavailable"); return; }
+        for(const auto &name : {"exportWidthLabel", "exportHeightLabel"})
+        {
+          auto label = dialog->findChild<QQuickItem *>(QString::fromLatin1(name));
+          if(!label || !label->isVisible() || label->property("text").toString().isEmpty())
+          { fail("export dimensions need persistent visible labels"); return; }
+        }
+        const auto position = field->mapToItem(viewport, QPointF());
+        if(!field->hasActiveFocus() || position.y() < -1 || position.y() + field->height() > viewport->height() + 1)
+        { fail("keyboard focus did not reveal advanced export controls"); return; }
+        if(!libraryScreenshot(QStringLiteral("-export-advanced"))) { fail("advanced export screenshot failed"); return; }
+        QMetaObject::invokeMethod(dialog->findChild<QObject *>(QStringLiteral("dialogCloseButton")), "clicked");
+        break;
+      }
+      case 87:
+        if(window->findChild<QObject *>(QStringLiteral("batchExportDialog"))->property("visible").toBool())
+        { fail("explicit dialog close did not dismiss export"); return; }
+        controller.setEditorVisible(true);
+        controller.selectTool(QStringLiteral("exposure"));
+        break;
+      case 88:
+      {
+        auto numeric = findItem(window->contentItem(), QStringLiteral("numeric-exposure"));
+        if(!numeric) { fail("exposure value input is unavailable"); return; }
+        fieldBaseline = controller.values().value(QStringLiteral("exposure")).toDouble();
+        for(int i = 0; i < controller.fields()->rowCount(); ++i)
+        {
+          const auto field = controller.fields()->data(controller.fields()->index(i, 0), Qt::UserRole + 1).toMap();
+          if(field.value(QStringLiteral("name")).toString() == QStringLiteral("exposure"))
+            fieldDefault = field.value(QStringLiteral("default")).toDouble();
+        }
+        numeric->forceActiveFocus();
+        numeric->setProperty("text", QStringLiteral("9999999"));
+        numeric->setProperty("edited", true);
+        auto next = window->findChild<QQuickItem *>(QStringLiteral("editorLibraryButton"));
+        if(!next) { fail("numeric blur target is unavailable"); return; }
+        next->forceActiveFocus();
+        break;
+      }
+      case 89:
+      {
+        auto error = findItem(window->contentItem(), QStringLiteral("validation-exposure"));
+        auto discard = findItem(window->contentItem(), QStringLiteral("discard-exposure"));
+        if(!error || !error->isVisible() || !discard || controller.values().value(QStringLiteral("exposure")).toDouble() != fieldBaseline)
+        { fail("invalid numeric edits need inline recovery without changing the image"); return; }
+        if(!libraryScreenshot(QStringLiteral("-invalid-value"))) { fail("numeric validation screenshot failed"); return; }
+        QMetaObject::invokeMethod(discard, "clicked");
+        break;
+      }
+      case 90:
+      {
+        auto numeric = findItem(window->contentItem(), QStringLiteral("numeric-exposure"));
+        auto slider = findItem(window->contentItem(), QStringLiteral("parameter-exposure"));
+        if(!numeric || !slider) { fail("numeric controls are unavailable"); return; }
+        if(numeric->property("edited").toBool()) { fail("discard did not clear the invalid draft"); return; }
+        if(QQmlProperty(numeric, QStringLiteral("Accessible.name"), QQmlEngine::contextForObject(numeric)).read().toString().isEmpty()
+           || QQmlProperty(slider, QStringLiteral("Accessible.name"), QQmlEngine::contextForObject(slider)).read().toString().isEmpty())
+        { fail("accessible field labels are missing"); return; }
+        numeric->forceActiveFocus();
+        if(!window->property("imageShortcutsEnabled").isValid() || window->property("imageShortcutsEnabled").toBool())
+        { fail("image shortcuts must not intercept text editing"); return; }
+        numeric->setProperty("text", QStringLiteral("9999999")); numeric->setProperty("edited", true);
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QCoreApplication::sendEvent(numeric, &escape);
+        if(numeric->property("edited").toBool() || !controller.editorVisible()
+           || controller.values().value(QStringLiteral("exposure")).toDouble() != fieldBaseline)
+        { fail("Escape must discard a numeric draft without leaving the editor"); return; }
+        numeric->setProperty("text", QStringLiteral("2.25")); numeric->setProperty("edited", true);
+        QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QCoreApplication::sendEvent(numeric, &enter);
+        break;
+      }
+      case 91:
+      {
+        if(qAbs(controller.values().value(QStringLiteral("exposure")).toDouble() - 2.25) > 0.00001)
+        { fail("a valid numeric edit did not commit"); return; }
+        auto reset = findItem(window->contentItem(), QStringLiteral("reset-exposure"));
+        if(!reset || !reset->property("enabled").toBool()) { fail("field reset is unavailable"); return; }
+        QMetaObject::invokeMethod(reset, "clicked");
+        break;
+      }
+      case 92:
+        if(qAbs(controller.values().value(QStringLiteral("exposure")).toDouble() - fieldDefault) > 0.00001)
+        { fail("field reset did not restore the native default"); return; }
+        controller.undo();
+        break;
+      case 93:
+        if(qAbs(controller.values().value(QStringLiteral("exposure")).toDouble() - 2.25) > 0.00001)
+        { fail("field reset was not undoable"); return; }
+        controller.undo();
+        break;
+      case 94:
+        if(controlsFailed || qAbs(controller.values().value(QStringLiteral("exposure")).toDouble() - fieldBaseline) > 0.00001)
+        { fail("precision editing did not preserve its previous state"); return; }
+        window->contentItem()->forceActiveFocus(); controller.setEditorVisible(false);
+        libraryStage = 24;
         break;
       default: return;
     }
@@ -459,7 +881,8 @@ int main(int argc, char **argv)
         QTimer::singleShot(600, &app, [&] {
           auto exposure = findItem(window->contentItem(), QStringLiteral("card-exposure"));
           auto agx = findItem(window->contentItem(), QStringLiteral("card-agx"));
-          if(!exposure || !agx || exposure->height() > 65 || agx->height() <= 64)
+          auto toggle = findItem(window->contentItem(), QStringLiteral("enable-exposure"));
+          if(!exposure || !agx || !toggle || !toggle->isVisible() || toggle->width() < 64 || exposure->height() > 65 || agx->height() <= 64)
           { QTextStream(stderr) << "tool accordion did not collapse the previous controls\n"; controller.shutdown(); return; }
           if(auto tool = findItem(window->contentItem(), QStringLiteral("tool-exposure")))
             QMetaObject::invokeMethod(tool, "clicked");

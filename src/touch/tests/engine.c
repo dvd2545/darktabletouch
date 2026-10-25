@@ -161,6 +161,157 @@ static void _test_library(const char *filename, const char *folder, int first)
   g_free(other_folder); g_free(other);
 }
 
+static double _exposure(dt_touch_editor_t *editor)
+{
+  char *error = NULL, *text = dt_touch_editor_module(editor, "exposure", &error);
+  g_assert_null(error); g_assert_nonnull(text);
+  JsonParser *parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, text, -1, NULL));
+  JsonArray *fields = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "fields");
+  double value = NAN;
+  for(guint i = 0; i < json_array_get_length(fields); i++) {
+    JsonObject *field = json_array_get_object_element(fields, i);
+    if(!strcmp(json_object_get_string_member(field, "name"), "exposure"))
+      value = json_object_get_double_member(field, "value");
+  }
+  g_object_unref(parser); g_free(text);
+  return value;
+}
+
+static void _test_history(dt_touch_editor_t *source, int source_id)
+{
+  char *error = NULL;
+  dt_touch_state_t *original = dt_touch_editor_capture(source);
+  g_assert_true(dt_touch_editor_set(source, "exposure", "exposure", "0.5", &error));
+  g_assert_true(dt_touch_editor_enable(source, "exposure", FALSE, &error));
+  g_assert_true(dt_touch_editor_set(source, "ashift", "rotation", "1.0", &error));
+  g_assert_true(dt_touch_editor_set(source, "exposure", "exposure", "1.25", &error));
+  g_assert_true(dt_touch_editor_save(source, &error));
+  dt_touch_state_t *modified = dt_touch_editor_capture(source);
+  const int target_id = dt_image_duplicate(source_id);
+  dt_touch_editor_t *target = dt_touch_editor_new(target_id, &error);
+  g_assert_nonnull(target); g_assert_null(error);
+  g_assert_true(dt_touch_editor_set(target, "exposure", "exposure", "0.25", &error));
+  g_assert_true(dt_touch_editor_save(target, &error));
+  char *agx = dt_touch_editor_module(target, "agx", &error);
+  char *clipboard = dt_touch_history_clipboard(source_id, &error);
+  JsonParser *parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, clipboard, -1, NULL));
+  JsonObject *descriptor = json_node_get_object(json_parser_get_root(parser));
+  char *token = g_strdup(json_object_get_string_member(descriptor, "token"));
+  int exposure_index = 0;
+  JsonArray *steps = json_object_get_array_member(descriptor, "steps");
+  for(guint i = 0; i < json_array_get_length(steps); i++) {
+    JsonObject *step = json_array_get_object_element(steps, i);
+    if(!json_object_get_boolean_member(step, "latest"))
+      g_assert_false(json_object_get_boolean_member(step, "selectable"));
+    if(!strcmp(json_object_get_string_member(step, "operation"), "exposure")
+       && json_object_get_boolean_member(step, "latest")) exposure_index = json_object_get_int_member(step, "index");
+  }
+  g_assert_cmpint(exposure_index, >, 0);
+  char *request = g_strdup_printf("{\"source\":%d,\"token\":\"%s\",\"steps\":[{\"index\":%d}],\"merge\":true,\"targets\":[%d]}",
+                                  source_id, token, exposure_index, target_id);
+  dt_touch_catalog_edit_t *paste = dt_touch_history_apply(request, &error);
+  g_assert_nonnull(paste); g_assert_null(error);
+  g_assert_true(dt_touch_editor_reload(target, &error));
+  g_assert_cmpfloat(_exposure(target), ==, 1.25);
+  char *agx_after = dt_touch_editor_module(target, "agx", &error);
+  g_assert_cmpstr(agx, ==, agx_after); g_free(agx_after); g_free(agx);
+  g_assert_true(dt_touch_catalog_restore(paste, FALSE, &error));
+  g_assert_true(dt_touch_editor_reload(target, &error));
+  g_assert_cmpfloat(_exposure(target), ==, 0.25);
+  g_assert_true(dt_touch_catalog_restore(paste, TRUE, &error));
+  g_assert_true(dt_touch_editor_reload(target, &error));
+  g_assert_cmpfloat(_exposure(target), ==, 1.25);
+  dt_touch_catalog_free(paste);
+  g_assert_true(dt_touch_editor_set(target, "ashift", "rotation", "2.0", &error));
+  g_assert_true(dt_touch_editor_save(target, &error));
+  char *replace = g_strdup_printf("{\"source\":%d,\"token\":\"%s\",\"steps\":[{\"index\":%d}],\"merge\":false,\"copy_order\":true,\"targets\":[%d]}",
+                                  source_id, token, exposure_index, target_id);
+  paste = dt_touch_history_apply(replace, &error);
+  g_assert_nonnull(paste); g_assert_null(error);
+  g_assert_true(dt_touch_editor_reload(target, &error));
+  g_assert_cmpfloat(_exposure(target), ==, 1.25);
+  char *query = g_strdup_printf("SELECT COUNT(*) FROM main.history WHERE imgid=%d AND operation='ashift'", target_id);
+  g_assert_cmpint(_count(query), ==, 0);
+  g_assert_true(dt_touch_catalog_restore(paste, FALSE, &error));
+  g_assert_cmpint(_count(query), >, 0);
+  g_assert_true(dt_touch_editor_reload(target, &error));
+  dt_touch_catalog_free(paste); g_free(replace); g_free(query);
+  g_assert_true(dt_touch_editor_set(source, "exposure", "exposure", "1.5", &error));
+  g_assert_true(dt_touch_editor_save(source, &error));
+  g_assert_null(dt_touch_history_apply(request, &error));
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_true(dt_touch_editor_restore(source, modified, &error));
+  g_assert_true(dt_touch_editor_save(source, &error));
+  g_assert_true(dt_touch_editor_enable(source, "exposure", FALSE, &error));
+  g_assert_true(dt_touch_editor_save(source, &error));
+  char *disabled_clipboard = dt_touch_history_clipboard(source_id, &error);
+  JsonParser *disabled_parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(disabled_parser, disabled_clipboard, -1, NULL));
+  const char *disabled_token = json_object_get_string_member(json_node_get_object(json_parser_get_root(disabled_parser)), "token");
+  char *disabled_request = g_strdup_printf("{\"source\":%d,\"token\":\"%s\",\"steps\":[{\"index\":%d}],\"merge\":true,\"targets\":[%d]}",
+                                           source_id, disabled_token, exposure_index, target_id);
+  g_assert_true(dt_touch_editor_set(source, "exposure", "exposure", "2.0", &error));
+  g_assert_true(dt_touch_editor_enable(source, "exposure", FALSE, &error));
+  g_assert_true(dt_touch_editor_save(source, &error));
+  g_assert_null(dt_touch_history_apply(disabled_request, &error));
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_free(disabled_clipboard); g_free(disabled_request); g_object_unref(disabled_parser);
+  g_assert_true(dt_touch_editor_restore(source, modified, &error));
+  g_assert_true(dt_touch_editor_save(source, &error));
+  g_free(request);
+  request = g_strdup_printf("{\"reset\":true,\"targets\":[%d]}", source_id);
+  dt_touch_catalog_edit_t *reset = dt_touch_history_apply(request, &error);
+  g_assert_nonnull(reset); g_assert_null(error);
+  g_assert_true(dt_touch_editor_reload(source, &error));
+  g_assert_cmpfloat(_exposure(source), !=, 1.25);
+  g_assert_true(dt_touch_catalog_restore(reset, FALSE, &error));
+  g_assert_true(dt_touch_editor_reload(source, &error));
+  g_assert_cmpfloat(_exposure(source), ==, 1.25);
+  g_assert_true(dt_touch_editor_restore(source, original, &error));
+  g_assert_true(dt_touch_editor_restore(source, modified, &error));
+  g_assert_cmpfloat(_exposure(source), ==, 1.25);
+  dt_touch_catalog_free(reset); g_free(request);
+  request = g_strdup_printf("{\"reset\":true,\"targets\":[%d,%d]}", source_id, target_id);
+  reset = dt_touch_history_apply(request, &error);
+  g_assert_nonnull(reset); g_assert_null(error);
+  char source_path[PATH_MAX] = {0};
+  dt_image_full_path(source_id, source_path, sizeof(source_path), NULL);
+  dt_image_path_append_version(source_id, source_path, sizeof(source_path));
+  char *sidecar = g_strconcat(source_path, ".xmp", NULL);
+  char *backup = g_strconcat(sidecar, ".backup", NULL);
+  g_assert_cmpint(g_rename(sidecar, backup), ==, 0);
+  g_assert_cmpint(g_mkdir(sidecar, 0700), ==, 0);
+  g_assert_cmpint(dt_touch_catalog_restore(reset, FALSE, &error), ==, -1);
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_true(dt_touch_editor_reload(source, &error));
+  g_assert_true(dt_touch_editor_reload(target, &error));
+  g_assert_cmpfloat(_exposure(source), ==, 1.25);
+  g_assert_cmpfloat(_exposure(target), ==, 1.25);
+  g_assert_cmpint(g_rmdir(sidecar), ==, 0);
+  g_assert_cmpint(g_rename(backup, sidecar), ==, 0);
+  g_free(sidecar); g_free(backup); dt_touch_catalog_free(reset);
+  reset = dt_touch_history_apply(request, &error);
+  g_assert_nonnull(reset); g_assert_null(error);
+  g_assert_true(dt_touch_editor_reload(source, &error));
+  const double reset_exposure = _exposure(source);
+  dt_touch_editor_free(target);
+  g_assert_true(dt_touch_image_action("remove", target_id, &error));
+  g_assert_false(dt_touch_catalog_restore(reset, FALSE, &error));
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_true(dt_touch_editor_reload(source, &error));
+  g_assert_cmpfloat(_exposure(source), ==, reset_exposure);
+  dt_touch_catalog_free(reset);
+  g_assert_true(dt_touch_editor_restore(source, original, &error));
+  g_assert_true(dt_touch_editor_save(source, &error));
+  dt_touch_state_free(original); dt_touch_state_free(modified);
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM memory.snapshot_history"), ==, 0);
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM memory.snapshot_masks_history"), ==, 0);
+  g_assert_cmpint(_count("SELECT COUNT(*) FROM memory.snapshot_module_order"), ==, 0);
+  g_object_unref(parser); g_free(clipboard); g_free(request); g_free(token);
+}
+
 int main(int argc, char **argv)
 {
   if(argc != 2) { fprintf(stderr, "usage: test-touch-engine RAW_FILE\n"); return 2; }
@@ -335,6 +486,7 @@ int main(int argc, char **argv)
   g_assert_cmpmem(original, (size_t)width * height * 4, undone, (size_t)w2 * h2 * 4);
   dt_touch_free(original); dt_touch_free(edited); dt_touch_free(undone);
   dt_touch_state_free(before);
+  _test_history(editor, image_id);
   char *png = g_build_filename(folder, "automatic unavailable.png", NULL);
   g_assert_true(dt_touch_editor_export(editor, png, "png", &message));
   g_assert_null(message);
@@ -407,7 +559,7 @@ int main(int argc, char **argv)
   g_assert_cmpint(g_unlink(library), ==, 0);
   g_assert_cmpint(g_unlink(data), ==, 0);
   g_free(library); g_free(data);
-  printf("passed: native collections, filters, selection, sorting, persistent Touch preview, and Unicode session handoff\n");
+  printf("passed: native collections, filters, selection, sorting, preview, selective history merge/replace, reset, reload-safe undo/redo, snapshot cleanup, and Unicode session handoff\n");
   g_free(filename); g_free(cache); g_free(config); g_free(folder); g_free(root);
   return 0;
 }
