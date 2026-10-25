@@ -119,6 +119,34 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch numeric controls provide inline validation, draft cancellation, and
+  individual resets to native defaults with undo. Parameter inputs have
+  descriptive accessibility labels, export dimensions keep visible labels,
+  and image shortcuts and controller actions respect text editing and dialogs.
+
+- Touch editing now keeps library navigation, undo/redo, before/after
+  comparison, and export within reach. Important actions have visible labels,
+  and dialogs share a consistent appearance and explicit close control.
+
+- Touch export shows the number of target photos and explains settings that
+  prevent export. Destination and format come first, with optional naming,
+  resizing, and output settings behind an advanced-options toggle. Keyboard
+  focus scrolls these settings into view.
+
+- Touch library selections offer direct history paste and reset actions, with
+  confirmation and session undo for adjustment changes.
+
+- Added selective Touch history copy/paste with per-step selection, target
+  defaults, merge/replace, and processing-order options. Adjustments can
+  also be reset for the current photo, selection, or visible collection,
+  with session undo/redo.
+
+- Touch module enable switches remain available when collapsed. Image
+  options show labeled icons, menus dismiss on outside press, and quick
+  actions hide library-only commands in the editor.
+
+- Improved Touch thumbnail stability and dropdown selection contrast.
+
 - Added interactive Touch cropping with draggable corners, frame movement,
   aspect ratios, orientation swap, apply/cancel, and automatic border
   cropping. Applied crops use native history and support undo.
