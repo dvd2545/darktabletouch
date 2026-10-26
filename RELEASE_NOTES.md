@@ -119,6 +119,12 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Added visible text to Touch action icons, including filters, tool actions,
+  and folder controls. Library actions wrap on smaller windows, crop actions
+  retain their labels, and module switches show their on/off state.
+  Selection actions scroll horizontally to leave room for photos. Numeric
+  controls show readable values while preserving full precision when edited.
+
 - Touch numeric controls provide inline validation, draft cancellation, and
   individual resets to native defaults with undo. Parameter inputs have
   descriptive accessibility labels, export dimensions keep visible labels,
