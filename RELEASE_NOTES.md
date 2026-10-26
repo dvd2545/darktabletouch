@@ -119,6 +119,9 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Moved Touch resize grips and their hit areas inside the panels, with
+  enough inset to keep thumbnail and parameter interactions separate.
+
 - Reworked Touch editing around contextual Light, Color, Detail, and Crop
   drawers and a full-image focus mode. The photo strip can be hidden,
   compact, expanded, or hidden automatically. Quick actions are grouped in
