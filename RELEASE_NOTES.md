@@ -483,6 +483,11 @@ changes (where available).
 
 ## Bug Fixes
 
+- Touch now protects edits with a recovery XMP when the original sidecar
+  cannot be saved, including offline source folders. A persistent warning
+  offers retry and access to the recovery folder. Failed recovery keeps
+  the editing session open.
+
 - Prevented Touch controls from snapping to an old value while a new
   preview is processing. Native acknowledgments now follow the matching
   rendered frame, including crop apply and undo.
