@@ -119,8 +119,21 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch images now fill the editor height, with shadowed navigation and
+  history icons, one photo-strip chevron, and export in the left menu.
+  Compact import rows, inline parameter values, slim resize gutters, and
+  resets in each module header leave more room for photos. All modules
+  opens directly without a duplicate popup. Rotation can constrain its
+  crop to the original format, including in exported images.
+
 - Moved Touch resize grips and their hit areas inside the panels, with
   enough inset to keep thumbnail and parameter interactions separate.
+
+- Simplified Touch navigation with a left menu and floating selection tools
+  that preserve the photo grid's position. Editor history actions now float
+  over the image, the photo-strip button toggles visibility, and changed
+  parameters offer direct default resets. Larger numeric controls and more
+  consistent dark dialogs improve readability and touch navigation.
 
 - Reworked Touch editing around contextual Light, Color, Detail, and Crop
   drawers and a full-image focus mode. The photo strip can be hidden,
@@ -129,9 +142,9 @@ changes (where available).
   are more compact, and shared screen-density tokens size touch targets.
   Empty libraries now prioritize importing photos.
 
-- Added visible text to Touch action icons, including filters, tool actions,
-  and folder controls. Library actions wrap on smaller windows, crop actions
-  retain their labels, and module switches show their on/off state.
+- Added visible text to Touch library selection, filter, folder, and crop
+  actions. Floating navigation, history, photo-strip, all-modules, and reset
+  icons retain accessible names, tooltips, and focus indicators.
   Selection actions scroll horizontally to leave room for photos. Numeric
   controls show readable values while preserving full precision when edited.
 
