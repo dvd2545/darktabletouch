@@ -799,11 +799,16 @@ int main(int argc, char **argv)
         if(!sheet->property("visible").toBool() || sheet->property("width").toDouble() > 420
            || sheet->property("height").toDouble() > 440 || !libraryScreenshot(QStringLiteral("-actions")))
         { fail("quick actions did not open as a compact sheet"); return; }
+        historyWait = 0;
         QMetaObject::invokeMethod(sheet, "close");
         QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("category-color")), "clicked");
         break;
       }
       case 100:
+        if(window->findChild<QObject *>(QStringLiteral("quickMenu"))->property("visible").toBool()) {
+          if(++historyWait < 10) return;
+          fail("quick actions did not finish closing before the swipe"); return;
+        }
         if(window->property("toolsOpen").toBool()) { fail("tapping the active category did not close the drawer"); return; }
         {
           auto testImageStage = window->findChild<QQuickItem *>(QStringLiteral("imageStage"));
