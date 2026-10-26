@@ -78,6 +78,7 @@ public slots:
   void switchInterface(QString mode);
   void shutdown();
   void retrySave();
+  void updatePreview(int extent, quint64 revision);
 signals:
   void initialized(QJsonArray images, QJsonArray modules, QJsonObject session);
   void imagesChanged(QJsonArray images);
@@ -104,7 +105,8 @@ signals:
   void stopped();
 private:
   struct Edit { dt_touch_state_t *before; dt_touch_state_t *after; dt_touch_catalog_edit_t *catalog = nullptr; QJsonArray targets; };
-  bool render(quint64 revision, int extent = 1280);
+  bool render(quint64 revision, int extent = 0);
+  int m_previewExtent = 1280;
   void abortCrop();
   void beginEdit();
   void commitEdit();
@@ -131,6 +133,7 @@ class TouchController final : public QObject
 {
   Q_OBJECT
   Q_PROPERTY(QVariantMap copiedHistory READ copiedHistory NOTIFY clipboardChanged)
+  Q_PROPERTY(QVariantMap uiOptions READ uiOptions NOTIFY stateChanged)
   Q_PROPERTY(bool exportRunning READ exportRunning NOTIFY stateChanged)
   Q_PROPERTY(bool cropEditing READ cropEditing NOTIFY cropChanged)
   Q_PROPERTY(QSize cropOriginalSize READ cropOriginalSize NOTIFY cropChanged)
@@ -205,6 +208,9 @@ public:
   QString recoveryPath() const { return m_recoveryPath; }
   QVariantList images() const { return m_images; }
   QVariantMap library() const { return m_library; }
+  QVariantMap uiOptions() const { return m_uiOptions; }
+  Q_INVOKABLE void setUiOption(const QString &name, const QVariant &value);
+  Q_INVOKABLE void requestPreview(int extent);
   QVariantMap collectionValues() const { return m_collectionValues; }
   QVariantList importCandidates() const { return m_importCandidates; }
   QVariantList tools() const { return m_tools; }
@@ -257,6 +263,7 @@ signals:
   void moduleChanged();
   void historyChanged();
   void previewChanged();
+  void previewRequested(int extent, quint64 revision);
   void thumbnailChanged(int id);
   void closingReady();
   void viewRestored(double zoom, double centerX, double centerY);
@@ -306,6 +313,9 @@ private:
   QVariantMap m_moduleStates;
   QVariantMap m_copiedHistory;
   QVariantMap m_library;
+  QVariantMap m_uiOptions;
+  int m_previewExtent = 0;
+  quint64 m_frameSerial = 0;
   QVariantMap m_collectionValues;
   QVariantList m_importCandidates;
   FieldModel m_fields;

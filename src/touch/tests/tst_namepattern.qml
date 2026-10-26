@@ -25,4 +25,16 @@ TestCase {
         compare(editor.text, "trip_{id}")
         compare(editor.tags(editor.text)[0].text, "{id}")
     }
+    function test_nativeModifiersAndValidation() {
+        const editor = createTemporaryObject(component, tests)
+        editor.modifiers = [{tag: "EXIF.ISO", description: "ISO"}, {tag: "SEQUENCE[4,1]", description: "sequence"}]
+        editor.text = "{name}_$(EXIF.ISO)_$(SEQUENCE[6,10])"
+        compare(editor.tags(editor.text).length, 3)
+        verify(editor.valid)
+        editor.removeTag(1)
+        compare(editor.text, "{name}__$(SEQUENCE[6,10])")
+        editor.text = "$(UNKNOWN)_image"; verify(!editor.valid)
+        editor.text = "$(EXIF.ISO)/image"; verify(!editor.valid)
+        editor.text = "$(EXIF.ISO"; verify(!editor.valid)
+    }
 }

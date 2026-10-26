@@ -14,7 +14,7 @@ Canvas {
     onPaint: {
         const c = getContext("2d")
         c.reset(); c.scale(width / 24, height / 24)
-        c.shadowColor = shadowed ? "#c0000000" : "transparent"; c.shadowBlur = shadowed ? 4 : 0; c.shadowOffsetY = shadowed ? 1 : 0
+        c.shadowColor = shadowed ? "#ff000000" : "transparent"; c.shadowBlur = shadowed ? 7 : 0; c.shadowOffsetY = shadowed ? 2 : 0
         c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.8
         c.lineCap = "round"; c.lineJoin = "round"
         function line(points) { c.beginPath(); c.moveTo(points[0], points[1]); for(let i = 2; i < points.length; i += 2) c.lineTo(points[i], points[i+1]); c.stroke() }

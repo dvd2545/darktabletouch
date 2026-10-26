@@ -24,7 +24,7 @@ TestCase {
     Component { id: dialogComponent; LibraryDialog { photoController: mock } }
     function createDialog() {
         const dialog = createTemporaryObject(dialogComponent, tests)
-        dialog.browseProperty = 0
+        dialog.browseProperty = 1
         dialog.draft = {collection: [], filtering: [], sort: []}
         dialog.syncFolders()
         return dialog
@@ -65,5 +65,28 @@ TestCase {
         compare(dialog.tree().length, 1)
         compare(dialog.tree()[0].label, "wedding")
         compare(dialog.tree(true).length, 4)
+    }
+    function test_filmRollDoesNotSelectChildren() {
+        const dialog = createDialog()
+        dialog.browseProperty = 0
+        const key = "C:/Users/person/Pictures/trip"
+        compare(dialog.tree().find(function(row) { return row.key === key }).count, 2)
+        dialog.toggleFolder(key, true)
+        compare(dialog.folderState(key), Qt.Checked)
+        compare(dialog.folderState(key + "/day one"), Qt.Unchecked)
+        compare(dialog.draft.collection.length, 1)
+        compare(dialog.draft.collection[0].item, 0)
+        compare(dialog.draft.collection[0].string, key)
+        dialog.toggleFolder(key + "/day one", true)
+        compare(dialog.draft.collection.length, 2)
+        verify(dialog.draft.collection.every(function(rule) { return rule.item === 0 && !rule.string.endsWith("*") }))
+    }
+    function test_emptyNativeFilmRollMeansAll() {
+        const dialog = createDialog()
+        dialog.draft.collection = [dialog.rule(0, "", 0)]
+        dialog.syncFolders()
+        compare(dialog.folderState("C:/Users/person/Pictures/trip"), Qt.Checked)
+        dialog.browseProperty = 0
+        compare(dialog.folderState("D:/archive/trip"), Qt.Checked)
     }
 }

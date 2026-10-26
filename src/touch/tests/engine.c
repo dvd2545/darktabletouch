@@ -415,6 +415,14 @@ int main(int argc, char **argv)
   g_assert_nonnull(strstr(settings_json, "\"quick_delete\":true"));
   g_free(settings_json);
   dt_touch_quick_actions_set(FALSE, FALSE);
+  dt_touch_ui_options_set(TRUE, 125, FALSE, 1920);
+  settings_json = dt_touch_library();
+  g_assert_nonnull(strstr(settings_json, "\"scale_override\":true"));
+  g_assert_nonnull(strstr(settings_json, "\"preview_quality\":1920"));
+  g_assert_nonnull(strstr(settings_json, "EXIF.ISO"));
+  g_assert_nonnull(strstr(settings_json, "CATEGORY_EACH[,]"));
+  g_free(settings_json);
+  dt_touch_ui_options_set(FALSE, 100, TRUE, 1280);
   char *message = NULL;
   char *imported = dt_touch_import(filename, &message);
   g_assert_null(message); g_assert_nonnull(imported);
@@ -423,6 +431,11 @@ int main(int argc, char **argv)
   g_assert_no_error(error);
   JsonArray *images = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "images");
   const int image_id = json_object_get_int_member(json_array_get_object_element(images, 0), "imgid");
+  char *export_name = dt_touch_export_name(image_id, "$(FILE.NAME)_$(IMAGE.ID)_$(SEQUENCE[4,1])", 7, 1920, 1080, FALSE);
+  char *expected_suffix = g_strdup_printf("_%d_0007", image_id);
+  g_assert_nonnull(export_name);
+  g_assert_true(g_str_has_suffix(export_name, expected_suffix));
+  g_free(export_name); g_free(expected_suffix);
   _test_library(filename, folder, image_id);
   char truncated[4] = "bad";
   gboolean cached = FALSE;

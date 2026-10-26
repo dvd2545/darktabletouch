@@ -25,7 +25,8 @@ Item {
         text: qsTr("reset %1 to default").arg(root.label); iconName: "reset"; showLabel: false; flat: true
         visible: root.changedFromDefault
         enabled: root.field.editable !== false
-        Layout.preferredWidth: metrics.touchHeight; Layout.preferredHeight: metrics.touchHeight
+        Layout.preferredWidth: metrics.parameterHeight; Layout.preferredHeight: metrics.parameterHeight
+        implicitWidth: metrics.parameterHeight; implicitHeight: metrics.parameterHeight; padding: metrics.parameterInset
         onClicked: { root.resetRequested(); controller.setParameter(root.field.name, root.field.default, true, root.field.operation || "") }
     }
 
@@ -163,9 +164,9 @@ Item {
                     }
                     onTextEdited: edited = true
                     Layout.preferredWidth: Math.max(80, metrics.touchHeight * 1.2); Layout.minimumWidth: 80
-                    Layout.preferredHeight: metrics.touchHeight
+                    Layout.preferredHeight: metrics.parameterHeight
                     font.pixelSize: metrics.bodySize
-                    padding: metrics.inset
+                    padding: metrics.parameterInset
                     horizontalAlignment: TextInput.AlignHCenter
                     selectByMouse: true
                     inputMethodHints: Qt.ImhFormattedNumbersOnly
@@ -199,7 +200,7 @@ Item {
                     Accessible.name: root.label
                     Accessible.description: root.field.unit || ""
                     Layout.fillWidth: true
-                    Layout.preferredHeight: metrics.touchHeight
+                    Layout.preferredHeight: metrics.parameterHeight
                     visible: root.hasSlider
                     enabled: root.field.editable !== false
                     from: Math.min(root.field.soft_min === undefined ? (root.field.min || 0) : root.field.soft_min, Number(root.field.value || 0))

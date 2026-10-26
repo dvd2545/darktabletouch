@@ -5,6 +5,7 @@
 */
 
 #pragma once
+
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -25,6 +26,8 @@ char *dt_touch_library(void);
 char *dt_touch_collection_values(int property);
 int dt_touch_image_action(const char *action, int image_id, char **error);
 void dt_touch_settings_set(int show_rejected, int advance_after_reject);
+void dt_touch_ui_options_set(int override, int scale, int swipe, int quality);
+char *dt_touch_export_name(int image, const char *pattern, int sequence, int width, int height, int upscale);
 char *dt_touch_image_path(int image_id);
 char *dt_touch_folder_images(const char *folder);
 int dt_touch_export_image(int image_id, const char *path, const char *format, int width, int height, int quality, int bits, int upscale, int high_quality, int srgb, char **error);

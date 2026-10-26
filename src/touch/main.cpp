@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QLocale>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -42,6 +43,7 @@ int main(int argc, char **argv)
   QGuiApplication app(argc, argv);
   QCoreApplication::setApplicationName(QStringLiteral("darktabletouch"));
   QCoreApplication::setOrganizationName(QStringLiteral("darktabletouch"));
+  QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/darktable-touch.ico")));
   QLocale::setDefault(QLocale(QLocale::English, QLocale::UnitedStates));
   QStringList core{app.applicationFilePath()};
   QString screenshot, selfTest, coverage;
@@ -125,6 +127,7 @@ int main(int argc, char **argv)
   QString blockedSidecar, sidecarBackup;
   double fieldBaseline = 0, fieldDefault = 0;
   qreal drawerCanvasWidth = 0, compactStripHeight = 0;
+  int fittedPreviewEdge = 0;
   bool controlsFailed = false;
   int unchangedCollectionRefreshes = 0;
   QElapsedTimer pointerClock;
@@ -199,6 +202,8 @@ int main(int argc, char **argv)
       {
         const QString child = QFileInfo(testNeighbor).absolutePath();
         const QString parent = QFileInfo(testPhoto).absolutePath();
+        collectionDialog->setProperty("browseProperty", 1);
+        QMetaObject::invokeMethod(collectionDialog, "resetAll");
         collectionDialog->setProperty("expanded", QVariantMap{{parent, false}});
         QMetaObject::invokeMethod(collectionDialog, "toggleFolder", Q_ARG(QVariant, child), Q_ARG(QVariant, false));
         QVariant checkState;
@@ -1010,10 +1015,57 @@ int main(int argc, char **argv)
       case 146:
         if(controller.hasError() || controller.images().size() != 2) { fail("batch unreject did not restore the visible images"); return; }
         controller.setShowRejected(false);
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("selectionMoreActionsButton")), "clicked");
+        libraryStage = 149;
+        break;
+      case 150:
+        if(!window->property("actionSelection").toBool() || window->property("actionTargets").toList().size() != 2
+           || !window->findChild<QObject *>(QStringLiteral("imageActions"))->property("opened").toBool())
+        { fail("more actions did not target both selected images"); return; }
+        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("imageActions")), "close");
         window->setProperty("filmstripSelection", false);
+        window->setProperty("viewZoom", 1);
+        controller.setUiOption(QStringLiteral("preview_quality"), 640);
+        break;
+      case 151:
+      {
+        const QImage frame = store->requestImage(QStringLiteral("current"), nullptr, QSize());
+        fittedPreviewEdge = qMax(frame.width(), frame.height());
+        if(fittedPreviewEdge > 640) return;
+        window->setProperty("viewZoom", 2);
+        break;
+      }
+      case 152:
+      {
+        const QImage frame = store->requestImage(QStringLiteral("current"), nullptr, QSize());
+        if(fittedPreviewEdge == 640 && qMax(frame.width(), frame.height()) <= fittedPreviewEdge) return;
+        window->setProperty("viewZoom", 1);
+        break;
+      }
+      case 153:
+      {
+        const QImage frame = store->requestImage(QStringLiteral("current"), nullptr, QSize());
+        if(qMax(frame.width(), frame.height()) > 640) return;
+        controller.setUiOption(QStringLiteral("preview_quality"), 1280);
+        controller.setUiOption(QStringLiteral("scale"), 125);
+        controller.setUiOption(QStringLiteral("scale_override"), true);
+        controller.setUiOption(QStringLiteral("swipe_images"), false);
+        controller.libraryCommand(QStringLiteral("all"));
+        break;
+      }
+      case 154:
+      {
+        const auto options = controller.library().value(QStringLiteral("ui_options")).toMap();
+        if(options.value(QStringLiteral("scale")).toInt() != 125 || !options.value(QStringLiteral("scale_override")).toBool()
+           || options.value(QStringLiteral("swipe_images")).toBool())
+        { fail("UI options were not persisted by the native engine"); return; }
+        controller.setUiOption(QStringLiteral("scale_override"), false);
+        controller.setUiOption(QStringLiteral("scale"), 100);
+        controller.setUiOption(QStringLiteral("swipe_images"), true);
         controller.setEditorVisible(false);
         libraryStage = 24;
         break;
+      }
       default: return;
     }
     ++libraryStage;
@@ -1296,7 +1348,7 @@ int main(int argc, char **argv)
   });
   if(!selfTest.isEmpty())
     QTimer::singleShot(150000, &app, [&] {
-      if(!finished) { QTextStream(stderr) << "Touch workflow self-test timed out: " << controller.message() << '\n'; controller.shutdown(); }
+      if(!finished) { QTextStream(stderr) << "Touch workflow self-test timed out: stage=" << stage << " library=" << libraryStage << " busy=" << controller.busy() << " " << controller.message() << '\n'; controller.shutdown(); }
     });
   else if(!screenshot.isEmpty())
     QObject::connect(&controller, &TouchController::stateChanged, &app, [&] {

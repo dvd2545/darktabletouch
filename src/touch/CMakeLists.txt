@@ -3,6 +3,17 @@ include_directories(${DARKTABLE_BINDIR})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TOUCH_JSON REQUIRED IMPORTED_TARGET json-glib-1.0)
 
+# keep Touch's modifier browser in sync with Classic's completion catalog
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ../gui/gtkentry.c)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../gui/gtkentry.c" modifier_source)
+string(REGEX MATCH "static dt_gtkentry_completion_spec _default_path_compl_list\\[\\][^;]+;" modifier_table "${modifier_source}")
+if(NOT modifier_table)
+  message(FATAL_ERROR "Could not read the native filename modifier catalog")
+endif()
+string(REPLACE "static dt_gtkentry_completion_spec _default_path_compl_list" "static const struct { const char *varname; const char *description; } _touch_modifier_specs" modifier_table "${modifier_table}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/modifier_catalog.h" "${modifier_table}\n")
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
 # Qt supplies its own Unicode Windows entry point
 string(REPLACE "-municode" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 
@@ -10,6 +21,8 @@ add_library(dt_touch_engine STATIC engine_bridge.c ../mcp/dt_bridge.c)
 target_link_libraries(dt_touch_engine PUBLIC lib_darktable PkgConfig::TOUCH_JSON)
 
 qt_add_executable(darktable-touch main.cpp TouchController.cpp TouchController.h Gamepad.cpp Gamepad.h)
+qt_add_resources(darktable-touch touch_icon PREFIX "/" BASE "${CMAKE_SOURCE_DIR}/data/pixmaps"
+  FILES "${CMAKE_SOURCE_DIR}/data/pixmaps/darktable-touch.ico")
 target_link_libraries(darktable-touch PRIVATE dt_touch_engine Qt6::Quick Qt6::QuickControls2)
 set_target_properties(darktable-touch PROPERTIES
   AUTOMOC ON
@@ -42,6 +55,11 @@ qt_add_qml_module(darktable-touch
   QML_FILES qml/NamePatternEditor.qml qml/TouchSwitch.qml qml/UiMetrics.qml qml/HistoryPasteDialog.qml qml/ThumbnailButton.qml qml/ThumbnailImage.qml qml/ChoiceDelegate.qml qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
 
 qt_add_executable(darktabletouch launcher.cpp)
+if(WIN32)
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/touch-icon.rc" "IDI_ICON1 ICON \"${CMAKE_SOURCE_DIR}/data/pixmaps/darktable-touch.ico\"\n")
+  target_sources(darktable-touch PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/touch-icon.rc")
+  target_sources(darktabletouch PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/touch-icon.rc")
+endif()
 target_link_libraries(darktabletouch PRIVATE Qt6::Core PkgConfig::TOUCH_JSON)
 set_target_properties(darktabletouch PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
 

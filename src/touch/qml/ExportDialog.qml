@@ -20,9 +20,7 @@ TouchDialog {
             return dialog.scope === "collection"
                 || (dialog.scope === "selected" && (dialog.photoController.library.selected || []).indexOf(image.imgid) >= 0)
         }).length
-    readonly property bool validPattern: pattern.text.trim().length > 0
-        && !/[\u0000-\u001f<>:"/\\|?*{}]/.test(pattern.text.replace(/\{(name|sequence|id)\}/g, ""))
-        && !/[. ]$/.test(pattern.text)
+    readonly property bool validPattern: pattern.valid
     readonly property string validationMessage: {
         if(photoController.busy) return qsTr("wait for the current operation to finish before exporting")
         if(targetCount === 0) return scope === "selected" ? qsTr("select images or choose another export scope")
@@ -77,7 +75,7 @@ TouchDialog {
                     SpinBox { id: quality; objectName: "exportQuality"; from: 1; to: 100; value: 95; editable: true; implicitHeight: 64 }
                 }
                 Label { text: qsTr("name modifier"); color: "#00dbe5" }
-                NamePatternEditor { id: pattern; objectName: "exportPattern"; Layout.fillWidth: true }
+                NamePatternEditor { id: pattern; objectName: "exportPattern"; Layout.fillWidth: true; modifiers: dialog.photoController.library.name_modifiers || [] }
                 TouchButton {
                     id: advanced
                     objectName: "exportAdvanced"

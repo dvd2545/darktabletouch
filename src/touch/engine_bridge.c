@@ -20,6 +20,9 @@
 #include "common/overlay.h"
 #include "common/dtdata.h"
 #include "common/exif.h"
+#include "common/variables.h"
+#include "common/metadata.h"
+#include "modifier_catalog.h"
 #include <glib/gstdio.h>
 #include <errno.h>
 #include "control/conf.h"
@@ -225,6 +228,32 @@ char *dt_touch_library(void)
   json_object_set_boolean_member(settings, "quick_reject", dt_conf_get_bool("touch/quick_reject"));
   json_object_set_boolean_member(settings, "quick_delete", dt_conf_get_bool("touch/quick_delete"));
   json_object_set_object_member(library, "touch_settings", settings);
+  JsonObject *options = json_object_new();
+  json_object_set_boolean_member(options, "scale_override", dt_conf_get_bool("touch/scale_override"));
+  json_object_set_int_member(options, "scale", dt_conf_get_int("touch/ui_scale"));
+  json_object_set_boolean_member(options, "swipe_images", dt_conf_get_bool("touch/swipe_images"));
+  json_object_set_int_member(options, "preview_quality", dt_conf_get_int("touch/preview_quality"));
+  json_object_set_object_member(library, "ui_options", options);
+  JsonArray *modifiers = json_array_new();
+  for(int i = 0; _touch_modifier_specs[i].varname; i++)
+  {
+    JsonObject *entry = json_object_new();
+    json_object_set_string_member(entry, "tag", _touch_modifier_specs[i].varname);
+    json_object_set_string_member(entry, "description", _(_touch_modifier_specs[i].description));
+    json_array_add_object_element(modifiers, entry);
+  }
+  dt_pthread_mutex_lock(&darktable.metadata_threadsafe);
+  for(GList *item = dt_metadata_get_list(); item; item = item->next)
+  {
+    const dt_metadata_t *metadata = item->data;
+    if(metadata->internal) continue;
+    JsonObject *entry = json_object_new();
+    json_object_set_string_member(entry, "tag", metadata->tagname);
+    json_object_set_string_member(entry, "description", _("from metadata"));
+    json_array_add_object_element(modifiers, entry);
+  }
+  dt_pthread_mutex_unlock(&darktable.metadata_threadsafe);
+  json_object_set_array_member(library, "name_modifiers", modifiers);
   JsonNode *root = json_node_new(JSON_NODE_OBJECT);
   json_node_take_object(root, library);
   char *result = json_to_string(root, FALSE);
@@ -1331,6 +1360,34 @@ void dt_touch_settings_set(int show_rejected, int advance_after_reject)
 {
   dt_conf_set_bool("touch/show_rejected", show_rejected);
   dt_conf_set_bool("touch/advance_after_reject", advance_after_reject);
+}
+
+void dt_touch_ui_options_set(int override, int scale, int swipe, int quality)
+{
+  dt_conf_set_bool("touch/scale_override", override);
+  dt_conf_set_int("touch/ui_scale", CLAMP(scale, 75, 150));
+  dt_conf_set_bool("touch/swipe_images", swipe);
+  dt_conf_set_int("touch/preview_quality", CLAMP(quality, 640, 4096));
+}
+
+char *dt_touch_export_name(int image, const char *pattern, int sequence, int width, int height, int upscale)
+{
+  char *path = dt_touch_image_path(image);
+  if(!path) return NULL;
+  dt_variables_params_t *params;
+  dt_variables_params_init(&params);
+  params->filename = path;
+  params->imgid = image;
+  params->jobcode = "export";
+  params->sequence = sequence;
+  dt_variables_set_max_width_height(params, width, height);
+  dt_variables_set_upscale(params, upscale);
+  char *template = g_strdup(pattern);
+  char *name = dt_variables_expand(params, template, FALSE);
+  g_free(template);
+  dt_variables_params_destroy(params);
+  g_free(path);
+  return name;
 }
 
 int dt_touch_editor_reload(dt_touch_editor_t *editor, char **error)

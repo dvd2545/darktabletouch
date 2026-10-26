@@ -37,6 +37,30 @@
   </dttab>
 
   <dtconfig>
+    <name>touch/scale_override</name>
+    <type>bool</type>
+    <default>false</default>
+    <shortdescription>override automatic touch interface scale</shortdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>touch/ui_scale</name>
+    <type>int</type>
+    <default>100</default>
+    <shortdescription>touch interface scale percentage</shortdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>touch/swipe_images</name>
+    <type>bool</type>
+    <default>true</default>
+    <shortdescription>swipe between fitted editor images</shortdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>touch/preview_quality</name>
+    <type>int</type>
+    <default>1280</default>
+    <shortdescription>touch fitted preview maximum edge in pixels</shortdescription>
+  </dtconfig>
+  <dtconfig>
     <name>touch/show_rejected</name>
     <type>bool</type>
     <default>false</default>

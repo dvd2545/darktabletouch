@@ -58,7 +58,7 @@ TouchDialog {
             for(const entry of draft.collection) {
                 if(entry.item !== 0 && entry.item !== 1) continue
                 const value = normalize(entry.string)
-                const matches = value === "%" || value === key || (value.endsWith("*") && (key === value.slice(0, -1) || key.startsWith(value.slice(0, -1) + "/")))
+                const matches = (entry.item === 0 && !value) || value === "%" || value === key || (entry.item === 1 && value.endsWith("*") && (key === value.slice(0, -1) || key.startsWith(value.slice(0, -1) + "/")))
                 if(matches) selected = entry.mode !== 2
             }
             next[key] = selected
@@ -85,7 +85,7 @@ TouchDialog {
         const rows = []
         function visit(node, depth, parentMatches) {
             if(!includeCollapsed && query && !parentMatches && !matches(node)) return
-            rows.push({key: node.key, label: node.label, source: node.source, count: node.count, depth: depth, children: node.children.length})
+            rows.push({key: node.key, label: node.label, source: node.source, count: browseProperty === 0 ? node.direct : node.count, depth: depth, children: node.children.length})
             if(includeCollapsed || search || expanded[node.key] !== false) {
                 node.children.sort(function(a, b) { return a.label.localeCompare(b.label) })
                 for(const child of node.children) visit(child, depth + 1, parentMatches || node.label.toLowerCase().includes(query))
@@ -99,7 +99,7 @@ TouchDialog {
         let count = 0, checked = 0
         for(const folder of folders) {
             const path = normalize(folder.folder)
-            if(path === key || path.startsWith(key + "/")) { count++; if(selectedFolders[path]) checked++ }
+            if(path === key || (browseProperty === 1 && path.startsWith(key + "/"))) { count++; if(selectedFolders[path]) checked++ }
         }
         return !checked ? Qt.Unchecked : checked === count ? Qt.Checked : Qt.PartiallyChecked
     }
@@ -107,13 +107,13 @@ TouchDialog {
         const selected = Object.assign({}, selectedFolders)
         for(const folder of folders) {
             const path = normalize(folder.folder)
-            if(path === key || path.startsWith(key + "/")) selected[path] = checked
+            if(path === key || (browseProperty === 1 && path.startsWith(key + "/"))) selected[path] = checked
         }
         const rules = [], covered = []
         for(const node of tree(true).sort(function(a, b) { return a.key.length - b.key.length })) {
             if(covered.some(function(path) { return node.key === path || node.key.startsWith(path + "/") })) continue
             const descendants = folders.filter(function(folder) { const path = normalize(folder.folder); return path === node.key || path.startsWith(node.key + "/") })
-            if(descendants.length && descendants.every(function(folder) { return selected[normalize(folder.folder)] })) {
+            if(browseProperty === 1 && descendants.length && descendants.every(function(folder) { return selected[normalize(folder.folder)] })) {
                 const nativePath = folders.length && folders[0].folder.includes("\\") ? node.key.replace(/\//g, "\\") : node.key
                 rules.push(rule(1, nativePath + "*", rules.length ? 1 : 0)); covered.push(node.key)
             } else {
@@ -196,7 +196,7 @@ TouchDialog {
                         width: valueList.width; height: 64; spacing: 4
                         Item { visible: libraryDialog.folderMode; Layout.preferredWidth: Math.min(6, modelData.depth || 0) * 18 }
                         TouchButton {
-                            visible: libraryDialog.folderMode
+                            visible: libraryDialog.folderMode && !!modelData.children
                             text: libraryDialog.expanded[modelData.key] === false ? qsTr("expand") : qsTr("collapse"); stacked: true; padding: 6; font.pixelSize: 12; iconName: libraryDialog.expanded[modelData.key] === false ? "chevron-right" : "chevron-down"
                             enabled: !!modelData.children; opacity: modelData.children ? 1 : 0; implicitWidth: 80
                             Accessible.name: qsTr("expand or collapse %1").arg(modelData.label || "")

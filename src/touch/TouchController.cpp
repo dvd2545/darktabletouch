@@ -241,6 +241,10 @@ void EngineWorker::importPaths(QStringList paths)
 void EngineWorker::libraryCommand(QString action, QJsonObject settings, int image)
 {
   if(!m_initialized) return;
+  if(action == QStringLiteral("ui-options")) {
+    dt_touch_ui_options_set(settings.value(QStringLiteral("scale_override")).toBool(), settings.value(QStringLiteral("scale")).toInt(100),
+      settings.value(QStringLiteral("swipe_images")).toBool(), settings.value(QStringLiteral("preview_quality")).toInt(1280)); return;
+  }
   if(action == QStringLiteral("touch-settings")) {
     dt_touch_settings_set(settings.value(QStringLiteral("show_rejected")).toBool(), settings.value(QStringLiteral("advance_after_reject")).toBool()); return;
   }
@@ -459,7 +463,7 @@ void EngineWorker::setParameter(QString operation, QString name, QVariant value,
                            scalar.constData(), &error)) { report(error); return; }
   if(commit) commitEdit();
   loadModule(m_operation, revision);
-  render(revision, commit ? 1280 : 640);
+  render(revision, commit ? 0 : 640);
 }
 
 void EngineWorker::changeEnabled(QString operation, bool enabled, quint64 revision)
@@ -521,6 +525,7 @@ void EngineWorker::historyStep(int direction, quint64 revision)
 bool EngineWorker::render(quint64 revision, int extent)
 {
   if(!m_editor || revision != m_revision->load()) return false;
+  if(extent == 0) extent = m_previewExtent;
   uint8_t *pixels = nullptr;
   int width = 0, height = 0;
   char *error = nullptr;
@@ -528,6 +533,12 @@ bool EngineWorker::render(quint64 revision, int extent)
   { report(error); return false; }
   emit frameReady(takePixels(pixels, width, height), revision);
   return true;
+}
+
+void EngineWorker::updatePreview(int extent, quint64 revision)
+{
+  m_previewExtent = std::clamp(extent, 640, 4096);
+  render(revision);
 }
 
 void EngineWorker::jumpHistory(int end, quint64 revision)
@@ -608,6 +619,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   m_worker->moveToThread(&m_thread);
   connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
   connect(this, &TouchController::boot, m_worker, &EngineWorker::initialize);
+  connect(this, &TouchController::previewRequested, m_worker, &EngineWorker::updatePreview);
   connect(this, &TouchController::importRequested, m_worker, &EngineWorker::importPaths);
   connect(this, &TouchController::libraryRequested, m_worker, &EngineWorker::libraryCommand);
   connect(this, &TouchController::importReviewRequested, m_worker, &EngineWorker::reviewImport);
@@ -619,6 +631,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
       m_advanceAfterReject = settings.value(QStringLiteral("advance_after_reject")).toBool();
       m_quickReject = settings.value(QStringLiteral("quick_reject")).toBool();
       m_quickDelete = settings.value(QStringLiteral("quick_delete")).toBool();
+      m_uiOptions = library.value(QStringLiteral("ui_options")).toObject().toVariantMap();
       m_touchSettingsLoaded = true; updateImages(QJsonArray::fromVariantList(m_allImages));
     }
     emit libraryChanged();
@@ -727,6 +740,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(m_worker, &EngineWorker::frameReady, this, [this](QImage image, quint64 revision) {
     if(revision != m_revision->load()) return;
     m_store->setFrame(image);
+    ++m_frameSerial;
     if(m_needBefore) { m_store->setFrame(image, true); m_needBefore = false; }
     m_waitingFrame = false;
     m_frameRevision = revision;
@@ -795,7 +809,28 @@ quint64 TouchController::advance() { return ++(*m_revision); }
 QString TouchController::preview() const
 {
   return QStringLiteral("image://photos/%1?revision=%2").arg(m_before ? QStringLiteral("before") : QStringLiteral("current"))
-    .arg(m_frameRevision);
+    .arg(m_frameSerial);
+}
+
+void TouchController::setUiOption(const QString &name, const QVariant &value)
+{
+  if(!m_ready || !m_uiOptions.contains(name)) return;
+  auto next = value;
+  if(name == QStringLiteral("scale")) next = std::clamp(value.toInt(), 75, 150);
+  if(name == QStringLiteral("preview_quality")) next = std::clamp(value.toInt(), 640, 4096);
+  m_uiOptions.insert(name, next);
+  emit libraryRequested(QStringLiteral("ui-options"), QJsonObject::fromVariantMap(m_uiOptions), 0);
+  emit stateChanged();
+}
+
+void TouchController::requestPreview(int extent)
+{
+  if(!m_ready || !m_imageId || m_busy || m_cropEditing) return;
+  extent = std::clamp(extent, 640, 4096);
+  if(extent == m_previewExtent) return;
+  m_previewExtent = extent;
+  m_busy = true; m_waitingFrame = true; emit stateChanged();
+  emit previewRequested(extent, m_revision->load());
 }
 
 void TouchController::updateImages(const QJsonArray &images)
@@ -1180,8 +1215,13 @@ void EngineWorker::exportBatch(QJsonObject settings)
     const QFileInfo source(QString::fromUtf8(nativePath)); dt_touch_free(nativePath);
     const QString directory = settings.value(QStringLiteral("storage")).toString() == QStringLiteral("source")
       ? QDir(source.absolutePath()).filePath(QStringLiteral("exported")) : settings.value(QStringLiteral("folder")).toString();
-    QString name = pattern; name.replace(QStringLiteral("{name}"), source.completeBaseName());
-    name.replace(QStringLiteral("{sequence}"), QStringLiteral("%1").arg(i + 1, 4, 10, QChar('0'))); name.replace(QStringLiteral("{id}"), QString::number(id));
+    QString nativePattern = pattern;
+    nativePattern.replace(QStringLiteral("{name}"), QStringLiteral("$(FILE.NAME)"));
+    nativePattern.replace(QStringLiteral("{sequence}"), QStringLiteral("$(SEQUENCE[4,1])"));
+    nativePattern.replace(QStringLiteral("{id}"), QStringLiteral("$(IMAGE.ID)"));
+    char *expanded = dt_touch_export_name(id, nativePattern.toUtf8().constData(), i + 1,
+      settings.value(QStringLiteral("width")).toInt(), settings.value(QStringLiteral("height")).toInt(), settings.value(QStringLiteral("upscale")).toBool());
+    const QString name = expanded ? QString::fromUtf8(expanded) : QString(); dt_touch_free(expanded);
     if(name.isEmpty() || !validText(name) || name.contains(QRegularExpression(QStringLiteral("[<>:\"/\\\\|?*{}]"))) || name.endsWith('.') || name.endsWith(' '))
     { emit failed(tr("invalid export name: %1").arg(name)); emit exportFinished(); return; }
     if(!QDir().mkpath(directory)) { emit failed(tr("could not create export folder: %1").arg(directory)); emit exportFinished(); return; }

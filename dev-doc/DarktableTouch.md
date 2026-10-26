@@ -120,6 +120,22 @@ lower right. Quick delete first chooses disk or collection removal, then
 requires confirmation. Both shortcuts start hidden. Operations lasting more
 than 150 ms show a centered animated loading indicator.
 
+Settings separate interface, library, and editor options. Interface sizing
+can override automatic system-density sizing from 75% to 150%; the multiplier
+applies once to shared logical metrics. The override, multiplier, editor swipe
+navigation, and fitted preview quality persist in the native configuration.
+Horizontal canvas swipes navigate only at fit, outside crop and selection;
+zoomed images keep pan gestures. Filmstrip and module-panel visibility animate
+without delaying manual resize gestures. Floating editor controls use a shared
+dark shadow for contrast over bright images.
+
+Fitted preview quality offers maximum edges from 640 to 4096 pixels. After a
+250 ms zoom pause, the worker renders at the displayed size and screen pixel
+ratio, bounded by the existing 4096-pixel preview limit and original image
+dimensions. Returning to fit requests the configured quality again. Edits keep
+the current detailed extent, with temporary 640-pixel frames during adjustment.
+This changes preview request sizing, not the native processing algorithms.
+
 `UiMetrics.qml` converts reported physical screen density into a 9.5 mm
 touch target, divided by the device pixel ratio. Targets are bounded to
 56-80 logical pixels; missing or implausible density uses 64. Shared spacing,
@@ -128,7 +144,9 @@ Qt applies Windows scaling to logical coordinates. Reported physical
 sizes can be inaccurate, so physical touch and Windows scaling still need
 hardware validation; simulated scale factors do not establish that.
 
-Parameter names and full touch-height values share a row above each slider.
+Parameter names and compact touch values share a row above each slider.
+Numeric fields, resets, and slider hit areas use shared parameter metrics with
+a 44-pixel minimum, reducing empty padding between controls.
 Long names can wrap without obscuring numeric entries. Changed scalar, enum,
 and boolean values expose direct resets using their native defaults.
 Each module header has its own reset beside its enable switch, including
@@ -208,6 +226,13 @@ rules offer common values. Filters can be disabled without removing them.
 Changes are applied together or discarded with cancel. The same preferences
 and native collection query drive the filmstrip and Classic handoff.
 
+Film roll checkboxes and counts refer only to images directly in that imported
+folder, even when its imported children appear beneath it. Folder checkboxes
+and counts include imported descendants. Rows without children do not reserve
+an empty expand/collapse button. Selection's More actions opens the same image
+actions menu for all selected images, with the selected count and existing
+confirmation steps for removal, deletion, and history reset.
+
 "select" enables multi-photo selection without opening the editor. Tap photos
 to toggle them, or use all, none, invert, same film roll, and untouched. Hold
 a thumbnail, right-click it, or press Menu/Shift+F10 for image actions.
@@ -272,6 +297,16 @@ JPEG quality has a slider and numeric entry. The basic name modifier accepts
 literal text and `{name}`, `{sequence}`, and `{id}` tags. Recognized tags appear
 as removable chips, with insertion buttons and an example filename. Invalid
 tags or filename separators still prevent export.
+
+Add modifier opens a searchable browser populated from Classic's full
+completion catalog at configure time and current user metadata definitions at
+runtime. Native `$(VARIABLE)` tags, including parameterized sequence and
+category tags, appear as removable chips. Export expands them with the native
+variables engine for each image. Existing `{name}`, `{sequence}`, and `{id}`
+patterns remain compatible. Directory-valued modifiers are available but an
+expansion containing filename separators is rejected rather than changing the
+chosen destination. The monochrome Darktable vector icon is embedded in both
+Windows Touch executables, with a resource icon for the Qt window.
 
 ### Coverage status
 

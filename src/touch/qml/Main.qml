@@ -13,7 +13,7 @@ ApplicationWindow {
     title: qsTr("darktabletouch")
     color: "#090d0f"
     font.family: "Segoe UI"
-    font.pixelSize: 15
+    font.pixelSize: ui.bodySize
     palette.window: "#090d0f"
     palette.windowText: "#e6e8eb"
     palette.base: "#202329"
@@ -70,6 +70,12 @@ ApplicationWindow {
         }
     }
     property real viewZoom: 1
+    onViewZoomChanged: previewTimer.restart()
+    function desiredPreviewExtent() {
+        const base = Number(controller.uiOptions.preview_quality || 1280)
+        return viewZoom <= 1.01 ? base : Math.min(4096, Math.max(base, Math.ceil(Math.max(imageStage.width, imageStage.height) * viewZoom * window.Screen.devicePixelRatio / 128) * 128))
+    }
+    Timer { id: previewTimer; interval: 250; onTriggered: if(controller.editorVisible) controller.requestPreview(window.desiredPreviewExtent()) }
     property int cropRatioN: 0
     property int cropRatioD: 0
     property bool advanced: false
@@ -176,7 +182,7 @@ ApplicationWindow {
         if(controller.busy) return
         if(controller.cropEditing) controller.cropCommand("cancel")
         actionImage = JSON.parse(JSON.stringify(image))
-        actionSelection = controller.editorVisible && window.filmstripSelection && window.selectedImages.indexOf(Number(image.imgid)) >= 0
+        actionSelection = (controller.editorVisible ? window.filmstripSelection : window.selectionMode) && window.selectedImages.indexOf(Number(image.imgid)) >= 0
         actionTargets = actionSelection ? window.selectedImages.slice() : []
         imageActions.open()
     }
@@ -213,6 +219,7 @@ ApplicationWindow {
         }
         function onCropChanged() { if(controller.cropEditing && !window.moduleResetView) { window.toolsOpen = true; window.distractionFree = false; window.viewZoom = 1; canvas.contentX = 0; canvas.contentY = 0; cropOverlay.setBounds(controller.cropBounds) } }
         function onStateChanged() {
+            if(!controller.busy) previewTimer.restart()
             window.statusVisible = true; statusTimer.restart()
             if(window.moduleResetView && !controller.busy) {
                 const view = window.moduleResetView
@@ -425,6 +432,19 @@ ApplicationWindow {
                                 }
                             }
                             DragHandler {
+                                objectName: "imageSwipeHandler"
+                                target: null; yAxis.enabled: false
+                                enabled: controller.uiOptions.swipe_images !== false && window.viewZoom <= 1.01 && !controller.cropEditing && !window.filmstripSelection && !window.modalOpen && !controller.busy
+                                onActiveChanged: {
+                                    if(!active && enabled && !pinch.active) {
+                                        const dx = centroid.scenePosition.x - centroid.scenePressPosition.x
+                                        const dy = centroid.scenePosition.y - centroid.scenePressPosition.y
+                                        if(Math.abs(dx) >= Math.max(64, imageStage.width * 0.12) && Math.abs(dy) < Math.abs(dx) * 0.6)
+                                            controller.navigateImage(dx < 0 ? 1 : -1)
+                                    }
+                                }
+                            }
+                            DragHandler {
                                 target: null; xAxis.enabled: false
                                 enabled: window.filmstripState === "hidden" && !window.distractionFree && !controller.cropEditing && window.viewZoom <= 1
                                 function revealPhotos() {
@@ -556,8 +576,12 @@ ApplicationWindow {
                     id: filmstripBar
                     objectName: "filmstripBar"
                     Layout.fillWidth: true
-                    visible: window.filmstripState !== "hidden" && !window.distractionFree
-                    Layout.preferredHeight: Math.min(window.maximumFilmstripHeight, window.requestedFilmstripHeight || (window.filmstripState === "expanded" ? ui.expandedFilmstrip : ui.compactFilmstrip))
+                    property real revealProgress: window.filmstripState !== "hidden" && !window.distractionFree ? 1 : 0
+                    Behavior on revealProgress { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    readonly property real revealHeight: revealProgress * Math.min(window.maximumFilmstripHeight, window.requestedFilmstripHeight || (window.filmstripState === "expanded" ? ui.expandedFilmstrip : ui.compactFilmstrip))
+                    visible: revealHeight > 0.5; clip: true
+                    enabled: window.filmstripState !== "hidden" && !window.distractionFree
+                    Layout.minimumHeight: 0; Layout.preferredHeight: revealHeight; Layout.maximumHeight: revealHeight
                     color: "#0e1417"
                     Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: "#283337" }
                     PanelHandle {
@@ -610,8 +634,11 @@ ApplicationWindow {
             Rectangle {
                 id: toolPanel
                 objectName: "toolPanel"
-                visible: window.toolsOpen && !window.distractionFree
-                Layout.preferredWidth: Math.max(ui.panelWidth, Math.min(window.maximumModuleWidth, window.requestedModuleWidth || ui.panelWidth))
+                property real revealProgress: window.toolsOpen && !window.distractionFree ? 1 : 0
+                Behavior on revealProgress { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                readonly property real revealWidth: revealProgress * Math.max(ui.panelWidth, Math.min(window.maximumModuleWidth, window.requestedModuleWidth || ui.panelWidth))
+                visible: revealWidth > 0.5; clip: true; enabled: window.toolsOpen && !window.distractionFree
+                Layout.minimumWidth: 0; Layout.preferredWidth: revealWidth; Layout.maximumWidth: revealWidth
                 Layout.fillHeight: true; color: ui.panel
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: "#283337" }
                 PanelHandle {
@@ -761,6 +788,11 @@ ApplicationWindow {
                 RowLayout {
                     id: selectionActions; spacing: 4
                     TouchButton { objectName: "selectionExportButton"; text: qsTr("export"); iconName: "export"; visible: window.selectedImages.length > 0; enabled: !controller.busy; onClicked: { batchExportDialog.scope = "selected"; batchExportDialog.open() } }
+                    TouchButton {
+                        objectName: "selectionMoreActionsButton"; text: qsTr("more actions"); iconName: "more"
+                        enabled: window.selectedImages.length > 0 && !controller.busy
+                        onClicked: window.showImageActions(controller.images.find(function(image) { return Number(image.imgid) === window.selectedImages[0] }))
+                    }
                     TouchButton { objectName: "selectionRejectButton"; text: qsTr("reject"); iconName: "reject"; visible: controller.editorVisible; enabled: window.selectedImages.length > 0 && !controller.busy; onClicked: controller.libraryCommand("reject", {images: window.selectedImages}, 0) }
                     TouchButton { objectName: "selectAllButton"; text: qsTr("all"); enabled: !controller.busy; onClicked: controller.libraryCommand("all", {}, 0) }
                     TouchButton { objectName: "selectNoneButton"; text: qsTr("none"); enabled: !controller.busy; onClicked: controller.libraryCommand("none", {}, 0) }
@@ -803,7 +835,7 @@ ApplicationWindow {
     Component {
         id: adjustmentControls
         ColumnLayout {
-            width: parent.width; spacing: 8
+            width: parent.width; spacing: 2
             ColumnLayout {
                 visible: controller.operation === "crop"
                 Layout.fillWidth: true; Layout.margins: 16
@@ -840,7 +872,7 @@ ApplicationWindow {
                     required property var model
                     enabled: !controller.exportRunning
                     field: model.field
-                    Layout.fillWidth: true; Layout.leftMargin: ui.gap; Layout.rightMargin: ui.gap
+                    Layout.fillWidth: true; Layout.leftMargin: ui.parameterInset; Layout.rightMargin: ui.parameterInset
                     visible: controller.operation === "exposure" && !window.advanced
                         ? (Number(controller.values.mode) === 1 ? ["mode", "deflicker_target_level", "deflicker_percentile"] : ["mode", "exposure", "black"]).indexOf(field.name) >= 0
                         : field.visible !== false
@@ -900,7 +932,7 @@ ApplicationWindow {
             id: imageActionColumn
             width: parent.width; spacing: 10
             Label { text: window.actionSelection ? qsTr("%1 selected images").arg(window.actionTargets.length) : window.actionImage.filename || ""; textFormat: Text.PlainText; color: "#e6eef0"; font.pixelSize: 20; Layout.fillWidth: true; elide: Text.ElideMiddle }
-            TouchButton { showLabel: true; iconName: "copy"; text: qsTr("copy history"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("copy") }
+            TouchButton { showLabel: true; iconName: "copy"; text: qsTr("copy history"); visible: !window.actionSelection; Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("copy") }
             TouchButton { showLabel: true; iconName: "paste"; text: qsTr("paste selected history"); Layout.fillWidth: true; enabled: !controller.busy && !!controller.copiedHistory.source; onClicked: window.chooseImageAction("paste") }
             TouchButton { showLabel: true; iconName: "reject"; text: qsTr("reject"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("reject") }
             TouchButton { showLabel: true; iconName: "unrate"; text: qsTr("unreject / unrate"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("unrate") }
@@ -950,20 +982,54 @@ ApplicationWindow {
     TouchDialog {
         id: quickSettings
         objectName: "quickSettings"
-        title: qsTr("settings"); anchors.centerIn: parent; width: Math.min(480, window.width - 32); height: Math.min(520, window.height - 32); modal: true; focus: true
+        title: qsTr("settings"); anchors.centerIn: parent; width: Math.min(600, window.width - 32); height: Math.min(620, window.height - 32); modal: true; focus: true
+        property int category: controller.editorVisible ? 2 : 1
         contentItem: ScrollView {
             id: settingsScroll
             contentWidth: availableWidth; clip: true
             ColumnLayout {
                 id: settingsColumn
-                width: parent.width; spacing: ui.gap
-                Label { text: qsTr("image strip"); color: ui.muted }
-                TouchComboBox { Layout.fillWidth: true; implicitHeight: ui.touchHeight; model: [qsTr("hidden"), qsTr("shown")]; currentIndex: window.filmstripState === "hidden" ? 0 : 1; onActivated: { window.filmstripState = currentIndex === 0 ? "hidden" : "compact"; window.requestedFilmstripHeight = 0 } }
-                TouchSwitch { text: qsTr("hide image strip automatically"); checked: window.autoHideFilmstrip; implicitHeight: ui.touchHeight; onToggled: { window.autoHideFilmstrip = checked; if(checked) filmstripTimer.restart() } }
-                TouchSwitch { text: qsTr("show rejected images"); checked: controller.showRejected; implicitHeight: 64; onToggled: controller.showRejected = checked }
-                TouchSwitch { text: qsTr("next image after rejecting"); checked: controller.advanceAfterReject; implicitHeight: 64; onToggled: controller.advanceAfterReject = checked }
-                TouchSwitch { objectName: "quickRejectSetting"; text: qsTr("show quick reject"); checked: controller.quickReject; onToggled: controller.quickReject = checked }
-                TouchSwitch { objectName: "quickDeleteSetting"; text: qsTr("show quick delete"); checked: controller.quickDelete; onToggled: controller.quickDelete = checked }
+                width: settingsScroll.availableWidth; spacing: ui.gap
+                RowLayout {
+                    Layout.fillWidth: true
+                    Repeater {
+                        model: [qsTr("interface"), qsTr("library"), qsTr("editor")]
+                        TouchButton { required property string modelData; required property int index; text: modelData; checked: quickSettings.category === index; Layout.fillWidth: true; onClicked: quickSettings.category = index }
+                    }
+                }
+                ColumnLayout {
+                    visible: quickSettings.category === 0; Layout.fillWidth: true
+                    TouchSwitch { objectName: "uiScaleOverride"; text: qsTr("override system UI scale"); checked: !!controller.uiOptions.scale_override; Layout.fillWidth: true; onToggled: controller.setUiOption("scale_override", checked) }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { text: qsTr("interface scale (%)"); color: ui.text; Layout.fillWidth: true }
+                        SpinBox { objectName: "uiScaleValue"; from: 75; to: 150; stepSize: 5; value: Number(controller.uiOptions.scale || 100); editable: true; enabled: !!controller.uiOptions.scale_override; implicitHeight: ui.touchHeight; onValueModified: controller.setUiOption("scale", value) }
+                    }
+                    Label { text: qsTr("turn off override to use automatic sizing"); color: ui.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                }
+                ColumnLayout {
+                    visible: quickSettings.category === 1; Layout.fillWidth: true
+                    TouchSwitch { text: qsTr("show rejected images"); checked: controller.showRejected; Layout.fillWidth: true; onToggled: controller.showRejected = checked }
+                }
+                ColumnLayout {
+                    visible: quickSettings.category === 2; Layout.fillWidth: true
+                    Label { text: qsTr("image strip"); color: ui.muted }
+                    TouchComboBox { Layout.fillWidth: true; implicitHeight: ui.touchHeight; model: [qsTr("hidden"), qsTr("shown")]; currentIndex: window.filmstripState === "hidden" ? 0 : 1; onActivated: { window.filmstripState = currentIndex === 0 ? "hidden" : "compact"; window.requestedFilmstripHeight = 0 } }
+                    TouchSwitch { text: qsTr("hide image strip automatically"); checked: window.autoHideFilmstrip; Layout.fillWidth: true; onToggled: { window.autoHideFilmstrip = checked; if(checked) filmstripTimer.restart() } }
+                    TouchSwitch { objectName: "swipeImagesSetting"; text: qsTr("swipe left or right to change images"); checked: controller.uiOptions.swipe_images !== false; Layout.fillWidth: true; onToggled: controller.setUiOption("swipe_images", checked) }
+                    TouchSwitch { text: qsTr("next image after rejecting"); checked: controller.advanceAfterReject; Layout.fillWidth: true; onToggled: controller.advanceAfterReject = checked }
+                    TouchSwitch { objectName: "quickRejectSetting"; text: qsTr("show quick reject"); checked: controller.quickReject; Layout.fillWidth: true; onToggled: controller.quickReject = checked }
+                    TouchSwitch { objectName: "quickDeleteSetting"; text: qsTr("show quick delete"); checked: controller.quickDelete; Layout.fillWidth: true; onToggled: controller.quickDelete = checked }
+                    Label { text: qsTr("preview quality at fit"); color: ui.muted }
+                    TouchComboBox {
+                        objectName: "previewQualitySetting"; Layout.fillWidth: true
+                        property var sizes: [640, 960, 1280, 1920, 2560, 4096]
+                        model: [qsTr("640 px - fastest"), "960 px", "1280 px", "1920 px", "2560 px", qsTr("4096 px - maximum")]
+                        currentIndex: Math.max(0, sizes.indexOf(Number(controller.uiOptions.preview_quality || 1280)))
+                        onActivated: controller.setUiOption("preview_quality", sizes[currentIndex])
+                    }
+                    Label { text: qsTr("zooming renders more detail, up to a 4096 px edge; zoom out to restore the selected quality"); color: ui.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                }
                 TouchButton { objectName: "settingsClassicButton"; text: qsTr("switch to classic"); iconName: "grid"; Layout.fillWidth: true; visible: managedSession; enabled: controller.ready && !controller.busy; onClicked: { quickSettings.close(); saveView(); controller.switchInterface("classic") } }
             }
         }
