@@ -13,9 +13,9 @@ opening the page that documents it.
 The [Developer's guide](https://github.com/darktable-org/darktable/wiki/Developer's-guide)
 has the coding style, and [CONTRIBUTING.md](CONTRIBUTING.md) the social side.
 
-## The one rule that matters most
+## Buildable commits and work in progress
 
-**Every commit must compile on its own.**
+**Completed changes must compile on their own. WIP commits are allowed.**
 
 `git bisect` is how darktable developers find regressions, and it is useless
 across commits that do not build. A series where only the last commit compiles
@@ -30,8 +30,12 @@ git rebase --exec 'cmake --build build' <base>
 
 If you cannot or will not do that, squash into a single commit that builds.
 
-Do not commit a "checkpoint" or "work in progress" state. Do not split a change
-so that the halves only work together.
+When work is unfinished, commit and push it as WIP instead of leaving it only
+in the working tree. Prefix the subject with `wip:` and explain the completed
+changes, unfinished work, known problems, validation performed, and next steps
+in the commit body. If the build fails or was not run, say so explicitly and
+include the relevant failure details. Never describe a WIP commit as complete
+or verified. Completed changes must still follow the build requirements above.
 
 ## Boundaries
 
@@ -42,11 +46,17 @@ Ask first: adding a dependency, changing a public API or the database schema,
 touching a subsystem the task did not name, and anything CONTRIBUTING.md calls
 substantial -- discuss those before writing them, not after.
 
-Finish at a staged change, and a drafted commit message if one was asked for.
-Committing, pushing and opening the PR are the human's steps, and they will
-usually not be asked for at all. Stage only the files the task touched -- never
-`git add -A` over a tree you have not looked at -- and keep build output,
-editor files and scratch notes out of it.
+Whenever a task changes repository files, commit and push those changes before
+finishing the task, including unfinished work. This is standing authorization
+to commit and push; do not ask again unless the user explicitly overrides it
+for the current task. Use the current branch and its configured push remote;
+never force-push. If committing or pushing fails, preserve the work and report
+the exact blocker. Opening a PR still requires a user request.
+
+Stage only the files the task touched -- never `git add -A` over a tree you
+have not looked at -- and keep build output, editor files and scratch notes
+out of it. Preserve unrelated staged and unstaged work; do not include it in
+the task's commits.
 
 Never reformat, rename or tidy code the task did not touch, and never fix an
 unrelated bug you notice in passing: mention it instead. Do not add a comment,
