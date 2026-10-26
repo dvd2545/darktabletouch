@@ -5,23 +5,26 @@ import QtQuick.Layouts
 Button {
     id: control
     property string iconName: ""
-    property bool showLabel: false
+    property bool showLabel: true
+    property bool stacked: false
     Accessible.name: text
     ToolTip.visible: hovered && !!iconName
     ToolTip.text: text
     scale: down ? 0.96 : 1
     Behavior on scale { NumberAnimation { duration: 90 } }
-    implicitHeight: 64
+    implicitHeight: Math.max(64, contentItem.implicitHeight + topPadding + bottomPadding)
     implicitWidth: Math.max(64, contentItem.implicitWidth + leftPadding + rightPadding)
     focusPolicy: Qt.StrongFocus
     padding: 14
     font.pixelSize: 15
     opacity: enabled ? 1 : 0.35
-    contentItem: RowLayout {
-        spacing: 12
-        Icon { Layout.alignment: Qt.AlignVCenter; width: 24; height: 24; visible: !!control.iconName; name: control.iconName; color: control.checked ? "#07191b" : "#e6eef0" }
+    contentItem: GridLayout {
+        columns: control.stacked ? 1 : 2
+        columnSpacing: 10; rowSpacing: 4
+        Icon { Layout.alignment: Qt.AlignCenter; Layout.preferredWidth: 24; Layout.preferredHeight: 24; visible: !!control.iconName; name: control.iconName; color: control.checked ? "#07191b" : "#e6eef0" }
         Text {
             Layout.fillWidth: true
+            Layout.minimumWidth: 0
             text: !control.iconName || control.showLabel ? control.text : ""
             visible: !control.iconName || control.showLabel
             textFormat: Text.PlainText

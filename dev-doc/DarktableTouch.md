@@ -302,6 +302,8 @@ repository. Do not rename another RAW format to `.CR3` to simulate support.
 Additional Touch checks:
 
 ```sh
+QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic qmltestrunner \
+  -platform offscreen -input src/touch/tests/tst_touchbutton.qml
 python tools/test_touch_launcher.py
 build/bin/test-touch-engine.exe /path/to/sample.CR2
 QT_QUICK_BACKEND=software build/bin/darktable-touch.exe -platform offscreen \

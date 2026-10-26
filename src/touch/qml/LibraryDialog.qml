@@ -199,8 +199,8 @@ TouchDialog {
                         Item { visible: libraryDialog.folderMode; Layout.preferredWidth: Math.min(6, modelData.depth || 0) * 18 }
                         TouchButton {
                             visible: libraryDialog.folderMode
-                            text: qsTr("expand or collapse folder"); iconName: libraryDialog.expanded[modelData.key] === false ? "chevron-right" : "chevron-down"
-                            enabled: !!modelData.children; opacity: modelData.children ? 1 : 0; implicitWidth: 64
+                            text: libraryDialog.expanded[modelData.key] === false ? qsTr("expand") : qsTr("collapse"); stacked: true; padding: 6; font.pixelSize: 12; iconName: libraryDialog.expanded[modelData.key] === false ? "chevron-right" : "chevron-down"
+                            enabled: !!modelData.children; opacity: modelData.children ? 1 : 0; implicitWidth: 80
                             Accessible.name: qsTr("expand or collapse %1").arg(modelData.label || "")
                             onClicked: { const next = Object.assign({}, libraryDialog.expanded); next[modelData.key] = next[modelData.key] === false; libraryDialog.expanded = next }
                             onActiveFocusChanged: if(activeFocus) valueList.positionViewAtIndex(index, ListView.Contain)
@@ -220,7 +220,7 @@ TouchDialog {
                         }
                         TouchButton {
                             visible: libraryDialog.folderMode
-                            iconName: "trash"; text: qsTr("remove folder from catalog"); implicitWidth: 64
+                            iconName: "trash"; text: qsTr("remove"); Accessible.name: qsTr("remove folder from catalog"); stacked: true; implicitWidth: 80; padding: 6; font.pixelSize: 12
                             onClicked: { libraryDialog.removePath = modelData.key; removeDialog.open() }
                         }
                     }
@@ -232,7 +232,7 @@ TouchDialog {
         RowLayout {
             Layout.fillWidth: true
             TouchButton { iconName: "reset"; text: qsTr("reset all"); onClicked: libraryDialog.resetAll() }
-            TouchButton { text: qsTr("remove collection from catalog"); iconName: "trash"; onClicked: { libraryDialog.removePath = ""; removeDialog.open() } }
+            TouchButton { Layout.fillWidth: true; text: qsTr("remove collection from catalog"); iconName: "trash"; onClicked: { libraryDialog.removePath = ""; removeDialog.open() } }
             Item { Layout.fillWidth: true }
             TouchButton { iconName: "check"; text: qsTr("apply"); checked: true; enabled: libraryDialog.photoController.ready && !libraryDialog.photoController.busy; onClicked: { libraryDialog.photoController.libraryCommand("collection", libraryDialog.draft); libraryDialog.close() } }
         }

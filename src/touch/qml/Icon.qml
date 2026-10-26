@@ -7,6 +7,8 @@ Canvas {
     implicitWidth: 24; implicitHeight: 24
     onNameChanged: requestPaint()
     onColorChanged: requestPaint()
+    onWidthChanged: requestPaint()
+    onHeightChanged: requestPaint()
     onPaint: {
         const c = getContext("2d")
         c.reset(); c.scale(width / 24, height / 24)

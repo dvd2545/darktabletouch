@@ -179,7 +179,8 @@ Item {
                         return acceptableInput ? "" : qsTr("enter a valid number using a decimal point")
                     }
                     function engineText() {
-                        return String(Number(root.field.value || 0))
+                        const value = Number(root.field.value || 0)
+                        return numeric.activeFocus || root.integerField ? String(value) : String(Number(value.toPrecision(6)))
                     }
                     function finishEdit() {
                         if(!edited || !enabled) return
@@ -197,7 +198,10 @@ Item {
                         selectAll()
                     }
                     onActiveFocusChanged: {
-                        if(activeFocus) controller.rememberParameter(root.field.name, root.field.operation || "", root.increment)
+                        if(activeFocus) {
+                            if(!edited) text = engineText()
+                            controller.rememberParameter(root.field.name, root.field.operation || "", root.increment)
+                        }
                         else finishEdit()
                     }
                     onTextEdited: edited = true

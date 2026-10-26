@@ -18,6 +18,7 @@ ApplicationWindow {
     palette.windowText: "#e6e8eb"
     palette.base: "#202329"
     palette.text: "#e6e8eb"
+    palette.placeholderText: "#91a1aa"
     palette.button: "#292d34"
     palette.buttonText: "#e6e8eb"
     palette.highlight: "#00dbe5"
@@ -214,8 +215,8 @@ ApplicationWindow {
                 enabled: !controller.exportRunning
                 onClicked: controller.editorVisible = false
             }
-            TouchButton { objectName: "editorUndoButton"; text: qsTr("undo"); iconName: "undo"; enabled: controller.canUndo && !controller.busy && !controller.cropEditing; onClicked: controller.undo() }
-            TouchButton { objectName: "editorRedoButton"; text: qsTr("redo"); iconName: "redo"; enabled: controller.canRedo && !controller.busy && !controller.cropEditing; onClicked: controller.redo() }
+            TouchButton { objectName: "editorUndoButton"; stacked: window.width < 1100; padding: 8; text: qsTr("undo"); iconName: "undo"; enabled: controller.canUndo && !controller.busy && !controller.cropEditing; onClicked: controller.undo() }
+            TouchButton { objectName: "editorRedoButton"; stacked: window.width < 1100; padding: 8; text: qsTr("redo"); iconName: "redo"; enabled: controller.canRedo && !controller.busy && !controller.cropEditing; onClicked: controller.redo() }
             TouchButton {
                 objectName: "editorCompareButton"
                 text: controller.before ? qsTr("show edited") : qsTr("show original")
@@ -232,7 +233,7 @@ ApplicationWindow {
                 enabled: controller.imageId > 0 && !controller.busy && !controller.cropEditing
                 onClicked: { batchExportDialog.scope = "current"; batchExportDialog.open() }
             }
-            TouchButton { text: qsTr("more actions"); iconName: "menu"; onClicked: showQuickMenu() }
+            TouchButton { text: qsTr("more"); iconName: "menu"; onClicked: showQuickMenu() }
         }
     }
 
@@ -241,72 +242,64 @@ ApplicationWindow {
         currentIndex: controller.editorVisible ? 1 : 0
         ColumnLayout {
             spacing: 16
-            RowLayout {
-                Layout.fillWidth: true; Layout.margins: 16
-                TouchButton { iconName: "menu"; text: qsTr("quick actions"); font.pixelSize: 28; Accessible.name: qsTr("quick actions"); onClicked: showQuickMenu() }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Label { text: qsTr("photo library"); color: "#eceef0"; font.pixelSize: 28; font.weight: Font.DemiBold }
-                    Label { text: controller.images.length === 1 ? qsTr("1 photo") : qsTr("%1 photos").arg(controller.images.length.toLocaleString(Qt.locale("en_US"), "f", 0)); color: "#9da6b3" }
-                }
-                TouchButton { text: window.selectionMode ? qsTr("done") : qsTr("select"); checked: window.selectionMode; onClicked: window.selectionMode = !window.selectionMode }
-                TouchButton { iconName: "import"; showLabel: true; text: qsTr("import"); enabled: controller.ready && !controller.busy; onClicked: importSource.open() }
-                Item { Layout.fillWidth: true }
-                TouchButton { iconName: "export"; showLabel: true; text: window.selectionMode ? qsTr("export selected") : qsTr("export"); enabled: !controller.busy && (window.selectionMode ? window.selectedImages.length > 0 : controller.images.length > 0); onClicked: { batchExportDialog.scope = window.selectionMode ? "selected" : "collection"; batchExportDialog.open() } }
-                TouchButton { iconName: "gear"; text: qsTr("quick settings"); onClicked: quickSettings.open() }
-                TouchButton {
+            ColumnLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 12
+                Label { text: qsTr("photo library"); color: "#eceef0"; font.pixelSize: 28; font.weight: Font.DemiBold }
+                Label { text: controller.images.length === 1 ? qsTr("1 photo") : qsTr("%1 photos").arg(controller.images.length.toLocaleString(Qt.locale("en_US"), "f", 0)); color: "#9da6b3" }
+            }
+
+            GridLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+                columns: window.width < 1100 ? 3 : 6; columnSpacing: 8; rowSpacing: 8
+                TouchButton { Layout.fillWidth: true; iconName: "menu"; text: qsTr("more"); Accessible.name: qsTr("quick actions"); onClicked: showQuickMenu() }
+                TouchButton { Layout.fillWidth: true; text: window.selectionMode ? qsTr("done") : qsTr("select"); checked: window.selectionMode; onClicked: window.selectionMode = !window.selectionMode }
+                TouchButton { Layout.fillWidth: true; iconName: "import"; showLabel: true; text: qsTr("import"); enabled: controller.ready && !controller.busy; onClicked: importSource.open() }
+                TouchButton { Layout.fillWidth: true; iconName: "export"; showLabel: true; text: window.selectionMode ? qsTr("export selected") : qsTr("export"); enabled: !controller.busy && (window.selectionMode ? window.selectedImages.length > 0 : controller.images.length > 0); onClicked: { batchExportDialog.scope = window.selectionMode ? "selected" : "collection"; batchExportDialog.open() } }
+                TouchButton { Layout.fillWidth: true; iconName: "gear"; text: qsTr("settings"); onClicked: quickSettings.open() }
+                TouchButton { Layout.fillWidth: true;
                     objectName: "libraryFilterButton"
-                    text: ""; implicitWidth: 64
+                    text: qsTr("filters"); iconName: "filter"
                     Accessible.name: qsTr("collections, filters, and image sorting")
-                    ToolTip.visible: hovered; ToolTip.text: Accessible.name
                     enabled: controller.ready && !controller.busy
                     onClicked: collectionDialog.open()
-                    contentItem: Canvas {
-                        implicitWidth: 32; implicitHeight: 32
-                        onPaint: {
-                            const context = getContext("2d")
-                            context.reset(); context.strokeStyle = "#e6eef0"; context.lineWidth = 2.5
-                            const x = width / 2, y = height / 2
-                            context.beginPath(); context.moveTo(x - 14, y - 12); context.lineTo(x + 14, y - 12)
-                            context.lineTo(x + 4, y); context.lineTo(x + 4, y + 11); context.lineTo(x - 4, y + 15)
-                            context.lineTo(x - 4, y); context.closePath(); context.stroke()
-                        }
+                }
+            }
+            Flickable {
+                Layout.fillWidth: true; Layout.preferredHeight: 72
+                Layout.leftMargin: 16; Layout.rightMargin: 16
+                visible: window.selectionMode
+                contentWidth: selectionActions.implicitWidth; contentHeight: height
+                flickableDirection: Flickable.HorizontalFlick; clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                RowLayout {
+                    id: selectionActions
+                    height: 64; spacing: 8
+                    Label { text: qsTr("%1 selected").arg(window.selectedImages.length); color: "#00dbe5" }
+                    TouchButton { text: qsTr("all"); enabled: !controller.busy; onClicked: controller.libraryCommand("all", {}, 0) }
+                    TouchButton { text: qsTr("none"); enabled: !controller.busy; onClicked: controller.libraryCommand("none", {}, 0) }
+                    TouchButton { text: qsTr("invert"); enabled: !controller.busy; onClicked: controller.libraryCommand("invert", {}, 0) }
+                    TouchButton { text: qsTr("same film roll"); enabled: !controller.busy && window.selectedImages.length > 0; onClicked: controller.libraryCommand("film", {}, 0) }
+                    TouchButton { text: qsTr("untouched"); enabled: !controller.busy; onClicked: controller.libraryCommand("untouched", {}, 0) }
+                    TouchButton {
+                        objectName: "pasteSelectedButton"
+                        text: qsTr("paste history"); iconName: "paste"
+                        enabled: !controller.busy && window.selectedImages.length > 0 && !!controller.copiedHistory.source
+                        onClicked: { historyPasteDialog.imageId = controller.imageId; historyPasteDialog.scope = "selected"; historyPasteDialog.open() }
+                    }
+                    TouchButton {
+                        objectName: "resetSelectedButton"
+                        text: qsTr("reset selected"); iconName: "reset"; enabled: !controller.busy && window.selectedImages.length > 0
+                        onClicked: { showResetHistory(controller.imageId); resetHistoryDialog.scope = "selected" }
                     }
                 }
-            }
-            RowLayout {
-                visible: window.selectionMode
-                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
-                Label { text: qsTr("%1 selected").arg(window.selectedImages.length); color: "#00dbe5" }
-                TouchButton { text: qsTr("all"); enabled: !controller.busy; onClicked: controller.libraryCommand("all", {}, 0) }
-                TouchButton { text: qsTr("none"); enabled: !controller.busy; onClicked: controller.libraryCommand("none", {}, 0) }
-                TouchButton { text: qsTr("invert"); enabled: !controller.busy; onClicked: controller.libraryCommand("invert", {}, 0) }
-                TouchButton { text: qsTr("same film roll"); enabled: !controller.busy && window.selectedImages.length > 0; onClicked: controller.libraryCommand("film", {}, 0) }
-                TouchButton { text: qsTr("untouched"); enabled: !controller.busy; onClicked: controller.libraryCommand("untouched", {}, 0) }
-                Item { Layout.fillWidth: true }
-            }
-            RowLayout {
-                visible: window.selectionMode && window.selectedImages.length > 0
-                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; spacing: 8
-                TouchButton {
-                    objectName: "pasteSelectedButton"
-                    text: qsTr("paste history to selected"); iconName: "paste"; showLabel: true
-                    enabled: !controller.busy && !!controller.copiedHistory.source
-                    onClicked: { historyPasteDialog.imageId = controller.imageId; historyPasteDialog.scope = "selected"; historyPasteDialog.open() }
-                }
-                TouchButton {
-                    objectName: "resetSelectedButton"
-                    text: qsTr("reset selected"); iconName: "reset"; showLabel: true; enabled: !controller.busy
-                    onClicked: { showResetHistory(controller.imageId); resetHistoryDialog.scope = "selected" }
-                }
-                Item { Layout.fillWidth: true }
+                ScrollBar.horizontal: ScrollBar {}
             }
             GridView {
                 id: library
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: 16; Layout.rightMargin: 16
                 clip: true
                 cellWidth: Math.max(200, width / Math.max(1, Math.floor(width / 240)))
-                cellHeight: cellWidth * 0.80
+                cellHeight: Math.min(cellWidth * 0.80, Math.max(64, height))
                 model: controller.images
                 cacheBuffer: cellHeight
                 delegate: Item {
@@ -496,7 +489,7 @@ ApplicationWindow {
                         id: menuButton
                         objectName: "editorMenuButton"
                         anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: filmstrip.verticalCenter
-                        iconName: "menu"; text: qsTr("quick actions"); implicitWidth: 64; font.pixelSize: 28
+                        iconName: "menu"; text: qsTr("more"); stacked: true; implicitWidth: 80; padding: 8
                         Accessible.name: qsTr("quick actions")
                         ToolTip.visible: hovered; ToolTip.text: qsTr("quick actions")
                         onClicked: showQuickMenu()
@@ -598,7 +591,7 @@ ApplicationWindow {
                                             }
                                         }
                                         TouchButton {
-                                            iconName: "more"; text: qsTr("tool actions"); implicitWidth: 64
+                                            iconName: "more"; text: qsTr("actions"); stacked: true; implicitWidth: 76; padding: 8; font.pixelSize: 13
                                             visible: toolCard.expanded && toolCard.modelData.operation !== "lens" && !controller.cropEditing
                                             Accessible.name: qsTr("tool actions")
                                             onClicked: toolActions.open()
@@ -610,11 +603,13 @@ ApplicationWindow {
                                             enabled: controller.imageId > 0 && !controller.cropEditing && !controller.exportRunning
                                             visible: true
                                             checked: controller.cropEditing && toolCard.modelData.operation === "crop" ? true : controller.moduleStates[toolCard.modelData.operation] || false
-                                            implicitWidth: 64; implicitHeight: 64; padding: 0
+                                            implicitWidth: 64; implicitHeight: 64; padding: 0; leftPadding: 0; rightPadding: 0
+                                            text: checked ? qsTr("on") : qsTr("off")
+                                            contentItem: Text { text: enabledSwitch.text; color: "#c0cbd0"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignBottom; bottomPadding: 3 }
                                             Accessible.name: qsTr("enable %1").arg(toolCard.modelData.label)
                                             onToggled: controller.setEnabledFor(toolCard.modelData.operation, checked)
                                             indicator: Rectangle {
-                                                x: (enabledSwitch.width - width) / 2; y: (enabledSwitch.height - height) / 2
+                                                x: (enabledSwitch.width - width) / 2; y: 8
                                                 width: 42; height: 26; radius: 13
                                                 color: enabledSwitch.checked ? "#00dbe5" : "#465157"
                                                 border.width: enabledSwitch.activeFocus ? 2 : 0; border.color: "#e6eef0"
@@ -667,9 +662,9 @@ ApplicationWindow {
                 TouchButton { visible: controller.cropEditing; text: qsTr("auto crop borders"); Layout.fillWidth: true; enabled: controller.cropEditing && !controller.busy; onClicked: controller.cropCommand("auto", {aspect: cropOverlay.aspect || photo.paintedWidth/photo.paintedHeight}) }
                 RowLayout {
                     visible: controller.cropEditing
-                    TouchButton { text: qsTr("reset frame"); iconName: "reset"; enabled: controller.cropEditing; onClicked: { cropOverlay.setBounds([0,0,1,1]); cropOverlay.fitRatio() } }
-                    TouchButton { text: qsTr("cancel"); iconName: "close"; enabled: controller.cropEditing; onClicked: controller.cropCommand("cancel") }
-                    TouchButton { text: qsTr("apply"); iconName: "check"; enabled: controller.cropEditing && !controller.busy && ((window.cropRatioN === 0 && window.cropRatioD === 0) || (window.cropRatioN > 0 && window.cropRatioD > 0)); onClicked: controller.cropCommand("apply", {bounds: cropOverlay.bounds, ratio_n: window.cropRatioN, ratio_d: window.cropRatioD}) }
+                    TouchButton { Layout.fillWidth: true; stacked: true; padding: 8; text: qsTr("reset frame"); iconName: "reset"; enabled: controller.cropEditing; onClicked: { cropOverlay.setBounds([0,0,1,1]); cropOverlay.fitRatio() } }
+                    TouchButton { Layout.fillWidth: true; stacked: true; padding: 8; text: qsTr("cancel"); iconName: "close"; enabled: controller.cropEditing; onClicked: controller.cropCommand("cancel") }
+                    TouchButton { Layout.fillWidth: true; stacked: true; padding: 8; text: qsTr("apply"); iconName: "check"; enabled: controller.cropEditing && !controller.busy && ((window.cropRatioN === 0 && window.cropRatioD === 0) || (window.cropRatioN > 0 && window.cropRatioD > 0)); onClicked: controller.cropCommand("apply", {bounds: cropOverlay.bounds, ratio_n: window.cropRatioN, ratio_d: window.cropRatioD}) }
                 }
             }
             Repeater {
