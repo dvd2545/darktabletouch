@@ -405,6 +405,16 @@ int main(int argc, char **argv)
   char *args[] = { argv[0], "--configdir", config, "--cachedir", cache,
     "--disable-opencl", "--conf", "host_memory_limit=2048", "--conf", "worker_threads=2", "-t", "2", NULL };
   g_assert_true(dt_touch_initialize(G_N_ELEMENTS(args) - 1, args));
+  g_assert_true(dt_touch_import_is_raw("folder/IMAGE.CR3"));
+  g_assert_true(dt_touch_import_is_raw("folder/image.dng"));
+  g_assert_false(dt_touch_import_is_raw("folder/image.jpg"));
+  g_assert_false(dt_touch_import_is_raw("folder/image.xmp"));
+  dt_touch_quick_actions_set(TRUE, TRUE);
+  char *settings_json = dt_touch_library();
+  g_assert_nonnull(strstr(settings_json, "\"quick_reject\":true"));
+  g_assert_nonnull(strstr(settings_json, "\"quick_delete\":true"));
+  g_free(settings_json);
+  dt_touch_quick_actions_set(FALSE, FALSE);
   char *message = NULL;
   char *imported = dt_touch_import(filename, &message);
   g_assert_null(message); g_assert_nonnull(imported);

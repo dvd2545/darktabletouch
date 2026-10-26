@@ -64,7 +64,7 @@ ApplicationWindow {
         id: filmstripTimer; interval: 6000; running: controller.editorVisible && window.autoHideFilmstrip
         onTriggered: {
             if(!window.autoHideFilmstrip || !controller.editorVisible || window.filmstripState === "hidden") return
-            if(!window.modalOpen && !filmstrip.moving && !filmstripHover.hovered)
+            if(!window.modalOpen && !window.filmstripSelection && !filmstrip.moving && !filmstripHover.hovered)
                 window.filmstripState = "hidden"
             else restart()
         }
@@ -74,10 +74,15 @@ ApplicationWindow {
     property int cropRatioD: 0
     property bool advanced: false
     property bool selectionMode: false
+    property bool filmstripSelection: false
+    property bool actionSelection: false
+    property var actionTargets: []
+    property bool importOnlyNew: true
+    property bool importRawOnly: false
     property var actionImage: ({})
     property string pendingImageAction: ""
     property bool importRecursive: true
-    readonly property var selectedImages: controller.library.selected || []
+    readonly property var selectedImages: (controller.library.selected || []).map(function(id) { return Number(id) }).filter(function(id) { return controller.images.some(function(image) { return Number(image.imgid) === id }) })
     property string expandedTool: "exposure"
     property string shownOperation: ""
     property var moduleResetView: null
@@ -91,7 +96,7 @@ ApplicationWindow {
     readonly property bool textInputFocused: activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit
     readonly property bool modalOpen: navigationDrawer.visible || quickMenu.visible || historyDialog.visible
         || historyPasteDialog.visible || resetHistoryDialog.visible || imageActions.visible || confirmImageAction.visible
-        || collectionDialog.visible || quickSettings.visible || batchExportDialog.visible || importReview.visible || importSource.visible
+        || collectionDialog.visible || quickSettings.visible || quickDeleteDialog.visible || batchExportDialog.visible || importReview.visible || importSource.visible
         || importDialog.visible || folderDialog.visible || exportDialog.visible || parameterPopupFocused()
     readonly property bool imageShortcutsEnabled: controller.ready && controller.imageId > 0 && !controller.busy
         && !controller.cropEditing && !modalOpen && !textInputFocused
@@ -171,15 +176,17 @@ ApplicationWindow {
         if(controller.busy) return
         if(controller.cropEditing) controller.cropCommand("cancel")
         actionImage = JSON.parse(JSON.stringify(image))
+        actionSelection = controller.editorVisible && window.filmstripSelection && window.selectedImages.indexOf(Number(image.imgid)) >= 0
+        actionTargets = actionSelection ? window.selectedImages.slice() : []
         imageActions.open()
     }
     function chooseImageAction(action) {
         imageActions.close()
         if(action === "copy") { controller.historyCommand("copy", {}, actionImage.imgid); return }
-        if(action === "paste") { historyPasteDialog.imageId = actionImage.imgid; historyPasteDialog.scope = "current"; historyPasteDialog.open(); return }
-        if(action === "reset") { showResetHistory(actionImage.imgid); return }
+        if(action === "paste") { historyPasteDialog.imageId = actionImage.imgid; historyPasteDialog.scope = actionSelection ? "selected" : "current"; historyPasteDialog.open(); return }
+        if(action === "reset") { showResetHistory(actionImage.imgid); if(actionSelection) resetHistoryDialog.scope = "selected"; return }
         if(action === "remove" || action === "trash") { pendingImageAction = action; confirmImageAction.open() }
-        else controller.libraryCommand(action, {}, actionImage.imgid)
+        else controller.libraryCommand(action, actionSelection ? {images: actionTargets} : {}, actionImage.imgid)
     }
     function resetModule(operation) {
         moduleResetView = {expanded: expandedTool, category: toolCategory}
@@ -277,7 +284,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Escape"
         enabled: !window.modalOpen && !window.textInputFocused
-        onActivated: { if(controller.cropEditing) { controller.cropCommand("cancel"); return } if(controller.before) controller.before = false; else if(!controller.editorVisible && window.selectionMode) window.selectionMode = false; else if(window.distractionFree) window.distractionFree = false; else if(window.toolsOpen) window.toolsOpen = false; else controller.editorVisible = false }
+        onActivated: { if(controller.cropEditing) { controller.cropCommand("cancel"); return } if(controller.before) controller.before = false; else if(window.filmstripSelection) window.filmstripSelection = false; else if(!controller.editorVisible && window.selectionMode) window.selectionMode = false; else if(window.distractionFree) window.distractionFree = false; else if(window.toolsOpen) window.toolsOpen = false; else controller.editorVisible = false }
     }
 
     Rectangle {
@@ -306,10 +313,11 @@ ApplicationWindow {
                 TouchButton { objectName: "libraryNavigationButton"; text: qsTr("menu"); iconName: "menu"; showLabel: false; flat: true; onClicked: navigationDrawer.open() }
                 ColumnLayout {
                     Layout.minimumWidth: 120
-                    Label { text: qsTr("photo library"); color: ui.text; font.pixelSize: ui.titleSize; font.weight: Font.DemiBold }
-                    Label { text: controller.images.length === 1 ? qsTr("1 photo") : qsTr("%1 photos").arg(controller.images.length); color: ui.muted; font.pixelSize: ui.captionSize }
+                    Label { text: qsTr("image library"); color: ui.text; font.pixelSize: ui.titleSize; font.weight: Font.DemiBold }
+                    Label { text: controller.images.length === 1 ? qsTr("1 image") : qsTr("%1 images").arg(controller.images.length); color: ui.muted; font.pixelSize: ui.captionSize }
                 }
                 Item { Layout.fillWidth: true }
+                TouchButton { objectName: "libraryCollectionButton"; text: qsTr("collections"); iconName: "filter"; enabled: controller.ready && !controller.busy; onClicked: collectionDialog.open() }
                 TouchButton { objectName: "librarySelectButton"; text: window.selectionMode ? qsTr("done") : qsTr("select"); iconName: window.selectionMode ? "close" : "check"; showLabel: true; visible: controller.images.length > 0; checked: window.selectionMode; onClicked: window.selectionMode = !window.selectionMode }
             }
             GridView {
@@ -375,9 +383,9 @@ ApplicationWindow {
                 ColumnLayout {
                     anchors.centerIn: parent; width: Math.min(440, parent.width - 32)
                     visible: controller.ready && controller.images.length === 0; spacing: ui.gap
-                    Label { text: qsTr("your photo library is empty"); Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: ui.text; font.pixelSize: ui.titleSize }
-                    Label { text: qsTr("import photos to start editing, or change filters to find your photos"); Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: ui.muted }
-                    TouchButton { objectName: "emptyImportButton"; text: qsTr("import photos"); iconName: "import"; Layout.alignment: Qt.AlignHCenter; enabled: !controller.busy; onClicked: importSource.open() }
+                    Label { text: qsTr("your image library is empty"); Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: ui.text; font.pixelSize: ui.titleSize }
+                    Label { text: qsTr("import images to start editing, or change filters to find your images"); Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: ui.muted }
+                    TouchButton { objectName: "emptyImportButton"; text: qsTr("import images"); iconName: "import"; Layout.alignment: Qt.AlignHCenter; enabled: !controller.busy; onClicked: importSource.open() }
                 }
                 DropArea { anchors.fill: parent; onDropped: function(drop) { controller.reviewImport(drop.urls, window.importRecursive) } }
                 ScrollBar.vertical: ScrollBar { }
@@ -475,17 +483,25 @@ ApplicationWindow {
                             id: undoActions; anchors.centerIn: parent; spacing: 4
                             TouchButton { objectName: "editorUndoButton"; showLabel: false; imageOverlay: true; text: qsTr("undo"); iconName: "undo"; enabled: controller.canUndo && !controller.busy && !controller.cropEditing; onClicked: controller.undo() }
                             TouchButton { objectName: "editorRedoButton"; showLabel: false; imageOverlay: true; text: qsTr("redo"); iconName: "redo"; enabled: controller.canRedo && !controller.busy && !controller.cropEditing; onClicked: controller.redo() }
-                            TouchButton { objectName: "editorQuickActionsButton"; showLabel: false; imageOverlay: true; text: qsTr("quick actions"); iconName: "more"; onClicked: showQuickMenu() }
+                            TouchButton { id: editorQuickActionsButton; objectName: "editorQuickActionsButton"; showLabel: false; imageOverlay: true; text: qsTr("quick actions"); iconName: "more"; onClicked: showQuickMenu() }
                         }
                     }
                     TouchButton {
                         objectName: "photoStripToggle"
                         visible: !window.distractionFree && !controller.cropEditing
-                        text: window.filmstripState === "hidden" ? qsTr("show photos") : qsTr("hide photos")
+                        text: window.filmstripState === "hidden" ? qsTr("show images") : qsTr("hide images")
                         iconName: window.filmstripState === "hidden" ? "chevron-up" : "chevron-down"
                         showLabel: false; imageOverlay: true
                         anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom
                         onClicked: window.cycleFilmstrip()
+                    }
+                    GridLayout {
+                        objectName: "quickImageActions"
+                        columns: imageStage.width < 480 ? 1 : 2
+                        anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: ui.inset
+                        visible: !window.distractionFree && !controller.cropEditing && !window.filmstripSelection && (controller.quickReject || controller.quickDelete)
+                        TouchButton { objectName: "quickRejectButton"; visible: controller.quickReject; text: qsTr("reject"); iconName: "reject"; imageOverlay: true; stacked: true; enabled: controller.imageId > 0 && !controller.busy; onClicked: controller.libraryCommand("reject", {}, controller.imageId) }
+                        TouchButton { objectName: "quickDeleteButton"; visible: controller.quickDelete; text: qsTr("delete"); iconName: "trash"; imageOverlay: true; stacked: true; enabled: controller.imageId > 0 && !controller.busy; onClicked: { window.actionSelection = false; window.actionImage = {imgid: controller.imageId, filename: controller.imageInformation.filename}; quickDeleteDialog.open() } }
                     }
                     Rectangle {
                         id: imageInformation
@@ -557,7 +573,7 @@ ApplicationWindow {
                         id: filmstrip
                         objectName: "filmstrip"
                         anchors.left: parent.left; anchors.right: parent.right
-                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 8; anchors.topMargin: ui.resizeGutter + 4
+                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 4; anchors.topMargin: ui.resizeGutter
                         orientation: ListView.Horizontal; spacing: 10; clip: true
                         boundsBehavior: Flickable.StopAtBounds
                         model: controller.images; cacheBuffer: 200
@@ -568,9 +584,9 @@ ApplicationWindow {
                             required property var modelData
                             required property int index
                             width: Math.max(112, filmstrip.height * 1.6); height: filmstrip.height
-                            text: ""; padding: 4; checked: controller.imageId === modelData.imgid
+                            text: ""; padding: 4; checked: window.filmstripSelection ? window.selectedImages.indexOf(Number(modelData.imgid)) >= 0 : controller.imageId === modelData.imgid
                             Accessible.name: modelData.filename
-                            onClicked: { if(controller.imageId !== modelData.imgid) { viewZoom = 1; controller.selectImage(modelData.imgid) } else showImageInformation() }
+                            onClicked: { if(window.filmstripSelection) controller.libraryCommand("toggle", {}, modelData.imgid); else if(controller.imageId !== modelData.imgid) { viewZoom = 1; controller.selectImage(modelData.imgid) } else showImageInformation() }
                             onPressAndHold: window.showImageActions(modelData)
                             TapHandler { acceptedButtons: Qt.RightButton; onTapped: window.showImageActions(modelData) }
                             onActiveFocusChanged: if(activeFocus) filmstrip.positionViewAtIndex(index, ListView.Contain)
@@ -579,6 +595,7 @@ ApplicationWindow {
                                 objectName: "filmThumbnail-" + modelData.imgid
                                 anchors.fill: parent; anchors.margins: 4; imageId: modelData.imgid
                             }
+                            Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4; width: 24; height: 24; radius: 12; color: ui.accent; visible: window.filmstripSelection && parent.checked; Icon { anchors.centerIn: parent; width: 18; height: 18; name: "check"; color: ui.canvas } }
 
                             background: Rectangle {
                                 radius: 8; color: "#182126"
@@ -608,7 +625,7 @@ ApplicationWindow {
                 }
                 Flickable {
                     id: toolScroll
-                    anchors.fill: parent; anchors.margins: ui.gap; anchors.leftMargin: ui.resizeGutter + ui.gap
+                    anchors.fill: parent; anchors.margins: ui.gap; anchors.leftMargin: ui.resizeGutter
                     contentWidth: width; contentHeight: toolColumn.implicitHeight
                     onContentHeightChanged: contentY = Math.max(0, Math.min(contentY, contentHeight - height))
                     clip: true; boundsBehavior: Flickable.StopAtBounds
@@ -722,9 +739,10 @@ ApplicationWindow {
 
     Rectangle {
         objectName: "selectionToolbar"
-        parent: window.contentItem
+        parent: controller.editorVisible ? imageStage : window.contentItem
         anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: ui.inset
-        visible: window.selectionMode && !controller.editorVisible
+        anchors.bottomMargin: controller.editorVisible ? ui.touchHeight + 2 * ui.inset : ui.inset
+        visible: controller.editorVisible ? window.filmstripSelection : window.selectionMode
         width: Math.min(640, parent.width - 2 * ui.inset)
         height: selectionColumn.implicitHeight + 2 * ui.inset
         color: ui.panel; radius: ui.radius; border.color: "#334249"; z: 5
@@ -733,8 +751,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Label { text: qsTr("%1 selected").arg(window.selectedImages.length); color: ui.accent; Layout.fillWidth: true }
-                TouchButton { objectName: "selectionExportButton"; text: qsTr("export"); iconName: "export"; visible: window.selectedImages.length > 0; enabled: !controller.busy; onClicked: { batchExportDialog.scope = "selected"; batchExportDialog.open() } }
-                TouchButton { text: qsTr("done"); iconName: "close"; onClicked: window.selectionMode = false }
+                TouchButton { text: qsTr("done"); iconName: "close"; onClicked: { if(controller.editorVisible) window.filmstripSelection = false; else window.selectionMode = false } }
             }
             Flickable {
                 id: selectionScroll
@@ -743,9 +760,11 @@ ApplicationWindow {
                 flickableDirection: Flickable.HorizontalFlick; boundsBehavior: Flickable.StopAtBounds
                 RowLayout {
                     id: selectionActions; spacing: 4
-                    TouchButton { text: qsTr("all"); enabled: !controller.busy; onClicked: controller.libraryCommand("all", {}, 0) }
-                    TouchButton { text: qsTr("none"); enabled: !controller.busy; onClicked: controller.libraryCommand("none", {}, 0) }
-                    TouchButton { text: qsTr("invert"); enabled: !controller.busy; onClicked: controller.libraryCommand("invert", {}, 0) }
+                    TouchButton { objectName: "selectionExportButton"; text: qsTr("export"); iconName: "export"; visible: window.selectedImages.length > 0; enabled: !controller.busy; onClicked: { batchExportDialog.scope = "selected"; batchExportDialog.open() } }
+                    TouchButton { objectName: "selectionRejectButton"; text: qsTr("reject"); iconName: "reject"; visible: controller.editorVisible; enabled: window.selectedImages.length > 0 && !controller.busy; onClicked: controller.libraryCommand("reject", {images: window.selectedImages}, 0) }
+                    TouchButton { objectName: "selectAllButton"; text: qsTr("all"); enabled: !controller.busy; onClicked: controller.libraryCommand("all", {}, 0) }
+                    TouchButton { objectName: "selectNoneButton"; text: qsTr("none"); enabled: !controller.busy; onClicked: controller.libraryCommand("none", {}, 0) }
+                    TouchButton { objectName: "selectInvertButton"; text: qsTr("invert"); enabled: !controller.busy; onClicked: controller.libraryCommand("invert", {}, 0) }
                     TouchButton { text: qsTr("same film roll"); enabled: !controller.busy && window.selectedImages.length > 0; onClicked: controller.libraryCommand("film", {}, 0) }
                     TouchButton { text: qsTr("untouched"); enabled: !controller.busy; onClicked: controller.libraryCommand("untouched", {}, 0) }
                     TouchButton { objectName: "pasteSelectedButton"; text: qsTr("paste edits"); iconName: "paste"; enabled: !controller.busy && window.selectedImages.length > 0 && !!controller.copiedHistory.source; onClicked: { historyPasteDialog.imageId = controller.imageId; historyPasteDialog.scope = "selected"; historyPasteDialog.open() } }
@@ -772,9 +791,9 @@ ApplicationWindow {
                     Label { text: qsTr("darktabletouch"); color: ui.text; font.pixelSize: ui.titleSize; Layout.fillWidth: true }
                     TouchButton { text: qsTr("close"); iconName: "close"; showLabel: false; flat: true; onClicked: navigationDrawer.close() }
                 }
-                TouchButton { objectName: "editorLibraryButton"; text: qsTr("editor"); iconName: "grid"; Layout.fillWidth: true; enabled: !controller.exportRunning; onClicked: { navigationDrawer.close(); controller.editorVisible = false } }
+                TouchButton { objectName: "editorLibraryButton"; text: controller.editorVisible ? qsTr("library") : qsTr("editor"); iconName: "grid"; Layout.fillWidth: true; enabled: !controller.exportRunning; onClicked: { navigationDrawer.close(); controller.editorVisible = !controller.editorVisible } }
                 TouchButton { objectName: "libraryFilterButton"; text: qsTr("collections and filters"); iconName: "filter"; Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); collectionDialog.open() } }
-                TouchButton { text: qsTr("import photos"); iconName: "import"; Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); importSource.open() } }
+                TouchButton { text: qsTr("import images"); iconName: "import"; Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); importSource.open() } }
                 TouchButton { objectName: "editorExportButton"; text: qsTr("export"); iconName: "export"; Layout.fillWidth: true; visible: controller.editorVisible; enabled: controller.imageId > 0 && !controller.busy && !controller.cropEditing; onClicked: { navigationDrawer.close(); batchExportDialog.scope = "current"; batchExportDialog.open() } }
                 TouchButton { text: qsTr("settings"); iconName: "gear"; Layout.fillWidth: true; onClicked: { navigationDrawer.close(); quickSettings.open() } }
             }
@@ -829,6 +848,7 @@ ApplicationWindow {
             }
             TouchButton {
                 text: window.advanced ? qsTr("fewer controls") : qsTr("all controls")
+                objectName: "exposureControlsToggle"; iconName: window.advanced ? "chevron-up" : "chevron-down"; showLabel: false; padding: 0; leftPadding: 0; rightPadding: 0
                 visible: controller.operation === "exposure"; Layout.fillWidth: true; flat: true
                 checked: window.advanced; onClicked: window.advanced = !window.advanced
             }
@@ -836,6 +856,23 @@ ApplicationWindow {
         }
     }
 
+    Item {
+        id: loadingOverlay
+        objectName: "loadingOverlay"
+        parent: window.contentItem; anchors.fill: parent; z: 50
+        property bool shown: false
+        visible: controller.busy && shown
+        Timer { interval: 150; running: controller.busy; onTriggered: loadingOverlay.shown = true }
+        Connections { target: controller; function onStateChanged() { if(!controller.busy) loadingOverlay.shown = false } }
+        Rectangle {
+            anchors.centerIn: parent; width: 180; height: ui.touchHeight + 64; radius: ui.radius; color: ui.floating; border.color: "#435259"
+            ColumnLayout {
+                anchors.centerIn: parent
+                BusyIndicator { running: loadingOverlay.visible; Layout.alignment: Qt.AlignHCenter; implicitWidth: ui.touchHeight; implicitHeight: ui.touchHeight }
+                Label { text: qsTr("loading"); color: ui.text; Layout.alignment: Qt.AlignHCenter }
+            }
+        }
+    }
     footer: Rectangle {
         height: controller.exportRunning ? 72 : controller.editorVisible ? 0 : 32
         visible: !controller.editorVisible || controller.exportRunning; color: "#101619"
@@ -844,7 +881,7 @@ ApplicationWindow {
             BusyIndicator { running: controller.busy; implicitWidth: 24; implicitHeight: 24; visible: running }
             Label { text: controller.message; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; color: controller.hasError ? "#ffa99e" : "#a8b0bc"; font.pixelSize: 12 }
             TouchButton { text: qsTr("cancel export"); iconName: "close"; showLabel: true; visible: controller.exportRunning; onClicked: controller.cancelExport() }
-            Label { text: gamepad.connected ? qsTr("A select   B back   X before   Y tools   LB/RB photos") : qsTr("touch, keyboard, and mouse"); color: "#7f8b9c"; font.pixelSize: 12 }
+            Label { text: gamepad.connected ? qsTr("A select   B back   X before   Y tools   LB/RB images") : qsTr("touch, keyboard, and mouse"); color: "#7f8b9c"; font.pixelSize: 12 }
         }
     }
 
@@ -862,7 +899,7 @@ ApplicationWindow {
             ColumnLayout {
             id: imageActionColumn
             width: parent.width; spacing: 10
-            Label { text: window.actionImage.filename || ""; textFormat: Text.PlainText; color: "#e6eef0"; font.pixelSize: 20; Layout.fillWidth: true; elide: Text.ElideMiddle }
+            Label { text: window.actionSelection ? qsTr("%1 selected images").arg(window.actionTargets.length) : window.actionImage.filename || ""; textFormat: Text.PlainText; color: "#e6eef0"; font.pixelSize: 20; Layout.fillWidth: true; elide: Text.ElideMiddle }
             TouchButton { showLabel: true; iconName: "copy"; text: qsTr("copy history"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("copy") }
             TouchButton { showLabel: true; iconName: "paste"; text: qsTr("paste selected history"); Layout.fillWidth: true; enabled: !controller.busy && !!controller.copiedHistory.source; onClicked: window.chooseImageAction("paste") }
             TouchButton { showLabel: true; iconName: "reject"; text: qsTr("reject"); Layout.fillWidth: true; enabled: !controller.busy; onClicked: window.chooseImageAction("reject") }
@@ -875,6 +912,16 @@ ApplicationWindow {
         }
     }
     TouchDialog {
+        id: quickDeleteDialog
+        objectName: "quickDeleteDialog"
+        title: qsTr("delete image"); anchors.centerIn: parent; width: Math.min(480, window.width - 32); modal: true; focus: true
+        contentItem: ColumnLayout {
+            spacing: ui.gap
+            TouchButton { objectName: "quickDeleteDiskChoice"; text: qsTr("delete from disk"); iconName: "trash"; Layout.fillWidth: true; onClicked: { quickDeleteDialog.close(); window.pendingImageAction = "trash"; confirmImageAction.open() } }
+            TouchButton { objectName: "quickDeleteCollectionChoice"; text: qsTr("delete from collection"); iconName: "grid"; Layout.fillWidth: true; onClicked: { quickDeleteDialog.close(); window.pendingImageAction = "remove"; confirmImageAction.open() } }
+        }
+    }
+    TouchDialog {
         id: confirmImageAction
         objectName: "confirmImageAction"
         title: window.pendingImageAction === "trash" ? qsTr("delete from disk") : qsTr("remove from collection")
@@ -883,19 +930,19 @@ ApplicationWindow {
         background: Rectangle { color: ui.panel; radius: ui.radius; border.color: "#334249" }
         contentItem: ColumnLayout {
             spacing: 16
-            Label { text: window.actionImage.filename || ""; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#e6eef0"; font.pixelSize: 20 }
+            Label { text: window.actionSelection ? qsTr("%1 selected images").arg(window.actionTargets.length) : window.actionImage.filename || ""; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#e6eef0"; font.pixelSize: 20 }
             Label {
                 Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#aebbc1"
                 text: window.pendingImageAction === "trash"
-                    ? qsTr("move this photo and its sidecars to the Recycle Bin? if other catalog versions use the source, only this version and its sidecars are removed")
-                    : qsTr("remove this photo from the library and all collections? the original file and sidecars stay on disk")
+                    ? qsTr("move the targeted images and their sidecars to the Recycle Bin? if other catalog versions use the source, only this version and its sidecars are removed")
+                    : qsTr("remove the targeted images from the library and all collections? the original file and sidecars stay on disk")
             }
             RowLayout {
                 Layout.fillWidth: true
                 TouchButton {
                     text: window.pendingImageAction === "trash" ? qsTr("move to Recycle Bin") : qsTr("remove")
                     Layout.fillWidth: true; enabled: !controller.busy
-                    onClicked: { confirmImageAction.close(); controller.libraryCommand(window.pendingImageAction, {}, window.actionImage.imgid) }
+                    onClicked: { confirmImageAction.close(); controller.libraryCommand(window.pendingImageAction, window.actionSelection ? {images: window.actionTargets} : {}, window.actionImage.imgid) }
                 }
             }
         }
@@ -910,11 +957,13 @@ ApplicationWindow {
             ColumnLayout {
                 id: settingsColumn
                 width: parent.width; spacing: ui.gap
-                Label { text: qsTr("photo strip"); color: ui.muted }
+                Label { text: qsTr("image strip"); color: ui.muted }
                 TouchComboBox { Layout.fillWidth: true; implicitHeight: ui.touchHeight; model: [qsTr("hidden"), qsTr("shown")]; currentIndex: window.filmstripState === "hidden" ? 0 : 1; onActivated: { window.filmstripState = currentIndex === 0 ? "hidden" : "compact"; window.requestedFilmstripHeight = 0 } }
-                TouchSwitch { text: qsTr("hide photo strip automatically"); checked: window.autoHideFilmstrip; implicitHeight: ui.touchHeight; onToggled: { window.autoHideFilmstrip = checked; if(checked) filmstripTimer.restart() } }
+                TouchSwitch { text: qsTr("hide image strip automatically"); checked: window.autoHideFilmstrip; implicitHeight: ui.touchHeight; onToggled: { window.autoHideFilmstrip = checked; if(checked) filmstripTimer.restart() } }
                 TouchSwitch { text: qsTr("show rejected images"); checked: controller.showRejected; implicitHeight: 64; onToggled: controller.showRejected = checked }
                 TouchSwitch { text: qsTr("next image after rejecting"); checked: controller.advanceAfterReject; implicitHeight: 64; onToggled: controller.advanceAfterReject = checked }
+                TouchSwitch { objectName: "quickRejectSetting"; text: qsTr("show quick reject"); checked: controller.quickReject; onToggled: controller.quickReject = checked }
+                TouchSwitch { objectName: "quickDeleteSetting"; text: qsTr("show quick delete"); checked: controller.quickDelete; onToggled: controller.quickDelete = checked }
                 TouchButton { objectName: "settingsClassicButton"; text: qsTr("switch to classic"); iconName: "grid"; Layout.fillWidth: true; visible: managedSession; enabled: controller.ready && !controller.busy; onClicked: { quickSettings.close(); saveView(); controller.switchInterface("classic") } }
             }
         }
@@ -935,45 +984,50 @@ ApplicationWindow {
             spacing: 16
             TouchComboBox {
                 Layout.fillWidth: true; implicitHeight: 64
-                model: [qsTr("current photo"), qsTr("selected photos"), qsTr("visible collection")]
+                model: [qsTr("current image"), qsTr("selected images"), qsTr("visible collection")]
                 currentIndex: ["current", "selected", "collection"].indexOf(resetHistoryDialog.scope)
                 onActivated: resetHistoryDialog.scope = ["current", "selected", "collection"][currentIndex]
             }
-            Label { text: qsTr("reset adjustments on %1 photos to the engine defaults? original files, ratings, and collection membership are kept. undo restores the previous history in this session").arg(resetHistoryDialog.targetCount); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#aebbc1" }
+            Label { text: qsTr("reset adjustments on %1 images to the engine defaults? original files, ratings, and collection membership are kept. undo restores the previous history in this session").arg(resetHistoryDialog.targetCount); wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#aebbc1" }
             TouchButton { objectName: "resetHistoryButton"; text: qsTr("reset adjustments"); iconName: "reset"; showLabel: true; Layout.fillWidth: true; enabled: !controller.busy && resetHistoryDialog.targetCount > 0; onClicked: { controller.historyCommand("reset", {scope: resetHistoryDialog.scope}, resetHistoryDialog.imageId); resetHistoryDialog.close() } }
         }
     }
     ExportDialog { id: batchExportDialog; photoController: controller }
     LibraryDialog { id: collectionDialog; objectName: "collectionDialog"; photoController: controller }
-    ImportReview { id: importReview; objectName: "importReview"; photoController: controller }
+    ImportReview { id: importReview; objectName: "importReview"; photoController: controller; onlyNew: window.importOnlyNew; rawOnly: window.importRawOnly }
     TouchDialog {
         id: importSource
         modal: true; focus: true; anchors.centerIn: parent; title: qsTr("add to library")
-        width: Math.min(480, window.width - 32); padding: 20
+        width: Math.min(480, window.width - 32); height: Math.min(600, window.height - 32); padding: 20
         background: Rectangle { color: ui.panel; radius: ui.radius; border.color: "#334249" }
-        contentItem: ColumnLayout {
-            spacing: 12
-            Label { text: qsTr("choose a source, then review which photos to add"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: "#aebbc1" }
-            TouchButton { text: qsTr("choose photos"); Layout.fillWidth: true; onClicked: { importSource.close(); importDialog.open() } }
-            TouchButton { iconName: "folder"; showLabel: true; text: qsTr("choose folder"); Layout.fillWidth: true; onClicked: { importSource.close(); folderDialog.open() } }
-            TouchButton { text: qsTr("include subfolders"); checked: window.importRecursive; Layout.fillWidth: true; onClicked: window.importRecursive = !window.importRecursive }
+        contentItem: ScrollView {
+            contentWidth: availableWidth; clip: true
+            ColumnLayout {
+                width: parent.width; spacing: 12
+                Label { text: qsTr("choose a source, then review which images to add"); wrapMode: Text.WordWrap; Layout.fillWidth: true; color: ui.muted }
+                TouchButton { objectName: "chooseImportImages"; text: qsTr("choose images"); iconName: "import"; Layout.fillWidth: true; onClicked: { importSource.close(); importDialog.open() } }
+                TouchButton { iconName: "folder"; text: qsTr("choose folder"); Layout.fillWidth: true; onClicked: { importSource.close(); folderDialog.open() } }
+                CheckBox { objectName: "importOnlyNew"; text: qsTr("select only new images"); checked: window.importOnlyNew; Layout.fillWidth: true; implicitHeight: ui.touchHeight; onToggled: window.importOnlyNew = checked }
+                CheckBox { objectName: "importRecursive"; text: qsTr("recursive directory"); checked: window.importRecursive; Layout.fillWidth: true; implicitHeight: ui.touchHeight; onToggled: window.importRecursive = checked }
+                CheckBox { objectName: "importRawOnly"; text: qsTr("ignore non-RAW images"); checked: window.importRawOnly; Layout.fillWidth: true; implicitHeight: ui.touchHeight; onToggled: window.importRawOnly = checked }
+            }
         }
     }
     FileDialog {
         id: importDialog
-        title: qsTr("import photos")
+        title: qsTr("import images")
         fileMode: FileDialog.OpenFiles
         onAccepted: controller.reviewImport(selectedFiles, false)
     }
 
     FolderDialog {
         id: folderDialog
-        title: qsTr("import a photo folder")
+        title: qsTr("import an image folder")
         onAccepted: controller.reviewImport([selectedFolder], window.importRecursive)
     }
     FileDialog {
         id: exportDialog
-        title: qsTr("export photo")
+        title: qsTr("export image")
         fileMode: FileDialog.SaveFile
         nameFilters: [qsTr("JPEG image (*.jpg)"), qsTr("PNG image (*.png)"), qsTr("TIFF image (*.tif)")]
         defaultSuffix: "jpg"
@@ -983,11 +1037,12 @@ ApplicationWindow {
         }
     }
     TouchPopup {
-        parent: Overlay.overlay
+        parent: editorQuickActionsButton
         id: quickMenu
         objectName: "quickMenu"
-        x: Math.max(8, window.width - width - 12); y: controller.editorVisible ? 8 : ui.touchHeight + 16
-        width: Math.min(420, window.width - 24); height: Math.min(quickColumn.implicitHeight + topPadding + bottomPadding, window.height - 88)
+        x: 0; y: -height - 6; transformOrigin: Item.BottomLeft
+        width: Math.min(420, window.width - 24)
+        height: Math.min(quickColumn.implicitHeight + topPadding + bottomPadding, Math.max(ui.touchHeight, imageStage.height - ui.touchHeight - 2 * ui.inset - (imageStage.width < 2 * (undoActions.implicitWidth + ui.inset) + ui.touchHeight ? ui.touchHeight : 0) - 6))
         padding: ui.inset; modal: true; focus: true
         background: Rectangle { color: ui.floating; radius: ui.radius }
         contentItem: ScrollView {
@@ -997,6 +1052,7 @@ ApplicationWindow {
                 id: quickColumn
                 width: parent.width; spacing: ui.gap
                 Label { text: qsTr("quick actions"); color: ui.text; font.pixelSize: ui.titleSize }
+                TouchButton { objectName: "filmstripSelectionButton"; text: window.filmstripSelection ? qsTr("finish image selection") : qsTr("select multiple images"); iconName: "check"; checked: window.filmstripSelection; Layout.fillWidth: true; onClicked: { window.filmstripSelection = !window.filmstripSelection; if(window.filmstripSelection) window.filmstripState = "compact"; quickMenu.close() } }
                 GridLayout {
                     Layout.fillWidth: true; columns: 2; columnSpacing: ui.gap; rowSpacing: ui.gap
                     TouchButton { text: controller.before ? qsTr("after") : qsTr("before"); iconName: "compare"; Layout.fillWidth: true; checked: controller.before; enabled: controller.imageId > 0 && !controller.cropEditing; onClicked: { controller.before = !controller.before; quickMenu.close() } }

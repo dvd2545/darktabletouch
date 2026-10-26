@@ -138,6 +138,8 @@ class TouchController final : public QObject
   Q_PROPERTY(QVariantMap moduleStates READ moduleStates NOTIFY moduleChanged)
   Q_PROPERTY(bool showRejected READ showRejected WRITE setShowRejected NOTIFY stateChanged)
   Q_PROPERTY(bool advanceAfterReject READ advanceAfterReject WRITE setAdvanceAfterReject NOTIFY stateChanged)
+  Q_PROPERTY(bool quickReject READ quickReject WRITE setQuickReject NOTIFY stateChanged)
+  Q_PROPERTY(bool quickDelete READ quickDelete WRITE setQuickDelete NOTIFY stateChanged)
   Q_PROPERTY(bool ready READ ready NOTIFY stateChanged)
   Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
   Q_PROPERTY(bool canUndo READ canUndo NOTIFY stateChanged)
@@ -181,6 +183,10 @@ public:
   Q_INVOKABLE void cropCommand(const QString &action, const QVariantMap &settings = {});
   bool showRejected() const { return m_showRejected; }
   bool advanceAfterReject() const { return m_advanceAfterReject; }
+  bool quickReject() const { return m_quickReject; }
+  bool quickDelete() const { return m_quickDelete; }
+  void setQuickReject(bool value);
+  void setQuickDelete(bool value);
   void setShowRejected(bool value);
   void setAdvanceAfterReject(bool value);
   Q_INVOKABLE void rememberParameter(const QString &name, const QString &operation, double step);
@@ -285,6 +291,7 @@ private:
   QVariantList m_allImages;
   bool m_touchSettingsLoaded = false;
   bool m_showRejected = false, m_advanceAfterReject = false;
+  bool m_quickReject = false, m_quickDelete = false;
   int m_rejectNext = 0;
   QString m_lastName, m_lastOperation;
   double m_lastStep = 0.01;

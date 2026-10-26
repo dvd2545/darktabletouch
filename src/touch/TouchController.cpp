@@ -142,7 +142,7 @@ EngineWorker::EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::
 
 void EngineWorker::report(char *error)
 {
-  emit failed(error ? QString::fromUtf8(error) : tr("the photo engine could not complete this operation"));
+  emit failed(error ? QString::fromUtf8(error) : tr("the image engine could not complete this operation"));
   dt_touch_free(error);
 }
 
@@ -155,8 +155,8 @@ bool EngineWorker::saveEditor()
   char *source = m_editor ? dt_touch_image_path(m_imageId) : nullptr;
   const bool missing = source && !QFileInfo::exists(QString::fromUtf8(source));
   dt_touch_free(source);
-  const QString protectedEdits = missing ? tr("original photo unavailable; edits protected in a recovery sidecar")
-                                        : tr("edits protected in a recovery sidecar; check write access or disk space beside the photo");
+  const QString protectedEdits = missing ? tr("original image unavailable; edits protected in a recovery sidecar")
+                                        : tr("edits protected in a recovery sidecar; check write access or disk space beside the image");
   emit saveStatus(path, saved ? (path.isEmpty() ? QString() : protectedEdits)
                               : QString::fromUtf8(error ? error : ""));
   if(!saved) report(error);
@@ -191,7 +191,7 @@ void EngineWorker::initialize(QStringList arguments)
   m_initialized = dt_touch_initialize(int(owned.size()), argv.data());
   if(!m_initialized)
   {
-    emit failed(tr("could not initialize the photo engine; check the catalog lock and data directories"));
+    emit failed(tr("could not initialize the image engine; check the catalog lock and data directories"));
     return;
   }
   char *error = nullptr;
@@ -244,6 +244,21 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
   if(action == QStringLiteral("touch-settings")) {
     dt_touch_settings_set(settings.value(QStringLiteral("show_rejected")).toBool(), settings.value(QStringLiteral("advance_after_reject")).toBool()); return;
   }
+  if(action == QStringLiteral("quick-actions-settings")) {
+    dt_touch_quick_actions_set(settings.value(QStringLiteral("reject")).toBool(), settings.value(QStringLiteral("delete")).toBool()); return;
+  }
+  if((action == QStringLiteral("all") || action == QStringLiteral("invert")) && settings.contains(QStringLiteral("images"))) {
+    QSet<int> previous;
+    if(action == QStringLiteral("invert"))
+      for(const auto &id : takeJson(dt_touch_library()).object().value(QStringLiteral("selected")).toArray()) previous.insert(id.toInt());
+    char *error = nullptr;
+    bool success = dt_touch_selection("none", 0, &error);
+    for(const auto &id : settings.value(QStringLiteral("images")).toArray())
+      if(success && !previous.contains(id.toInt())) success = dt_touch_selection("toggle", id.toInt(), &error);
+    emit libraryReady(takeJson(dt_touch_library()).object());
+    if(!success) report(error); else emit completed(tr("selection updated"));
+    return;
+  }
   if(action == QStringLiteral("remove-folder") || action == QStringLiteral("remove-collection"))
   {
     abortCrop();
@@ -260,8 +275,8 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
     if(dt_touch_image_exists(active)) openImage(active, m_revision->load());
     else { m_imageId = 0; m_editorVisible = false; emit imageClosed(); }
     emit imagesChanged(images()); emit libraryReady(takeJson(dt_touch_library()).object());
-    if(error) { const QString failure = QString::fromUtf8(error); dt_touch_free(error); emit failed(tr("removed %1 photos before stopping: %2").arg(removed).arg(failure)); }
-    else emit completed(tr("removed %1 photos from the catalog; files remain on disk").arg(removed));
+    if(error) { const QString failure = QString::fromUtf8(error); dt_touch_free(error); emit failed(tr("removed %1 images before stopping: %2").arg(removed).arg(failure)); }
+    else emit completed(tr("removed %1 images from the catalog; files remain on disk").arg(removed));
     return;
   }
   if(action == QStringLiteral("values"))
@@ -275,26 +290,44 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
   const bool collection = action == QStringLiteral("collection");
   const bool imageAction = action == QStringLiteral("remove") || action == QStringLiteral("trash")
     || action == QStringLiteral("reject") || action == QStringLiteral("unrate");
-  const bool closing = image == m_imageId && (action == QStringLiteral("remove") || action == QStringLiteral("trash"));
+  QJsonArray targets = settings.value(QStringLiteral("images")).toArray();
+  if(imageAction && settings.contains(QStringLiteral("images")) && targets.isEmpty()) { emit failed(tr("no images selected")); return; }
+  if(targets.isEmpty()) targets.append(image);
+  const bool closing = targets.contains(m_imageId) && (action == QStringLiteral("remove") || action == QStringLiteral("trash"));
   if(closing)
   {
     abortCrop();
     if(!saveEditor()) return;
     clearHistory(); dt_touch_editor_free(m_editor); m_editor = nullptr;
   }
+  int done = 0;
+  const auto applyImages = [&] {
+    if(!saveEditor()) return false;
+    for(const auto &id : targets) {
+      if(!dt_touch_image_action(action.toUtf8().constData(), id.toInt(), &error)) return false;
+      ++done;
+    }
+    return true;
+  };
   const bool success = collection
     ? dt_touch_collection_set(QJsonDocument(settings).toJson(QJsonDocument::Compact).constData(), &error)
-    : imageAction ? dt_touch_image_action(action.toUtf8().constData(), image, &error)
+    : imageAction ? applyImages()
     : dt_touch_selection(action.toUtf8().constData(), image, &error);
   if(closing)
   {
-    if(dt_touch_image_exists(image))
-      openImage(image, m_revision->load());
+    if(dt_touch_image_exists(m_imageId))
+      openImage(m_imageId, m_revision->load());
     else { m_imageId = 0; m_editorVisible = false; emit imageClosed(); }
   }
   if(collection || imageAction) emit imagesChanged(images());
   emit libraryReady(takeJson(dt_touch_library()).object());
-  if(!success) { report(error); return; }
+  if(!success) {
+    if(imageAction && targets.size() > 1) {
+      const QString issue = error ? QString::fromUtf8(error) : tr("save failed"); dt_touch_free(error);
+      emit failed(tr("completed %1 of %2 image actions before stopping: %3").arg(done).arg(targets.size()).arg(issue));
+    } else if(error) report(error);
+    return;
+  }
   if(imageAction) emit imageActionFinished(action);
   emit completed(collection ? tr("collection updated") : imageAction ? tr("image action completed") : tr("selection updated"));
 }
@@ -315,7 +348,7 @@ void EngineWorker::reviewImport(QStringList paths, bool recursive)
     if(existing < 0) return;
     candidates.append(QJsonObject{{QStringLiteral("path"), absolute},
       {QStringLiteral("filename"), QFileInfo(absolute).fileName()},
-      {QStringLiteral("existing"), existing > 0}});
+      {QStringLiteral("existing"), existing > 0}, {QStringLiteral("raw"), bool(dt_touch_import_is_raw(absolute.toUtf8().constData()))}});
   };
   for(const QString &path : paths)
   {
@@ -331,8 +364,8 @@ void EngineWorker::reviewImport(QStringList paths, bool recursive)
     else add(path);
   }
   emit importReviewed(candidates);
-  if(!scanFailed) emit completed(candidates.size() == 1 ? tr("1 supported photo found")
-    : tr("%1 supported photos found").arg(candidates.size()));
+  if(!scanFailed) emit completed(candidates.size() == 1 ? tr("1 supported image found")
+    : tr("%1 supported images found").arg(candidates.size()));
 }
 
 void EngineWorker::clearHistory()
@@ -584,6 +617,8 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
       const auto settings = library.value(QStringLiteral("touch_settings")).toObject();
       m_showRejected = settings.value(QStringLiteral("show_rejected")).toBool();
       m_advanceAfterReject = settings.value(QStringLiteral("advance_after_reject")).toBool();
+      m_quickReject = settings.value(QStringLiteral("quick_reject")).toBool();
+      m_quickDelete = settings.value(QStringLiteral("quick_delete")).toBool();
       m_touchSettingsLoaded = true; updateImages(QJsonArray::fromVariantList(m_allImages));
     }
     emit libraryChanged();
@@ -622,7 +657,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(this, &TouchController::historyJumpRequested, m_worker, &EngineWorker::jumpHistory);
   connect(this, &TouchController::thumbnailRequested, m_worker, &EngineWorker::thumbnail);
   connect(this, &TouchController::batchExportRequested, m_worker, &EngineWorker::exportBatch);
-  connect(m_worker, &EngineWorker::exportProgress, this, [this](int done, int total) { m_message = tr("exported %1 of %2 photos").arg(done).arg(total); emit stateChanged(); });
+  connect(m_worker, &EngineWorker::exportProgress, this, [this](int done, int total) { m_message = tr("exported %1 of %2 images").arg(done).arg(total); emit stateChanged(); });
   connect(m_worker, &EngineWorker::exportFinished, this, [this] { m_exportRunning = false; m_busy = false; emit stateChanged(); });
   connect(this, &TouchController::exportRequested, m_worker, &EngineWorker::exportImage);
   connect(this, &TouchController::shutdownRequested, m_worker, &EngineWorker::shutdown);
@@ -795,7 +830,7 @@ void TouchController::importUrls(const QVariantList &urls)
     paths.append(url.toLocalFile());
   }
   if(paths.isEmpty()) return;
-  m_busy = true; m_message = tr("importing photos"); emit stateChanged();
+  m_busy = true; m_message = tr("importing images"); emit stateChanged();
   emit importRequested(paths);
 }
 
@@ -835,13 +870,19 @@ void TouchController::libraryCommand(const QString &action, const QVariantMap &s
       for(const auto &rule : settings.value(group).toList())
         if(!validText(rule.toMap().value(QStringLiteral("string")).toString()))
         { m_failed = true; m_message = tr("a collection value cannot be represented as valid UTF-8"); emit stateChanged(); return; }
-  if(action == QStringLiteral("reject") && m_advanceAfterReject)
+  if(action == QStringLiteral("reject") && m_advanceAfterReject && !settings.contains(QStringLiteral("images")))
     for(int i = 0; i + 1 < m_images.size(); ++i)
       if(m_images[i].toMap().value(QStringLiteral("imgid")).toInt() == image)
         m_rejectNext = m_images[i + 1].toMap().value(QStringLiteral("imgid")).toInt();
   flush(true);
   m_busy = true; m_failed = false; emit stateChanged();
-  emit libraryRequested(action, QJsonObject::fromVariantMap(settings), image);
+  auto request = settings;
+  if(action == QStringLiteral("all") || action == QStringLiteral("invert")) {
+    QVariantList ids;
+    for(const auto &entry : m_images) ids.append(entry.toMap().value(QStringLiteral("imgid")).toInt());
+    request.insert(QStringLiteral("images"), ids);
+  }
+  emit libraryRequested(action, QJsonObject::fromVariantMap(request), image);
 }
 
 void TouchController::selectImage(int id)
@@ -851,7 +892,7 @@ void TouchController::selectImage(int id)
   m_deferredModule = {};
   m_waitingFrame = true;
   m_editorVisible = true; m_busy = true; m_before = false;
-  m_message = tr("opening photo");
+  m_message = tr("opening image");
   emit stateChanged();
   emit openRequested(id, advance());
 }
@@ -920,7 +961,7 @@ void TouchController::exportTo(const QUrl &url, const QString &format)
 {
   if(!url.isValid() || !url.isLocalFile() || !validText(url.toLocalFile()))
   { m_message = tr("export requires a valid Unicode local file path"); emit stateChanged(); return; }
-  flush(true); m_busy = true; m_message = tr("exporting photo"); emit stateChanged();
+  flush(true); m_busy = true; m_message = tr("exporting image"); emit stateChanged();
   emit exportRequested(url.toLocalFile(), format);
 }
 
@@ -970,6 +1011,22 @@ void TouchController::setShowRejected(bool value)
   m_showRejected = value;
   emit libraryRequested(QStringLiteral("touch-settings"), QJsonObject{{QStringLiteral("show_rejected"), m_showRejected}, {QStringLiteral("advance_after_reject"), m_advanceAfterReject}}, 0);
   updateImages(QJsonArray::fromVariantList(m_allImages));
+}
+
+void TouchController::setQuickReject(bool value)
+{
+  if(m_quickReject == value) return;
+  m_quickReject = value;
+  emit libraryRequested(QStringLiteral("quick-actions-settings"), {{QStringLiteral("reject"), m_quickReject}, {QStringLiteral("delete"), m_quickDelete}}, 0);
+  emit stateChanged();
+}
+
+void TouchController::setQuickDelete(bool value)
+{
+  if(m_quickDelete == value) return;
+  m_quickDelete = value;
+  emit libraryRequested(QStringLiteral("quick-actions-settings"), {{QStringLiteral("reject"), m_quickReject}, {QStringLiteral("delete"), m_quickDelete}}, 0);
+  emit stateChanged();
 }
 void TouchController::setAdvanceAfterReject(bool value)
 {
@@ -1085,14 +1142,16 @@ void TouchController::exportBatch(const QVariantMap &settings)
   auto request = settings;
   QVariantList entries;
   const auto selected = m_library.value(QStringLiteral("selected")).toList();
+  QSet<int> selectedIds;
+  for(const auto &id : selected) selectedIds.insert(id.toInt());
   const QString scope = settings.value(QStringLiteral("scope")).toString();
   for(const auto &image : m_images) {
     const int id = image.toMap().value(QStringLiteral("imgid")).toInt();
     if(scope == QStringLiteral("collection") || (scope == QStringLiteral("current") && id == m_imageId)
-       || (scope == QStringLiteral("selected") && selected.contains(id))) entries.append(image);
+       || (scope == QStringLiteral("selected") && selectedIds.contains(id))) entries.append(image);
   }
   if(scope == QStringLiteral("current") && entries.isEmpty() && m_imageId > 0) entries.append(QVariantMap{{QStringLiteral("imgid"), m_imageId}});
-  if(entries.isEmpty()) { m_failed = true; m_message = tr("no photos selected for export"); emit stateChanged(); return; }
+  if(entries.isEmpty()) { m_failed = true; m_message = tr("no images selected for export"); emit stateChanged(); return; }
   request.insert(QStringLiteral("images"), entries);
   const QUrl folder(settings.value(QStringLiteral("folder")).toUrl());
   if(settings.value(QStringLiteral("storage")).toString() == QStringLiteral("folder") && (!folder.isLocalFile() || !validText(folder.toLocalFile())))

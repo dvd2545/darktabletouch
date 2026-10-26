@@ -58,11 +58,11 @@ TouchDialog {
         TouchComboBox {
             objectName: "historyScopeControl"
             Layout.fillWidth: true; implicitHeight: 64
-            model: [qsTr("current photo"), qsTr("selected photos"), qsTr("visible collection")]
+            model: [qsTr("current image"), qsTr("selected images"), qsTr("visible collection")]
             currentIndex: ["current", "selected", "collection"].indexOf(dialog.scope)
             onActivated: dialog.scope = ["current", "selected", "collection"][currentIndex]
         }
-        Label { text: qsTr("%1 destination photos; the copied source is excluded").arg(dialog.destinationCount); color: "#aebbc1"; Layout.fillWidth: true; wrapMode: Text.Wrap }
+        Label { text: qsTr("%1 destination images; the copied source is excluded").arg(dialog.destinationCount); color: "#aebbc1"; Layout.fillWidth: true; wrapMode: Text.Wrap }
         RowLayout {
             Layout.fillWidth: true
             TouchButton { text: qsTr("safe defaults"); Layout.fillWidth: true; onClicked: dialog.selectSteps("safe") }

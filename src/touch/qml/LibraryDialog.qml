@@ -241,7 +241,7 @@ TouchDialog {
         title: qsTr("remove from catalog"); modal: true; focus: true
         contentItem: ColumnLayout {
             Label { text: libraryDialog.removePath ? libraryDialog.removePath.slice(libraryDialog.removePath.lastIndexOf("/") + 1) : qsTr("current collection"); textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#e6eef0" }
-            Label { text: qsTr("remove these photos from the catalog? folder removal includes imported subfolders and all their photos, including filtered or rejected images. original files and sidecars stay on disk"); Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#aebbc1" }
+            Label { text: qsTr("remove these images from the catalog? folder removal includes imported subfolders and all their images, including filtered or rejected images. original files and sidecars stay on disk"); Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#aebbc1" }
             RowLayout {
                 TouchButton { text: qsTr("remove"); iconName: "trash"; enabled: !photoController.busy; onClicked: { photoController.libraryCommand(libraryDialog.removePath ? "remove-folder" : "remove-collection", {folder: libraryDialog.removePath}); removeDialog.close(); libraryDialog.close() } }
             }

@@ -111,6 +111,9 @@ int main(int argc, char **argv)
   if(!selfTest.isEmpty() && testCommandLine) window->resize(960, 540);
   if(!selfTest.isEmpty()) { window->setProperty("toolsOpen", true); window->setProperty("autoHideFilmstrip", false); }
   bool startedImport = false, startedImage = false, finished = false;
+  bool sawLoadingOverlay = false;
+  if(auto loading = window->findChild<QQuickItem *>(QStringLiteral("loadingOverlay")))
+    QObject::connect(loading, &QQuickItem::visibleChanged, &app, [&, loading] { if(loading->isVisible()) sawLoadingOverlay = true; });
   int stage = 0;
   int libraryStage = -1;
   int rejectedTestId = 0;
@@ -161,12 +164,25 @@ int main(int argc, char **argv)
       case 0:
         if(auto menu = window->findChild<QObject *>(QStringLiteral("quickMenu"))) QMetaObject::invokeMethod(menu, "close");
         controller.setEditorVisible(false);
-        controller.libraryCommand(QStringLiteral("all"));
+        window->setProperty("selectionMode", true);
+        libraryStage = 199;
         break;
+      case 200:
+      {
+        auto all = findItem(window->contentItem(), QStringLiteral("selectAllButton"));
+        if(!all || !all->isVisible()) { fail("select all is not available in selection mode"); return; }
+        const QPointF point = all->mapToScene(QPointF(all->width() / 2, all->height() / 2));
+        pointer(QEvent::MouseButtonPress, point); pointer(QEvent::MouseButtonRelease, point);
+        libraryStage = 0;
+        break;
+      }
       case 1:
         if(selected != 2) { fail("select all did not select the collection"); return; }
         if(!libraryScreenshot(QStringLiteral("-library"))) { fail("library screenshot failed"); return; }
-        controller.libraryCommand(QStringLiteral("invert"));
+        if(auto invert = findItem(window->contentItem(), QStringLiteral("selectInvertButton"))) {
+          const QPointF point = invert->mapToScene(QPointF(invert->width() / 2, invert->height() / 2));
+          pointer(QEvent::MouseButtonPress, point); pointer(QEvent::MouseButtonRelease, point);
+        }
         break;
       case 2:
         if(selected != 0) { fail("invert did not clear the selected collection"); return; }
@@ -175,6 +191,7 @@ int main(int argc, char **argv)
         break;
       case 3:
         if(selected != 1) { fail("single selection did not select the image"); return; }
+        window->setProperty("selectionMode", false);
         if(unchangedCollectionRefreshes) { fail("selection unnecessarily rebuilt the photo collection"); return; }
         QMetaObject::invokeMethod(collectionDialog, "open");
         break;
@@ -385,6 +402,7 @@ int main(int argc, char **argv)
         controller.libraryCommand(QStringLiteral("remove-folder"), {{QStringLiteral("folder"), QFileInfo(testNeighbor).absolutePath()}});
         break;
       case 27:
+        if(!sawLoadingOverlay) { fail("long-running operations did not show the centered loading animation"); return; }
         if(!controller.images().isEmpty() || !QFile::exists(testNeighbor)) { fail("folder removal did not preserve the source and update the catalog"); return; }
         libraryTest.stop(); finished = true;
         QTextStream(stdout) << "passed: Touch RAW editing/export, layout, library, selective history/reset, thumbnail undo/redo, pointer tap/hold/drag, contextual drawers, focus/double-tap gestures, photo strip states, dropdown contrast, and Unicode import review\n";
@@ -655,6 +673,11 @@ int main(int argc, char **argv)
         if(dialog->property("targetCount").toInt() != 1 || !start->property("enabled").toBool())
         { fail("current-photo export did not become available with a destination"); return; }
         auto pattern = dialog->findChild<QObject *>(QStringLiteral("exportPattern"));
+        auto qualitySlider = dialog->findChild<QObject *>(QStringLiteral("exportQualitySlider"));
+        qualitySlider->setProperty("value", 67);
+        QMetaObject::invokeMethod(qualitySlider, "moved");
+        if(dialog->findChild<QObject *>(QStringLiteral("exportQuality"))->property("value").toInt() != 67)
+        { fail("export quality slider did not update the numeric quality"); return; }
         auto width = dialog->findChild<QObject *>(QStringLiteral("exportMaxWidth"));
         if(!pattern || !width) { fail("advanced export controls are unavailable"); return; }
         pattern->setProperty("text", QStringLiteral("../escape"));
@@ -941,6 +964,53 @@ int main(int argc, char **argv)
           fail("resetting a collapsed module changed the panel view or missed its default"); return;
         }
         if(!libraryScreenshot(QStringLiteral("-all-modules"))) { fail("all-modules screenshot failed"); return; }
+        controller.setQuickReject(true); controller.setQuickDelete(true);
+        libraryStage = 139;
+        break;
+      case 140:
+        if(!findItem(window->contentItem(), QStringLiteral("quickRejectButton"))->isVisible()
+           || !findItem(window->contentItem(), QStringLiteral("quickDeleteButton"))->isVisible())
+        { fail("enabled quick actions are missing"); return; }
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("quickDeleteButton")), "clicked");
+        break;
+      case 141:
+        if(!window->findChild<QObject *>(QStringLiteral("quickDeleteDialog"))->property("opened").toBool())
+        { fail("quick delete skipped its destination chooser"); return; }
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("quickDeleteCollectionChoice")), "clicked");
+        break;
+      case 142:
+        if(!window->findChild<QObject *>(QStringLiteral("confirmImageAction"))->property("opened").toBool())
+        { fail("quick delete skipped confirmation"); return; }
+        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("confirmImageAction")), "close");
+        controller.setQuickReject(false); controller.setQuickDelete(false);
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("editorQuickActionsButton")), "clicked");
+        break;
+      case 143:
+        if(!window->findChild<QObject *>(QStringLiteral("quickMenu"))->property("opened").toBool())
+        { fail("quick actions did not open for filmstrip selection"); return; }
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("filmstripSelectionButton")), "clicked");
+        libraryStage = 148;
+        break;
+      case 149:
+        if(!window->property("filmstripSelection").toBool() || !findItem(window->contentItem(), QStringLiteral("selectionToolbar"))->isVisible())
+        { fail("filmstrip selection mode is unavailable"); return; }
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("selectAllButton")), "clicked");
+        libraryStage = 143;
+        break;
+      case 144:
+        if(selected != controller.images().size()) { fail("filmstrip select all did not select the visible images"); return; }
+        if(!libraryScreenshot(QStringLiteral("-filmstrip-selection"))) { fail("filmstrip selection screenshot failed"); return; }
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("selectionRejectButton")), "clicked");
+        break;
+      case 145:
+        if(controller.hasError()) { fail("batch reject failed"); return; }
+        controller.setShowRejected(true);
+        controller.libraryCommand(QStringLiteral("unrate"), {{QStringLiteral("images"), controller.library().value(QStringLiteral("selected"))}}, 0);
+        break;
+      case 146:
+        if(controller.hasError() || controller.images().size() != 2) { fail("batch unreject did not restore the visible images"); return; }
+        controller.setShowRejected(false);
+        window->setProperty("filmstripSelection", false);
         controller.setEditorVisible(false);
         libraryStage = 24;
         break;
@@ -1039,8 +1109,8 @@ int main(int argc, char **argv)
         }
         auto filmHandle = window->findChild<QQuickItem *>(QStringLiteral("filmstripResizeHandle"));
         auto moduleHandle = window->findChild<QQuickItem *>(QStringLiteral("moduleResizeHandle"));
-        if(!filmHandle || !moduleHandle || filmHandle->width() < 112 || filmHandle->height() < 20
-           || moduleHandle->width() < 20 || moduleHandle->height() < 112
+        if(!filmHandle || !moduleHandle || filmHandle->width() < 112 || filmHandle->height() < 16
+           || moduleHandle->width() < 16 || moduleHandle->height() < 112
            || !filmHandle->parentItem()->boundingRect().contains(filmHandle->mapRectToItem(filmHandle->parentItem(), filmHandle->boundingRect()))
            || !moduleHandle->parentItem()->boundingRect().contains(moduleHandle->mapRectToItem(moduleHandle->parentItem(), moduleHandle->boundingRect()))
            || filmstrip->height() < 56

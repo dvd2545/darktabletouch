@@ -28,6 +28,7 @@
 #include "develop/masks.h"
 #include "develop/pixelpipe_hb.h"
 #include "imageio/imageio_module.h"
+#include "imageio/imageio_common.h"
 #include "mcp/dt_bridge.h"
 #include <json-glib/json-glib.h>
 #include <math.h>
@@ -221,6 +222,8 @@ char *dt_touch_library(void)
   JsonObject *settings = json_object_new();
   json_object_set_boolean_member(settings, "show_rejected", dt_conf_get_bool("touch/show_rejected"));
   json_object_set_boolean_member(settings, "advance_after_reject", dt_conf_get_bool("touch/advance_after_reject"));
+  json_object_set_boolean_member(settings, "quick_reject", dt_conf_get_bool("touch/quick_reject"));
+  json_object_set_boolean_member(settings, "quick_delete", dt_conf_get_bool("touch/quick_delete"));
   json_object_set_object_member(library, "touch_settings", settings);
   JsonNode *root = json_node_new(JSON_NODE_OBJECT);
   json_node_take_object(root, library);
@@ -430,6 +433,18 @@ int dt_touch_import_candidate(const char *path)
   const int existing = MAX(0, dt_image_get_id_full_path(canonical));
   g_free(canonical);
   return existing;
+}
+
+int dt_touch_import_is_raw(const char *path)
+{
+  const char *extension = strrchr(path, '.');
+  return extension && (dt_imageio_is_raw_by_extension(extension) || !g_ascii_strcasecmp(extension, ".dng"));
+}
+
+void dt_touch_quick_actions_set(int reject, int delete_button)
+{
+  dt_conf_set_bool("touch/quick_reject", reject);
+  dt_conf_set_bool("touch/quick_delete", delete_button);
 }
 
 char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error)

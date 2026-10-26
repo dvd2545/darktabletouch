@@ -90,7 +90,8 @@ editor includes native scalar/enum controls, reset, undo/redo, numeric
 entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
 markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 
-The left hamburger menu offers Editor (the photo library), collections and
+The left hamburger menu offers Library from the editor, or Editor from the
+image library, collections and
 filters, import sources, export, and settings. Camera ingestion remains
 available in Classic. Library selection uses a floating lower-right action bar without
 resizing or repositioning the grid. Export appears there after photos are
@@ -109,6 +110,16 @@ Settings control automatic hiding, with switch to Classic as the last option.
 Image information appears briefly
 on opening a photo and can be recalled from the active filmstrip thumbnail.
 
+Quick actions opens above its lower-left trigger. Its selection action enables
+multi-image filmstrip selection without switching the active preview. Holding
+a selected thumbnail opens actions for the selected images; the menu and
+destructive confirmation show the target count. All and invert operate on the
+visible Touch images, including its rejected-image visibility preference.
+Settings can enable persistent quick reject and quick delete buttons at the
+lower right. Quick delete first chooses disk or collection removal, then
+requires confirmation. Both shortcuts start hidden. Operations lasting more
+than 150 ms show a centered animated loading indicator.
+
 `UiMetrics.qml` converts reported physical screen density into a 9.5 mm
 touch target, divided by the device pixel ratio. Targets are bounded to
 56-80 logical pixels; missing or implausible density uses 64. Shared spacing,
@@ -126,9 +137,10 @@ without a second popup and keeps that view while parameters change;
 whole-image reset requires confirmation through the separate quick actions.
 Numeric drafts preserve precision and validate before committing. Popups and
 dialogs share dark surfaces with inset focus and close controls.
+Exposure's additional controls use an accessible, padding-free chevron.
 
 Small pill handles resize the filmstrip height and module-panel width.
-Their slim hit areas use the shared resize gutter and retain a 112-pixel
+Their slim hit areas use the shared 16-pixel resize gutter and retain a 112-pixel
 long axis, with the visible pill inside the panel boundary. Thumbnails and module controls are inset
 beyond the handles' hit areas so resizing does not intercept their taps.
 Drag the filmstrip handle up or down, or the module handle left or right.
@@ -235,6 +247,12 @@ filters, and reports added, existing, and failed counts. Copy-and-import,
 camera ingestion, import renaming/metadata templates, collection presets,
 and specialized value trees remain available through Classic.
 
+The source chooser has checkboxes for selecting only new images, recursive
+directory scanning, and ignoring non-RAW formats. RAW filtering follows the
+native extension registry and includes DNG containers. Changing the visible
+review candidates removes hidden entries from its selection. Already imported
+images remain skipped, including when shown for reference.
+
 ### Batch export
 
 The export dialog groups storage, name modifiers, format, and global options.
@@ -250,6 +268,10 @@ maximum dimensions, upscaling, high-quality resampling, and sRGB or the image's
 output profile. Native export configuration is restored after each item.
 Storage plugins, metadata filters, masks-as-layers, and format-specific
 advanced controls remain available in Classic.
+JPEG quality has a slider and numeric entry. The basic name modifier accepts
+literal text and `{name}`, `{sequence}`, and `{id}` tags. Recognized tags appear
+as removable chips, with insertion buttons and an example filename. Invalid
+tags or filename separators still prevent export.
 
 ### Coverage status
 

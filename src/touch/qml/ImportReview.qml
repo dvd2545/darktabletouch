@@ -7,6 +7,9 @@ TouchDialog {
     UiMetrics { id: reviewMetrics; pixelDensity: dialog.parent.Screen.pixelDensity; pixelRatio: dialog.parent.Screen.devicePixelRatio }
     required property var photoController
     property var chosen: ({})
+    property bool onlyNew: true
+    property bool rawOnly: false
+    readonly property var candidates: photoController.importCandidates.filter(function(item) { return (!dialog.onlyNew || !item.existing) && (!dialog.rawOnly || item.raw) })
     readonly property int selectedCount: Object.keys(chosen).filter(function(key) { return chosen[key] }).length
     modal: true
     focus: true
@@ -17,16 +20,21 @@ TouchDialog {
     padding: 16
     function selectAll(value) {
         const next = {}
-        for(const item of photoController.importCandidates) if(!item.existing) next[item.path] = value
+        for(const item of candidates) if(!item.existing) next[item.path] = value
         chosen = next
     }
     function toggle(path) { const next = Object.assign({}, chosen); next[path] = !next[path]; chosen = next }
+    onCandidatesChanged: {
+        const next = {}
+        for(const item of candidates) if(!item.existing && chosen[item.path]) next[item.path] = true
+        chosen = next
+    }
     onOpened: selectAll(true)
     contentItem: ColumnLayout {
         spacing: 10
         Label {
             Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#aebbc1"
-            text: qsTr("choose photos to add at their current location; existing catalog entries are skipped")
+            text: qsTr("choose images to add at their current location; existing catalog entries are skipped")
         }
         RowLayout {
             TouchButton { text: qsTr("select all new"); onClicked: dialog.selectAll(true) }
@@ -35,7 +43,7 @@ TouchDialog {
         }
         ListView {
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 4
-            model: dialog.photoController.importCandidates
+            model: dialog.candidates
             delegate: TouchButton {
                 required property var modelData
                 required property int index
@@ -61,8 +69,8 @@ TouchDialog {
                 Keys.onPressed: function(event) {
                     const direction = event.key === Qt.Key_Tab || event.key === Qt.Key_Down ? 1 : event.key === Qt.Key_Backtab || event.key === Qt.Key_Up ? -1 : 0
                     let next = index + direction
-                    while(direction && next >= 0 && next < dialog.photoController.importCandidates.length && dialog.photoController.importCandidates[next].existing) next += direction
-                    if(direction && next >= 0 && next < dialog.photoController.importCandidates.length) {
+                    while(direction && next >= 0 && next < dialog.candidates.length && dialog.candidates[next].existing) next += direction
+                    if(direction && next >= 0 && next < dialog.candidates.length) {
                         event.accepted = true
                         const view = ListView.view
                         view.currentIndex = next
@@ -72,17 +80,17 @@ TouchDialog {
                 }
             }
             ScrollBar.vertical: ScrollBar { }
-            Label { visible: !dialog.photoController.importCandidates.length; anchors.centerIn: parent; text: qsTr("no supported photos found"); color: "#aebbc1" }
+            Label { visible: !dialog.candidates.length; anchors.centerIn: parent; text: qsTr("no images match the import options"); color: "#aebbc1" }
         }
         RowLayout {
             Item { Layout.fillWidth: true }
             TouchButton {
                 objectName: "confirmImport"
-                text: dialog.selectedCount === 1 ? qsTr("add 1 photo") : qsTr("add %1 photos").arg(dialog.selectedCount); checked: true
+                text: dialog.selectedCount === 1 ? qsTr("add 1 image") : qsTr("add %1 images").arg(dialog.selectedCount); checked: true
                 enabled: dialog.selectedCount > 0 && !dialog.photoController.busy
                 onClicked: {
                     const urls = []
-                    for(const item of dialog.photoController.importCandidates)
+                    for(const item of dialog.candidates)
                         if(dialog.chosen[item.path]) urls.push(item.path)
                     dialog.photoController.importSelectedPaths(urls)
                     dialog.close()

@@ -370,7 +370,8 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 Keep visible text beside or below action icons in `src/touch/qml/`.
 Floating editor navigation, Undo/Redo, quick actions, the photo-strip chevron,
-all-modules, and per-module/per-value reset controls may use icons alone. Keep accessible
+all-modules, parameter-expansion chevrons, name-token removal, and
+per-module/per-value reset controls may use icons alone. Keep accessible
 names, tooltips, focus indicators, and disabled states for those controls.
 Library selection retains a visible text label.
 Use the shared `TouchButton` label by default. When space is limited, use

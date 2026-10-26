@@ -32,6 +32,8 @@ int dt_touch_image_exists(int image_id);
 int dt_touch_collection_set(const char *json, char **error);
 int dt_touch_selection(const char *action, int image_id, char **error);
 int dt_touch_import_candidate(const char *path);
+int dt_touch_import_is_raw(const char *path);
+void dt_touch_quick_actions_set(int reject, int delete_button);
 char *dt_touch_import(const char *path, char **error);
 char *dt_touch_modules(void);
 char *dt_touch_session_json(char **error);
