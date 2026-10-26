@@ -571,8 +571,10 @@ int main(int argc, char **argv)
         { fail("editor toolbar or floating history actions are unavailable"); return; }
         auto menu = window->findChild<QQuickItem *>(QStringLiteral("editorNavigationButton"));
         auto toggle = window->findChild<QQuickItem *>(QStringLiteral("photoStripToggle"));
+        auto actions = window->findChild<QQuickItem *>(QStringLiteral("editorQuickActionsButton"));
         auto canvas = window->findChild<QQuickItem *>(QStringLiteral("imageStage"));
         if(!menu || !menu->isVisible() || !toggle || !toggle->isVisible()
+           || !actions || !actions->isVisible() || actions->property("showLabel").toBool()
            || canvas->mapToScene(QPointF()).y() != 0
            || window->findChild<QObject *>(QStringLiteral("filmstripStateButton")))
         { fail("floating editor navigation did not preserve a full-height canvas"); return; }
@@ -794,7 +796,7 @@ int main(int argc, char **argv)
            || !findItem(window->contentItem(), QStringLiteral("card-agx"))->isVisible()
            || findItem(window->contentItem(), QStringLiteral("card-exposure"))->isVisible())
         { fail("the color category did not open its contextual controls"); return; }
-        QMetaObject::invokeMethod(window, "showQuickMenu");
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("editorQuickActionsButton")), "clicked");
         break;
       case 99:
       {
@@ -882,7 +884,8 @@ int main(int argc, char **argv)
         auto dialog = window->findChild<QObject *>(QStringLiteral("quickSettings"));
         auto close = dialog->findChild<QQuickItem *>(QStringLiteral("dialogCloseButton"));
         auto background = dialog->property("background").value<QQuickItem *>();
-        if(!close || !background || !dialog->property("opened").toBool())
+        if(!close || !background || !dialog->property("opened").toBool()
+           || dialog->property("title").toString() != QStringLiteral("settings"))
         { fail("quick settings did not open"); return; }
         const auto bounds = close->mapRectToItem(background, close->boundingRect());
         const auto popupBounds = background->mapRectToScene(background->boundingRect());
@@ -1043,7 +1046,9 @@ int main(int argc, char **argv)
           QMetaObject::invokeMethod(filmHandle, "adjusted", Q_ARG(double, 10000));
           QMetaObject::invokeMethod(moduleHandle, "adjusted", Q_ARG(double, 10000));
           QTimer::singleShot(150, &app, [&, strip, panel, filmHandle, moduleHandle, imageStage, menu] {
+            auto history = window->findChild<QQuickItem *>(QStringLiteral("editorHistoryBar"));
             if(imageStage->width() < 319 || strip->height() > window->height() * 0.45 + 1
+               || history->mapRectToItem(imageStage, history->boundingRect()).intersects(menu->mapRectToItem(imageStage, menu->boundingRect()))
                || menu->mapToScene(QPointF(0, menu->height())).y() > imageStage->mapToScene(QPointF(0, imageStage->height())).y() + 1)
             { QTextStream(stderr) << "resizing covered the image or moved the menu into the viewport\n"; controller.shutdown(); return; }
             if(!screenshot.isEmpty())

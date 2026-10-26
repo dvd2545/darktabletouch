@@ -68,32 +68,31 @@ TouchDialog {
     function tree(includeCollapsed) {
         const nodes = {}, roots = []
         for(const folder of folders) {
-            const key = normalize(folder.folder), pieces = key.split("/").filter(function(s) { return s.length })
-            let path = key.startsWith("//") ? "/" : "", parent = null
-            for(const piece of pieces) {
-                path += (path ? "/" : "") + piece
-                if(!nodes[path]) {
-                    nodes[path] = {key: path, label: piece, children: [], direct: 0, count: 0, source: path}
-                    if(parent) parent.children.push(nodes[path]); else roots.push(nodes[path])
-                }
-                parent = nodes[path]
-            }
-            if(parent) { parent.direct += folder.images; parent.source = folder.folder }
+            const key = normalize(folder.folder)
+            if(!nodes[key]) nodes[key] = {key: key, label: key.slice(key.lastIndexOf("/") + 1), children: [], direct: 0, count: 0, source: folder.folder}
+            nodes[key].direct += folder.images
+        }
+        // only imported folders belong in the tree; machine ancestors are not collections
+        for(const key of Object.keys(nodes)) {
+            let ancestor = key.slice(0, key.lastIndexOf("/"))
+            while(ancestor && !nodes[ancestor]) ancestor = ancestor.slice(0, Math.max(0, ancestor.lastIndexOf("/")))
+            if(nodes[ancestor]) nodes[ancestor].children.push(nodes[key]); else roots.push(nodes[key])
         }
         function count(node) { node.count = node.direct; for(const child of node.children) node.count += count(child); return node.count }
         for(const root of roots) count(root)
-        let visibleRoots = roots
-        while(visibleRoots.length === 1 && !visibleRoots[0].direct && visibleRoots[0].children.length === 1) visibleRoots = visibleRoots[0].children
+        const query = search.toLowerCase()
+        function matches(node) { return node.label.toLowerCase().includes(query) || node.children.some(matches) }
         const rows = []
-        function visit(node, depth) {
-            const matches = !search || node.key.toLowerCase().includes(search.toLowerCase())
-            if(includeCollapsed || matches || node.children.length) rows.push({key: node.key, label: node.label, source: node.source, count: node.count, depth: depth, children: node.children.length})
+        function visit(node, depth, parentMatches) {
+            if(!includeCollapsed && query && !parentMatches && !matches(node)) return
+            rows.push({key: node.key, label: node.label, source: node.source, count: node.count, depth: depth, children: node.children.length})
             if(includeCollapsed || search || expanded[node.key] !== false) {
                 node.children.sort(function(a, b) { return a.label.localeCompare(b.label) })
-                for(const child of node.children) visit(child, depth + 1)
+                for(const child of node.children) visit(child, depth + 1, parentMatches || node.label.toLowerCase().includes(query))
             }
         }
-        for(const root of visibleRoots) visit(root, 0)
+        roots.sort(function(a, b) { return a.label.localeCompare(b.label) })
+        for(const root of roots) visit(root, 0, false)
         return rows
     }
     function folderState(key) {
@@ -215,7 +214,7 @@ TouchDialog {
                                 else libraryDialog.toggleValue(modelData.value, checkState === Qt.Checked)
                             }
                             onActiveFocusChanged: if(activeFocus) valueList.positionViewAtIndex(index, ListView.Contain)
-                            ToolTip.visible: hovered; ToolTip.text: libraryDialog.folderMode ? modelData.key : modelData.value
+                            ToolTip.visible: hovered; ToolTip.text: libraryDialog.folderMode ? modelData.label : modelData.value
                         }
                         TouchButton {
                             visible: libraryDialog.folderMode
@@ -241,7 +240,7 @@ TouchDialog {
         parent: Overlay.overlay; anchors.centerIn: parent; width: Math.min(560, parent.width - 32)
         title: qsTr("remove from catalog"); modal: true; focus: true
         contentItem: ColumnLayout {
-            Label { text: libraryDialog.removePath || qsTr("current collection"); textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#e6eef0" }
+            Label { text: libraryDialog.removePath ? libraryDialog.removePath.slice(libraryDialog.removePath.lastIndexOf("/") + 1) : qsTr("current collection"); textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#e6eef0" }
             Label { text: qsTr("remove these photos from the catalog? folder removal includes imported subfolders and all their photos, including filtered or rejected images. original files and sidecars stay on disk"); Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#aebbc1" }
             RowLayout {
                 TouchButton { text: qsTr("remove"); iconName: "trash"; enabled: !photoController.busy; onClicked: { photoController.libraryCommand(libraryDialog.removePath ? "remove-folder" : "remove-collection", {folder: libraryDialog.removePath}); removeDialog.close(); libraryDialog.close() } }

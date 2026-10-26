@@ -467,6 +467,7 @@ ApplicationWindow {
                     Rectangle {
                         objectName: "editorHistoryBar"
                         anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: ui.inset
+                        anchors.bottomMargin: ui.inset + (parent.width < 2 * (undoActions.implicitWidth + ui.inset) + ui.touchHeight ? ui.touchHeight : 0)
                         width: undoActions.implicitWidth + 8; height: ui.touchHeight + 8
                         visible: !window.distractionFree && !controller.cropEditing
                         radius: ui.radius; color: "transparent"
@@ -474,6 +475,7 @@ ApplicationWindow {
                             id: undoActions; anchors.centerIn: parent; spacing: 4
                             TouchButton { objectName: "editorUndoButton"; showLabel: false; imageOverlay: true; text: qsTr("undo"); iconName: "undo"; enabled: controller.canUndo && !controller.busy && !controller.cropEditing; onClicked: controller.undo() }
                             TouchButton { objectName: "editorRedoButton"; showLabel: false; imageOverlay: true; text: qsTr("redo"); iconName: "redo"; enabled: controller.canRedo && !controller.busy && !controller.cropEditing; onClicked: controller.redo() }
+                            TouchButton { objectName: "editorQuickActionsButton"; showLabel: false; imageOverlay: true; text: qsTr("quick actions"); iconName: "more"; onClicked: showQuickMenu() }
                         }
                     }
                     TouchButton {
@@ -765,9 +767,7 @@ ApplicationWindow {
                 TouchButton { objectName: "editorLibraryButton"; text: qsTr("editor"); iconName: "grid"; Layout.fillWidth: true; enabled: !controller.exportRunning; onClicked: { navigationDrawer.close(); controller.editorVisible = false } }
                 TouchButton { objectName: "libraryFilterButton"; text: qsTr("collections and filters"); iconName: "filter"; Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); collectionDialog.open() } }
                 TouchButton { text: qsTr("import photos"); iconName: "import"; Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); importSource.open() } }
-                TouchButton { text: qsTr("open classic"); iconName: "grid"; Layout.fillWidth: true; visible: managedSession; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); saveView(); controller.switchInterface("classic") } }
                 TouchButton { objectName: "editorExportButton"; text: qsTr("export"); iconName: "export"; Layout.fillWidth: true; visible: controller.editorVisible; enabled: controller.imageId > 0 && !controller.busy && !controller.cropEditing; onClicked: { navigationDrawer.close(); batchExportDialog.scope = "current"; batchExportDialog.open() } }
-                TouchButton { text: qsTr("quick actions"); iconName: "more"; Layout.fillWidth: true; visible: controller.editorVisible; onClicked: { navigationDrawer.close(); showQuickMenu() } }
                 TouchButton { text: qsTr("settings"); iconName: "gear"; Layout.fillWidth: true; onClicked: { navigationDrawer.close(); quickSettings.open() } }
             }
         }
@@ -895,7 +895,7 @@ ApplicationWindow {
     TouchDialog {
         id: quickSettings
         objectName: "quickSettings"
-        title: qsTr("quick settings"); anchors.centerIn: parent; width: Math.min(480, window.width - 32); height: Math.min(520, window.height - 32); modal: true; focus: true
+        title: qsTr("settings"); anchors.centerIn: parent; width: Math.min(480, window.width - 32); height: Math.min(520, window.height - 32); modal: true; focus: true
         contentItem: ScrollView {
             id: settingsScroll
             contentWidth: availableWidth; clip: true
@@ -905,9 +905,9 @@ ApplicationWindow {
                 Label { text: qsTr("photo strip"); color: ui.muted }
                 TouchComboBox { Layout.fillWidth: true; implicitHeight: ui.touchHeight; model: [qsTr("hidden"), qsTr("shown")]; currentIndex: window.filmstripState === "hidden" ? 0 : 1; onActivated: { window.filmstripState = currentIndex === 0 ? "hidden" : "compact"; window.requestedFilmstripHeight = 0 } }
                 TouchSwitch { text: qsTr("hide photo strip automatically"); checked: window.autoHideFilmstrip; implicitHeight: ui.touchHeight; onToggled: { window.autoHideFilmstrip = checked; if(checked) filmstripTimer.restart() } }
-                TouchButton { text: qsTr("switch to classic"); iconName: "grid"; Layout.fillWidth: true; visible: managedSession; enabled: controller.ready && !controller.busy; onClicked: { quickSettings.close(); saveView(); controller.switchInterface("classic") } }
                 TouchSwitch { text: qsTr("show rejected images"); checked: controller.showRejected; implicitHeight: 64; onToggled: controller.showRejected = checked }
                 TouchSwitch { text: qsTr("next image after rejecting"); checked: controller.advanceAfterReject; implicitHeight: 64; onToggled: controller.advanceAfterReject = checked }
+                TouchButton { objectName: "settingsClassicButton"; text: qsTr("switch to classic"); iconName: "grid"; Layout.fillWidth: true; visible: managedSession; enabled: controller.ready && !controller.busy; onClicked: { quickSettings.close(); saveView(); controller.switchInterface("classic") } }
             }
         }
     }

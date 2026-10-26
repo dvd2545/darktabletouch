@@ -76,8 +76,8 @@ entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
 markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 
 The left hamburger menu offers Editor (the photo library), collections and
-filters, import sources, export, quick actions, and settings. Camera ingestion remains available
-in Classic. Library selection uses a floating lower-right action bar without
+filters, import sources, export, and settings. Camera ingestion remains
+available in Classic. Library selection uses a floating lower-right action bar without
 resizing or repositioning the grid. Export appears there after photos are
 selected. All, none, invert, same film roll, untouched, and history operations
 remain available in the horizontally scrollable action row.
@@ -85,11 +85,13 @@ remain available in the horizontally scrollable action row.
 The editor opens with a photo strip and a narrow category rail. Light, Color,
 Detail, and Crop open contextual tool drawers. Tapping the canvas toggles
 focus mode; double-tapping controls zoom. Undo and redo float at the lower
-left and hide during crop editing. The image reaches the top of the window;
+left beside the icon-only quick actions button and hide during crop editing.
+The image reaches the top of the window;
 navigation and history buttons float without filled backgrounds and use
 white icons with shadows. Export lives in the left menu. One bottom chevron
 toggles the photo strip; its height can still be adjusted with its handle. Swipe upward on the fitted canvas to restore the strip.
-Quick settings control automatic hiding. Image information appears briefly
+Settings control automatic hiding, with switch to Classic as the last option.
+Image information appears briefly
 on opening a photo and can be recalled from the active filmstrip thumbnail.
 
 `UiMetrics.qml` converts reported physical screen density into a 9.5 mm
@@ -164,7 +166,10 @@ as Classic. History and quick-action panels scroll at smaller window sizes.
 
 The collections and filters entry in the left menu opens collections,
 filters, and sort priorities in one dialog. Filter rules appear above the
-checkable collection list; empty default filters start collapsed. Folder rows expand into subfolders; parent
+checkable collection list; empty default filters start collapsed. Film rolls and
+folders show imported folder names, nesting beneath their nearest imported
+ancestor without exposing drive or machine-directory trees. Identically named
+folders remain separate collections. Folder rows expand into subfolders; parent
 checkboxes select descendants and show partial selections. Other supported
 properties list catalog values and counts. Checking values replaces the
 base collection rules and keeps filters separate; "reset all" clears both.
@@ -184,7 +189,7 @@ It is separate from the active editor image. Export still targets that active
 image when using the direct export API. The export settings dialog supports
 selected photos, the visible collection, or the current image.
 
-Quick settings default to hiding rejected images while showing unrated and
+Settings default to hiding rejected images while showing unrated and
 one-to-five-star images. They also offer an optional next-image action after
 rejecting. These Touch preferences persist in DarktableTouch configuration; self-tests
 use isolated configuration directories.
