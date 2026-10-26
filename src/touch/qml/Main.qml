@@ -423,7 +423,7 @@ ApplicationWindow {
                         id: canvas
                         objectName: "imageCanvas"
                         anchors.fill: parent
-                        interactive: !pinch.active && !controller.cropEditing
+                        interactive: window.viewZoom > 1 && !pinch.active && !controller.cropEditing
                         clip: true; boundsBehavior: Flickable.StopAtBounds
                         onWidthChanged: Qt.callLater(clampPan)
                         onHeightChanged: Qt.callLater(clampPan)
