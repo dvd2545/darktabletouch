@@ -550,7 +550,7 @@ ApplicationWindow {
                     Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: "#283337" }
                     PanelHandle {
                         objectName: "filmstripResizeHandle"
-                        anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.topMargin: -ui.touchHeight / 2
+                        anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.topMargin: 0
                         z: 2
                         Accessible.name: qsTr("filmstrip height")
                         panelSize: filmstripBar.height; minimumValue: ui.compactFilmstrip; maximumValue: window.maximumFilmstripHeight
@@ -560,7 +560,7 @@ ApplicationWindow {
                     TouchButton {
                         id: menuButton
                         objectName: "editorMenuButton"
-                        anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: filmstrip.verticalCenter
+                        anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
                         iconName: "grid"; text: qsTr("photos"); stacked: true; implicitWidth: ui.touchHeight; padding: 6
                         Accessible.name: qsTr("filmstrip size")
                         onClicked: window.cycleFilmstrip()
@@ -569,7 +569,7 @@ ApplicationWindow {
                         id: filmstrip
                         objectName: "filmstrip"
                         anchors.left: menuButton.right; anchors.right: parent.right
-                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 8; anchors.topMargin: ui.touchHeight / 2 + 4
+                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 8; anchors.topMargin: ui.touchHeight + 4
                         orientation: ListView.Horizontal; spacing: 10; clip: true
                         boundsBehavior: Flickable.StopAtBounds
                         model: controller.images; cacheBuffer: 200
@@ -611,7 +611,7 @@ ApplicationWindow {
                 Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: "#283337" }
                 PanelHandle {
                     objectName: "moduleResizeHandle"
-                    anchors.left: parent.left; anchors.leftMargin: -ui.touchHeight / 2; anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left; anchors.leftMargin: 0; anchors.verticalCenter: parent.verticalCenter
                     z: 2; vertical: true
                     Accessible.name: qsTr("module panel width")
                     panelSize: toolPanel.width; minimumValue: ui.panelWidth; maximumValue: window.maximumModuleWidth
@@ -620,7 +620,7 @@ ApplicationWindow {
                 }
                 Flickable {
                     id: toolScroll
-                    anchors.fill: parent; anchors.margins: ui.gap; anchors.leftMargin: ui.touchHeight / 2 + ui.gap
+                    anchors.fill: parent; anchors.margins: ui.gap; anchors.leftMargin: ui.touchHeight + ui.gap
                     contentWidth: width; contentHeight: toolColumn.implicitHeight
                     onContentHeightChanged: contentY = Math.max(0, Math.min(contentY, contentHeight - height))
                     clip: true; boundsBehavior: Flickable.StopAtBounds

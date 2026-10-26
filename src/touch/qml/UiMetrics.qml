@@ -14,7 +14,7 @@ QtObject {
     readonly property int captionSize: Math.round(bodySize * 0.87)
     readonly property int titleSize: Math.round(bodySize * 1.4)
     readonly property int panelWidth: Math.max(320, Math.round(touchHeight * 5.2))
-    readonly property int compactFilmstrip: touchHeight + Math.ceil(touchHeight / 2) + 12
+    readonly property int compactFilmstrip: touchHeight * 2 + 12
     readonly property int expandedFilmstrip: Math.round(touchHeight * 2.5)
     readonly property int radius: 8
     readonly property color canvas: "#090d0f"

@@ -114,7 +114,7 @@ into view on smaller screens.
 
 Small pill handles resize the filmstrip height and module-panel width.
 Their hit areas follow the shared touch target, with the visible pill
-centered on the panel boundary. Thumbnails and module controls are inset
+inside the panel boundary. Thumbnails and module controls are inset
 beyond the handles' hit areas so resizing does not intercept their taps.
 Drag the filmstrip handle up or down, or the module handle left or right.
 The handles have larger touch areas, support arrow-key adjustment and
