@@ -119,6 +119,15 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch adds multi-image filmstrip selection, optional quick reject/delete
+  shortcuts, centered loading feedback, and a collections shortcut in the
+  library. Quick actions opens above its trigger, resize grips use balanced
+  gutters, and additional exposure controls use a compact chevron.
+
+- Touch import offers new-image, recursive-directory, and RAW-only options.
+  Export adds a quality slider and a name editor with removable tag chips.
+  Touch interface labels consistently use images.
+
 - Touch quick actions now sit beside undo and redo. Settings place the
   Classic interface switch last, and film-roll collections show imported
   folder names instead of the computer's directory tree.
@@ -482,6 +491,9 @@ changes (where available).
   ready to splice into another invocation.
 
 ## Bug Fixes
+
+- Touch select all and invert now target its visible images, with consistent
+  selection identities for filmstrip actions and batch export.
 
 - Touch now protects edits with a recovery XMP when the original sidecar
   cannot be saved, including offline source folders. A persistent warning
