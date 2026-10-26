@@ -518,13 +518,21 @@ ApplicationWindow {
                         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                         anchors.leftMargin: 16; anchors.rightMargin: 16; anchors.bottomMargin: controller.cropEditing || window.distractionFree ? 16 : ui.touchHeight + 2 * ui.inset + 8
                         height: statusLine.implicitHeight + 20; radius: 10
-                        color: controller.hasError ? "#ed532d29" : "#d4101619"
-                        visible: controller.busy || controller.hasError || window.statusVisible
-                        RowLayout {
+                        color: controller.hasError ? "#ed532d29" : controller.saveIssue ? "#ed443a20" : "#d4101619"
+                        visible: controller.busy || controller.hasError || !!controller.saveIssue || window.statusVisible
+                        ColumnLayout {
                             id: statusLine
                             anchors.fill: parent; anchors.margins: 10; spacing: 8
-                            BusyIndicator { running: controller.busy; visible: running; implicitWidth: 24; implicitHeight: 24 }
-                            Label { text: controller.message; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#c0cbd0"; font.pixelSize: 12 }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                BusyIndicator { running: controller.busy; visible: running; implicitWidth: 24; implicitHeight: 24 }
+                                Label { text: controller.hasError ? controller.message + (controller.saveIssue && controller.saveIssue !== controller.message ? "\n" + controller.saveIssue : "") : controller.saveIssue || controller.message; Accessible.description: controller.recoveryPath; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#e6eef0"; font.pixelSize: ui.captionSize }
+                            }
+                            RowLayout {
+                                visible: !!controller.saveIssue
+                                TouchButton { objectName: "retrySaveButton"; text: qsTr("retry save"); iconName: "reset"; enabled: !controller.busy; onClicked: controller.retrySave() }
+                                TouchButton { text: qsTr("recovery folder"); iconName: "folder"; visible: !!controller.recoveryPath; onClicked: controller.openRecoveryFolder() }
+                            }
                         }
                     }
                 }

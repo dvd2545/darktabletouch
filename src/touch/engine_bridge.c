@@ -19,6 +19,9 @@
 #include "common/film.h"
 #include "common/overlay.h"
 #include "common/dtdata.h"
+#include "common/exif.h"
+#include <glib/gstdio.h>
+#include <errno.h>
 #include "control/conf.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
@@ -40,6 +43,7 @@ struct dt_touch_editor_t
 };
 
 static guint64 _editor_generation = 0;
+static GHashTable *_recovery_sidecars = NULL;
 
 struct dt_touch_state_t
 {
@@ -69,6 +73,7 @@ const char *dt_touch_version(void)
 void dt_touch_shutdown(void)
 {
   dt_cleanup();
+  g_clear_pointer(&_recovery_sidecars, g_hash_table_unref);
 }
 
 void dt_touch_free(void *data)
@@ -429,7 +434,17 @@ int dt_touch_import_candidate(const char *path)
 
 char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error)
 {
-  return editor ? dt_bridge_get_metadata_json(editor->dev.image_storage.id, error) : NULL;
+  if(!editor) return NULL;
+  char *text = dt_bridge_get_metadata_json(editor->dev.image_storage.id, error);
+  if(!text) return NULL;
+  JsonParser *parser = json_parser_new();
+  json_parser_load_from_data(parser, text, -1, NULL);
+  const char *recovery = _recovery_sidecars ? g_hash_table_lookup(_recovery_sidecars, GINT_TO_POINTER(editor->dev.image_storage.id)) : NULL;
+  json_object_set_string_member(json_node_get_object(json_parser_get_root(parser)), "recovery_sidecar", recovery ? recovery : "");
+  g_free(text);
+  text = json_to_string(json_parser_get_root(parser), FALSE);
+  g_object_unref(parser);
+  return text;
 }
 
 int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, char **error)
@@ -1032,12 +1047,107 @@ int dt_touch_editor_reset(dt_touch_editor_t *editor, const char *operation, char
   return TRUE;
 }
 
+static gboolean _saved_history_matches(dt_touch_editor_t *editor)
+{
+  const int image = editor->dev.image_storage.id;
+  int end = -1;
+  if(!dt_image_get_history_end(image, &end) || end != editor->dev.history_end) return FALSE;
+  sqlite3_stmt *statement = NULL;
+  if(sqlite3_prepare_v2(dt_database_get(darktable.db),
+      "SELECT operation, op_params, enabled, blendop_params, multi_priority, multi_name, multi_name_hand_edited, module"
+      " FROM main.history WHERE imgid = ?1 ORDER BY num", -1, &statement, NULL) != SQLITE_OK) return FALSE;
+  sqlite3_bind_int(statement, 1, image);
+  gboolean same = TRUE;
+  // reloading can normalize auto-applied modules; compare the persisted parameter blobs directly
+  for(const GList *item = editor->dev.history; same && item; item = item->next)
+  {
+    const dt_dev_history_item_t *history = item->data;
+    same = sqlite3_step(statement) == SQLITE_ROW
+      && !g_strcmp0((const char *)sqlite3_column_text(statement, 0), history->module->op)
+      && sqlite3_column_bytes(statement, 1) == history->module->params_size
+      && !memcmp(sqlite3_column_blob(statement, 1), history->params, history->module->params_size)
+      && sqlite3_column_int(statement, 2) == history->enabled
+      && sqlite3_column_bytes(statement, 3) == sizeof(dt_develop_blend_params_t)
+      && !memcmp(sqlite3_column_blob(statement, 3), history->blend_params, sizeof(dt_develop_blend_params_t))
+      && sqlite3_column_int(statement, 4) == history->multi_priority
+      && !g_strcmp0((const char *)sqlite3_column_text(statement, 5), history->multi_name)
+      && sqlite3_column_int(statement, 6) == history->multi_name_hand_edited
+      && sqlite3_column_int(statement, 7) == history->module->version();
+  }
+  same = same && sqlite3_step(statement) == SQLITE_DONE;
+  sqlite3_finalize(statement);
+  return same;
+}
+
+static int _save_recovery(const int image, char **error)
+{
+  const char *catalog = sqlite3_db_filename(dt_database_get(darktable.db), "main");
+  char *identity = g_compute_checksum_for_string(G_CHECKSUM_SHA256, catalog ? catalog : "", -1);
+  // leave room for Unicode profile paths and the temporary suffix on Windows
+  identity[16] = '\0';
+  char *directory = g_build_filename(darktable.configdir, "recovery-sidecars", identity, NULL);
+  char *name = g_strdup_printf("image-%d.xmp", image);
+  char *path = g_build_filename(directory, name, NULL);
+  char *temporary = g_strconcat(path, ".tmp-XXXXXX", NULL);
+  GError *failure = NULL;
+  char *contents = NULL;
+  gsize size = 0;
+  gboolean success = FALSE;
+  int fd = -1;
+  if(g_mkdir_with_parents(directory, 0700) == 0) fd = g_mkstemp(temporary);
+  if(fd >= 0)
+  {
+    g_close(fd, NULL);
+    char source[PATH_MAX] = { 0 };
+    dt_image_full_path(image, source, sizeof(source), NULL);
+    if(g_file_test(source, G_FILE_TEST_IS_REGULAR))
+    {
+      if(!dt_exif_xmp_write(image, temporary, TRUE))
+        g_file_get_contents(temporary, &contents, &size, &failure);
+    }
+    else
+    {
+      // the native writer requires a source file; catalog XMP also protects offline edits
+      contents = dt_exif_xmp_read_string(image);
+      if(contents) size = strlen(contents);
+    }
+    if(contents && size)
+    {
+      const GMarkupParser xml = { 0 };
+      GMarkupParseContext *context = g_markup_parse_context_new(&xml, 0, NULL, NULL);
+      if(g_markup_parse_context_parse(context, contents, size, &failure)
+         && g_markup_parse_context_end_parse(context, &failure))
+      {
+        GFile *file = g_file_new_for_path(path);
+        success = g_file_replace_contents(file, contents, size, NULL, FALSE, G_FILE_CREATE_PRIVATE, NULL, NULL, &failure);
+        g_object_unref(file);
+      }
+      g_markup_parse_context_free(context);
+    }
+    g_unlink(temporary);
+  }
+  if(success)
+  {
+    if(!_recovery_sidecars) _recovery_sidecars = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+    g_hash_table_replace(_recovery_sidecars, GINT_TO_POINTER(image), g_strdup(path));
+  }
+  else if(error) *error = g_strdup_printf(_("could not update the image sidecar or save recovery at %s: %s; keep this session open and restore write access or free disk space"),
+                                         path, failure ? failure->message : errno ? g_strerror(errno) : _("recovery sidecar could not be serialized or written"));
+  g_clear_error(&failure);
+  g_free(contents); g_free(temporary); g_free(path); g_free(name); g_free(directory); g_free(identity);
+  return success;
+}
+
 int dt_touch_editor_save(dt_touch_editor_t *editor, char **error)
 {
   if(!editor) return TRUE;
   dt_dev_write_history_ext(&editor->dev, editor->dev.image_storage.id);
+  if(!_saved_history_matches(editor)) return _error(error, N_("could not verify the saved catalog history; keep this session open"));
   if(dt_image_write_sidecar_file(editor->dev.image_storage.id))
-    return _error(error, N_("could not save the image sidecar; edits remain open"));
+  {
+    return _save_recovery(editor->dev.image_storage.id, error);
+  }
+  if(_recovery_sidecars) g_hash_table_remove(_recovery_sidecars, GINT_TO_POINTER(editor->dev.image_storage.id));
   return TRUE;
 }
 
@@ -1357,7 +1467,7 @@ dt_touch_catalog_edit_t *dt_touch_history_apply(const char *request_json, char *
       json_object_get_boolean_member_with_default(request, "copy_order", FALSE), TRUE, FALSE))
     { success = _error(error, N_("could not paste the selected history and masks")); break; }
     dt_history_snapshot_undo_create(id, &record->after, &record->after_history_end);
-    if(dt_image_write_sidecar_file(id)) { success = _error(error, N_("could not save the updated image sidecar")); break; }
+    if(dt_image_write_sidecar_file(id) && !_save_recovery(id, error)) { success = FALSE; break; }
   }
   dt_undo_iterate(darktable.undo, DT_UNDO_LT_HISTORY, NULL, _clear_native_before);
   dt_undo_cleanup(darktable.undo); darktable.undo = saved_undo;
@@ -1385,7 +1495,7 @@ int dt_touch_catalog_restore(dt_touch_catalog_edit_t *edit, int redo, char **err
   gboolean saved = TRUE;
   for(GList *item = edit ? edit->records : NULL; item; item = item->next) {
     const dt_undo_lt_history_t *record = item->data;
-    if(dt_image_write_sidecar_file(record->imgid)) saved = FALSE;
+    if(dt_image_write_sidecar_file(record->imgid) && !_save_recovery(record->imgid, NULL)) saved = FALSE;
   }
   if(!saved) {
     _error(error, N_("history restored in the catalog, but some sidecars could not be saved"));

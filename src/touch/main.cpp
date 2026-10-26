@@ -466,8 +466,17 @@ int main(int argc, char **argv)
         break;
       }
       case 50:
-        if(historyBaseline != store->requestImage(QStringLiteral("current"), nullptr, QSize()) || !controller.hasError() || !controller.canRedo()) { fail("failed sidecar undo left the editor or undo position stale"); return; }
+        if(historyBaseline != store->requestImage(QStringLiteral("current"), nullptr, QSize()) || controller.hasError() || !controller.canRedo()
+           || controller.saveIssue().isEmpty() || !QFileInfo::exists(controller.recoveryPath())
+           || !findItem(window->contentItem(), QStringLiteral("retrySaveButton"))->isVisible())
+        { fail("sidecar failure did not preserve the edit and expose recovery actions"); return; }
+        if(!libraryScreenshot(QStringLiteral("-sidecar-recovery"))) { fail("recovery screenshot failed"); return; }
         if(!QDir().rmdir(blockedSidecar) || !QFile::rename(sidecarBackup, blockedSidecar)) { fail("could not restore the test sidecar"); return; }
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("retrySaveButton")), "clicked");
+        libraryStage = 129;
+        break;
+      case 130:
+        if(controller.hasError() || !controller.saveIssue().isEmpty()) { fail("retry save did not clear recovered-sidecar status"); return; }
         controller.redo(); libraryStage = 69;
         break;
       case 70:

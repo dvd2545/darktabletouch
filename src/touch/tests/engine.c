@@ -7,6 +7,8 @@
 #include "touch/engine_bridge.h"
 #include "common/touch_session.h"
 #include "common/image.h"
+#include "common/image_cache.h"
+#include "common/exif.h"
 #include "common/collection.h"
 #include "common/database.h"
 #include "control/conf.h"
@@ -185,6 +187,67 @@ static double _exposure(dt_touch_editor_t *editor)
   return value;
 }
 
+static void _test_save_recovery(dt_touch_editor_t *editor, int image, const char *filename)
+{
+  char *error = NULL;
+  dt_touch_state_t *before = dt_touch_editor_capture(editor);
+  g_assert_true(dt_touch_editor_save(editor, &error));
+  char *sidecar = g_strconcat(filename, ".xmp", NULL);
+  char *backup = g_strconcat(sidecar, ".backup", NULL);
+  g_assert_cmpint(g_rename(sidecar, backup), ==, 0);
+  g_assert_cmpint(g_mkdir(sidecar, 0700), ==, 0);
+  g_assert_true(dt_touch_editor_set(editor, "exposure", "exposure", "0.85", &error));
+  const int protected = dt_touch_editor_save(editor, &error);
+  g_assert_cmpstr(error, ==, NULL);
+  g_assert_true(protected);
+  char *information = dt_touch_editor_information(editor, &error);
+  JsonParser *parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, information, -1, NULL));
+  char *recovery = g_strdup(json_object_get_string_member(json_node_get_object(json_parser_get_root(parser)), "recovery_sidecar"));
+  g_free(information);
+  g_assert_true(g_file_test(recovery, G_FILE_TEST_IS_REGULAR));
+  const int duplicate = dt_image_duplicate(image);
+  dt_image_t *img = dt_image_cache_get(duplicate, 'w');
+  g_assert_false(dt_exif_xmp_read(img, recovery, TRUE));
+  dt_image_cache_write_release(img, DT_IMAGE_CACHE_RELAXED);
+  dt_touch_editor_t *restored = dt_touch_editor_new(duplicate, &error);
+  g_assert_cmpfloat(_exposure(restored), ==, (double)(float)0.85);
+  dt_touch_editor_free(restored);
+  g_assert_true(dt_touch_image_action("remove", duplicate, &error));
+  char *last_good = g_strconcat(recovery, ".backup", NULL);
+  g_assert_cmpint(g_rename(recovery, last_good), ==, 0);
+  g_assert_cmpint(g_mkdir(recovery, 0700), ==, 0);
+  g_assert_true(dt_touch_editor_set(editor, "exposure", "exposure", "0.95", &error));
+  g_assert_false(dt_touch_editor_save(editor, &error));
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_cmpfloat(_exposure(editor), ==, (double)(float)0.95);
+  g_assert_true(g_file_test(last_good, G_FILE_TEST_IS_REGULAR));
+  g_assert_cmpint(g_rmdir(recovery), ==, 0);
+  g_assert_cmpint(g_rename(last_good, recovery), ==, 0);
+  g_assert_true(dt_touch_editor_set(editor, "exposure", "exposure", "0.96", &error));
+  g_assert_cmpint(sqlite3_exec(dt_database_get(darktable.db), "PRAGMA query_only=ON", NULL, NULL, NULL), ==, SQLITE_OK);
+  g_assert_false(dt_touch_editor_save(editor, &error));
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_cmpint(sqlite3_exec(dt_database_get(darktable.db), "PRAGMA query_only=OFF", NULL, NULL, NULL), ==, SQLITE_OK);
+  g_assert_cmpfloat(_exposure(editor), ==, (double)(float)0.96);
+  g_assert_cmpint(g_rmdir(sidecar), ==, 0);
+  g_assert_cmpint(g_rename(backup, sidecar), ==, 0);
+  char *offline = g_strconcat(filename, ".offline", NULL);
+  g_assert_cmpint(g_rename(filename, offline), ==, 0);
+  g_assert_true(dt_touch_editor_save(editor, &error));
+  g_assert_null(error);
+  g_assert_cmpint(g_rename(offline, filename), ==, 0);
+  g_assert_true(dt_touch_editor_save(editor, &error));
+  information = dt_touch_editor_information(editor, &error);
+  g_assert_true(json_parser_load_from_data(parser, information, -1, NULL));
+  g_assert_cmpstr(json_object_get_string_member(json_node_get_object(json_parser_get_root(parser)), "recovery_sidecar"), ==, "");
+  g_free(information); g_object_unref(parser);
+  g_assert_true(dt_touch_editor_restore(editor, before, &error));
+  g_assert_true(dt_touch_editor_save(editor, &error));
+  dt_touch_state_free(before);
+  g_free(offline); g_free(last_good); g_free(recovery); g_free(backup); g_free(sidecar);
+}
+
 static void _test_history(dt_touch_editor_t *source, int source_id)
 {
   char *error = NULL;
@@ -290,8 +353,8 @@ static void _test_history(dt_touch_editor_t *source, int source_id)
   char *backup = g_strconcat(sidecar, ".backup", NULL);
   g_assert_cmpint(g_rename(sidecar, backup), ==, 0);
   g_assert_cmpint(g_mkdir(sidecar, 0700), ==, 0);
-  g_assert_cmpint(dt_touch_catalog_restore(reset, FALSE, &error), ==, -1);
-  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_cmpint(dt_touch_catalog_restore(reset, FALSE, &error), ==, 1);
+  g_assert_null(error);
   g_assert_true(dt_touch_editor_reload(source, &error));
   g_assert_true(dt_touch_editor_reload(target, &error));
   g_assert_cmpfloat(_exposure(source), ==, 1.25);
@@ -321,7 +384,8 @@ static void _test_history(dt_touch_editor_t *source, int source_id)
 
 int main(int argc, char **argv)
 {
-  if(argc != 2) { fprintf(stderr, "usage: test-touch-engine RAW_FILE\n"); return 2; }
+  if(argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "--save-recovery-only")))
+  { fprintf(stderr, "usage: test-touch-engine RAW_FILE [--save-recovery-only]\n"); return 2; }
   GError *error = NULL;
   char *root = g_dir_make_tmp("darktabletouch-engine-XXXXXX", &error);
   g_assert_no_error(error);
@@ -367,6 +431,14 @@ int main(int argc, char **argv)
   g_assert_nonnull(json_object_get_object_member(metadata, "camera"));
   g_assert_cmpfloat(json_object_get_double_member(json_object_get_object_member(metadata, "exif"), "iso"), >, 0);
   dt_touch_free(information);
+  if(argc > 2 && !strcmp(argv[2], "--save-recovery-only"))
+  {
+    _test_save_recovery(editor, image_id, filename);
+    dt_touch_editor_free(editor);
+    dt_touch_shutdown();
+    printf("passed: sidecar recovery, XMP restore, failed recovery preservation, offline save, and retry\n");
+    return 0;
+  }
   char *schema = dt_touch_editor_module(editor, "exposure", &message);
   g_assert_null(message); g_assert_nonnull(schema);
   JsonParser *schema_parser = json_parser_new();
@@ -527,6 +599,7 @@ int main(int argc, char **argv)
   g_assert_cmpmem(original, (size_t)width * height * 4, undone, (size_t)w2 * h2 * 4);
   dt_touch_free(original); dt_touch_free(edited); dt_touch_free(undone);
   dt_touch_state_free(before);
+  _test_save_recovery(editor, image_id, filename);
   _test_history(editor, image_id);
   char *png = g_build_filename(folder, "automatic unavailable.png", NULL);
   g_assert_true(dt_touch_editor_export(editor, png, "png", &message));

@@ -54,7 +54,8 @@ selection in `launcher.ini` inside the engine configuration directory. Use
 the launcher when switching interfaces: Touch's settings contain
 "switch to classic", and a managed Classic session has a "touch" button.
 The launcher waits for a successful process exit before honoring a new
-switch request. Failed saves keep the current Touch session open. A crash
+switch request. Failed saves without a verified recovery copy keep the current
+Touch session open. A crash
 or an old request does not trigger a relaunch.
 
 `touch-session.json` binds the selected image, collection, filters, sort,
@@ -69,6 +70,20 @@ commands serially. Preview revisions prevent old frames from replacing
 new edits. Slider changes are coalesced and one completed gesture records
 one undo entry. Preview processing releases the full-resolution input lock
 before thumbnail generation or export. The preview pipeline remains cached.
+
+When an adjacent XMP cannot be saved, Touch verifies the catalog history and
+writes a validated recovery XMP under the configuration directory's
+`recovery-sidecars/<catalog hash>/image-<id>.xmp`. Atomic replacement preserves
+the previous recovery file if an update fails. The catalog and recovery XMP
+allow editing, export, image switching, and closing to continue even when the
+source folder is read-only or offline. Missing RAW files still need to be
+restored to their original location before previews or exports can render.
+The persistent warning offers Retry Save and Recovery Folder. Retry clears
+the warning only after the original sidecar can be written again. Recovery
+copies are retained; a recovery XMP can be loaded onto the matching photo
+through Classic. If catalog verification or recovery fails, the editor stays
+open and reports the recovery path and storage error instead of claiming
+that the latest edit is protected.
 
 The library uses a virtualized grid and a bounded thumbnail cache. The
 editor includes native scalar/enum controls, reset, undo/redo, numeric

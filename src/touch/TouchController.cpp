@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QUrl>
+#include <QDesktopServices>
 #include <algorithm>
 
 namespace {
@@ -145,6 +146,28 @@ void EngineWorker::report(char *error)
   dt_touch_free(error);
 }
 
+bool EngineWorker::saveEditor()
+{
+  char *error = nullptr;
+  const bool saved = dt_touch_editor_save(m_editor, &error);
+  const auto information = takeJson(dt_touch_editor_information(m_editor, nullptr)).object();
+  const QString path = information.value(QStringLiteral("recovery_sidecar")).toString();
+  char *source = m_editor ? dt_touch_image_path(m_imageId) : nullptr;
+  const bool missing = source && !QFileInfo::exists(QString::fromUtf8(source));
+  dt_touch_free(source);
+  const QString protectedEdits = missing ? tr("original photo unavailable; edits protected in a recovery sidecar")
+                                        : tr("edits protected in a recovery sidecar; check write access or disk space beside the photo");
+  emit saveStatus(path, saved ? (path.isEmpty() ? QString() : protectedEdits)
+                              : QString::fromUtf8(error ? error : ""));
+  if(!saved) report(error);
+  return saved;
+}
+
+void EngineWorker::retrySave()
+{
+  if(saveEditor()) emit completed(tr("save checked"));
+}
+
 QJsonArray EngineWorker::images()
 {
   char *error = nullptr;
@@ -229,7 +252,7 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
     QJsonArray targets = ids;
     if(action == QStringLiteral("remove-collection")) for(const auto &entry : images()) targets.append(entry.toObject().value(QStringLiteral("imgid")));
     char *error = nullptr;
-    if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
+    if(!saveEditor()) return;
     const int active = m_imageId;
     clearHistory(); dt_touch_editor_free(m_editor); m_editor = nullptr;
     int removed = 0;
@@ -256,7 +279,7 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
   if(closing)
   {
     abortCrop();
-    if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
+    if(!saveEditor()) return;
     clearHistory(); dt_touch_editor_free(m_editor); m_editor = nullptr;
   }
   const bool success = collection
@@ -331,7 +354,7 @@ void EngineWorker::openImage(int id, quint64 revision)
   if(!m_initialized) return;
   abortCrop();
   char *error = nullptr;
-  if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
+  if(!saveEditor()) return;
   auto next = dt_touch_editor_new(id, &error);
   if(!next) { report(error); return; }
   clearHistory();
@@ -342,6 +365,7 @@ void EngineWorker::openImage(int id, quint64 revision)
   const auto information = takeJson(dt_touch_editor_information(m_editor, &error)).object();
   if(error) report(error);
   else emit informationReady(information, revision);
+  saveEditor();
   loadModule(m_operation, revision);
   render(revision);
 }
@@ -386,9 +410,7 @@ void EngineWorker::commitEdit()
   }
   m_position = m_edits.size();
   emit historyChanged(m_position > 0, false);
-  char *error = nullptr;
-  if(!dt_touch_editor_save(m_editor, &error)) report(error);
-  else emit completed(tr("edits saved"));
+  if(saveEditor()) emit completed(tr("edits saved"));
 }
 
 void EngineWorker::setParameter(QString operation, QString name, QVariant value,
@@ -440,6 +462,7 @@ void EngineWorker::historyStep(int direction, quint64 revision)
   const auto &edit = m_edits[direction < 0 ? m_position - 1 : m_position];
   char *error = nullptr;
   char *warning = nullptr;
+  bool saved = true;
   if(edit.catalog) {
     if(!dt_touch_catalog_restore(edit.catalog, direction > 0, &error)) { report(error); return; }
     warning = error; error = nullptr;
@@ -450,17 +473,16 @@ void EngineWorker::historyStep(int direction, quint64 revision)
   emit historyChanged(m_position > 0, m_position < m_edits.size());
   if(edit.catalog) {
     if(!dt_touch_editor_reload(m_editor, &error)) { dt_touch_free(warning); report(error); return; }
+    saved = saveEditor();
     emit imagesChanged(images()); emit libraryReady(takeJson(dt_touch_library()).object());
-  } else if(!dt_touch_editor_save(m_editor, &error)) {
-    warning = error; error = nullptr;
-  }
+  } else saved = saveEditor();
   if(m_editor) {
     loadModule(m_operation, revision);
     if(!render(revision)) { dt_touch_free(warning); return; }
   }
   if(edit.catalog) emit historyActionDone(edit.targets);
   if(warning) report(warning);
-  else emit completed(tr("edits saved"));
+  else if(saved) emit completed(tr("edits saved"));
 }
 
 bool EngineWorker::render(quint64 revision, int extent)
@@ -507,6 +529,7 @@ void EngineWorker::exportImage(QString path, QString format)
 {
   abortCrop();
   if(!m_editor) return;
+  if(!saveEditor()) return;
   char *error = nullptr;
   if(!dt_touch_editor_export(m_editor, path.toUtf8().constData(), format.toUtf8().constData(), &error))
   { report(error); return; }
@@ -518,7 +541,7 @@ void EngineWorker::shutdown()
   abortCrop();
   if(!m_initialized) { emit stopped(); return; }
   char *error = nullptr;
-  if(!dt_touch_editor_save(m_editor, &error)) { m_nextInterface.clear(); report(error); return; }
+  if(!saveEditor()) { m_nextInterface.clear(); return; }
   if(!dt_touch_save_session(m_nextInterface.toUtf8().constData(), m_imageId, m_editorVisible,
                              m_zoom, m_centerX, m_centerY, &error)) { m_nextInterface.clear(); report(error); return; }
   clearHistory();
@@ -707,6 +730,9 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(m_worker, &EngineWorker::completed, this, [this](const QString &message) {
     m_failed = false; m_message = message; m_busy = m_waitingFrame || m_exportRunning; emit stateChanged();
 
+  });
+  connect(m_worker, &EngineWorker::saveStatus, this, [this](const QString &path, const QString &issue) {
+    m_recoveryPath = path; m_saveIssue = issue; emit stateChanged();
   });
   connect(m_worker, &EngineWorker::stopped, this, [this] {
     m_canClose = true; emit stateChanged(); emit closingReady(); m_thread.quit();
@@ -917,6 +943,17 @@ void TouchController::setEditorVisible(bool visible)
 void TouchController::setBefore(bool before) { m_before = before; emit previewChanged(); }
 void TouchController::shutdown() { m_exportCancel->store(true); flush(true); emit shutdownRequested(); }
 
+void TouchController::retrySave()
+{
+  flush(true); m_busy = true; emit stateChanged();
+  QMetaObject::invokeMethod(m_worker, &EngineWorker::retrySave, Qt::QueuedConnection);
+}
+
+void TouchController::openRecoveryFolder()
+{
+  if(!m_recoveryPath.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(m_recoveryPath).absolutePath()));
+}
+
 void TouchController::saveView(double zoom, double centerX, double centerY)
 {
   emit viewRequested(m_imageId, m_editorVisible, zoom, centerX, centerY);
@@ -1068,7 +1105,7 @@ void EngineWorker::exportBatch(QJsonObject settings)
 {
   abortCrop();
   char *error = nullptr;
-  if(!dt_touch_editor_save(m_editor, &error)) { report(error); emit exportFinished(); return; }
+  if(!saveEditor()) { emit exportFinished(); return; }
   const auto entries = settings.value(QStringLiteral("images")).toArray();
   const QString format = settings.value(QStringLiteral("format")).toString(QStringLiteral("jpeg"));
   const QString extension = format == QStringLiteral("jpeg") ? QStringLiteral("jpg") : format == QStringLiteral("tiff") ? QStringLiteral("tif") : QStringLiteral("png");
@@ -1136,7 +1173,7 @@ void TouchController::historyCommand(const QString &action, const QVariantMap &s
 void EngineWorker::historyCommand(QString action, QJsonObject settings, quint64 revision)
 {
   abortCrop(); char *error = nullptr;
-  if(!dt_touch_editor_save(m_editor, &error)) { report(error); return; }
+  if(!saveEditor()) return;
   if(action == QStringLiteral("copy")) {
     char *text = dt_touch_history_clipboard(settings.value(QStringLiteral("source")).toInt(), &error);
     if(!text) { report(error); return; }

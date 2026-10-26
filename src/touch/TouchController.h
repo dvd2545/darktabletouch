@@ -77,6 +77,7 @@ public slots:
   void saveView(int image, bool editor, double zoom, double centerX, double centerY);
   void switchInterface(QString mode);
   void shutdown();
+  void retrySave();
 signals:
   void initialized(QJsonArray images, QJsonArray modules, QJsonObject session);
   void imagesChanged(QJsonArray images);
@@ -99,6 +100,7 @@ signals:
   void historyReady(QJsonObject history, quint64 revision);
   void completed(QString message);
   void failed(QString message);
+  void saveStatus(QString recoveryPath, QString issue);
   void stopped();
 private:
   struct Edit { dt_touch_state_t *before; dt_touch_state_t *after; dt_touch_catalog_edit_t *catalog = nullptr; QJsonArray targets; };
@@ -108,6 +110,7 @@ private:
   void commitEdit();
   void clearHistory();
   void report(char *error);
+  bool saveEditor();
   QJsonArray images();
   std::shared_ptr<std::atomic<bool>> m_exportCancel;
   std::shared_ptr<std::atomic<quint64>> m_revision;
@@ -145,6 +148,8 @@ class TouchController final : public QObject
   Q_PROPERTY(int imageId READ imageId NOTIFY stateChanged)
   Q_PROPERTY(QVariantMap imageInformation READ imageInformation NOTIFY imageInformationChanged)
   Q_PROPERTY(bool hasError READ hasError NOTIFY stateChanged)
+  Q_PROPERTY(QString saveIssue READ saveIssue NOTIFY stateChanged)
+  Q_PROPERTY(QString recoveryPath READ recoveryPath NOTIFY stateChanged)
   Q_PROPERTY(QVariantList images READ images NOTIFY imagesChanged)
   Q_PROPERTY(QVariantMap library READ library NOTIFY libraryChanged)
   Q_PROPERTY(QVariantMap collectionValues READ collectionValues NOTIFY collectionValuesChanged)
@@ -190,6 +195,8 @@ public:
   int imageId() const { return m_imageId; }
   QVariantMap imageInformation() const { return m_imageInformation; }
   bool hasError() const { return m_failed; }
+  QString saveIssue() const { return m_saveIssue; }
+  QString recoveryPath() const { return m_recoveryPath; }
   QVariantList images() const { return m_images; }
   QVariantMap library() const { return m_library; }
   QVariantMap collectionValues() const { return m_collectionValues; }
@@ -226,6 +233,8 @@ public:
   Q_INVOKABLE void exportTo(const QUrl &url, const QString &format);
   Q_INVOKABLE void navigateImage(int direction);
   Q_INVOKABLE void shutdown();
+  Q_INVOKABLE void retrySave();
+  Q_INVOKABLE void openRecoveryFolder();
   Q_INVOKABLE void saveView(double zoom, double centerX, double centerY);
   Q_INVOKABLE void switchInterface(const QString &mode);
 signals:
@@ -300,6 +309,7 @@ private:
   QString m_pendingName, m_pendingOperation;
   QVariant m_pendingValue;
   QString m_message = tr("starting the photo engine");
+  QString m_saveIssue, m_recoveryPath;
   int m_imageId = 0;
   int m_historyEnd = 0;
   quint64 m_frameRevision = 0;
