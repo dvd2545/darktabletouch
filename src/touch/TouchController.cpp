@@ -395,6 +395,7 @@ void EngineWorker::setParameter(QString operation, QString name, QVariant value,
                                  bool commit, quint64 revision)
 {
   if(!m_editor) return;
+  if(!commit && revision != m_revision->load()) return;
   beginEdit();
   const auto document = QJsonDocument(QJsonArray{QJsonValue::fromVariant(value)}).toJson(QJsonDocument::Compact);
   const auto scalar = document.mid(1, document.size() - 2);
@@ -739,17 +740,21 @@ QString TouchController::preview() const
 void TouchController::updateImages(const QJsonArray &images)
 {
   m_allImages = images.toVariantList();
-  m_images.clear();
+  QVariantList visibleImages;
   for(const auto &image : m_allImages)
-    if(m_showRejected || !image.toMap().value(QStringLiteral("rejected")).toBool()) m_images.append(image);
-  for(auto &item : m_images)
+    if(m_showRejected || !image.toMap().value(QStringLiteral("rejected")).toBool()) visibleImages.append(image);
+  for(auto &item : visibleImages)
   {
     auto map = item.toMap();
     map.insert(QStringLiteral("filename"), QFileInfo(map.value(QStringLiteral("path")).toString()).fileName());
     item = map;
   }
   m_busy = m_waitingFrame || m_exportRunning;
-  emit imagesChanged();
+  if(m_images != visibleImages)
+  {
+    m_images = visibleImages;
+    emit imagesChanged();
+  }
   emit stateChanged();
 }
 

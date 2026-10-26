@@ -51,7 +51,7 @@ with Qt 6.8 or newer. Windows builds enable it by default. Set
 
 The launcher accepts `--ui=touch|classic`, defaults to Touch, and stores the
 selection in `launcher.ini` inside the engine configuration directory. Use
-the launcher when switching interfaces: Touch's quick actions contain
+the launcher when switching interfaces: Touch's settings contain
 "switch to classic", and a managed Classic session has a "touch" button.
 The launcher waits for a successful process exit before honoring a new
 switch request. Failed saves keep the current Touch session open. A crash
@@ -75,22 +75,22 @@ editor includes native scalar/enum controls, reset, undo/redo, numeric
 entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
 markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 
-The editor opens with a compact photo strip and a narrow category rail.
-Light, Color, Detail, and Crop open contextual tool drawers; tapping the
-active category or Hide closes the drawer. All Tools retains access to
-all registered tools. A canvas tap toggles focus mode, hiding the toolbar,
-rail, drawer, and photo strip; a second tap restores the previous layout.
-Double-tap zoom, pinch, pan, crop, and image hold menus remain separate.
+The left hamburger menu offers Editor (the photo library), collections and
+filters, import sources, export, quick actions, and settings. Camera ingestion remains available
+in Classic. Library selection uses a floating lower-right action bar without
+resizing or repositioning the grid. Export appears there after photos are
+selected. All, none, invert, same film roll, untouched, and history operations
+remain available in the horizontally scrollable action row.
 
-The photo strip has Hidden, Compact, and Expanded states. Photos cycles
-these states, and an upward swipe on the fitted image restores a hidden
-strip. Zoomed images retain pan gestures; Photos also restores the strip.
-Settings contains the session's strip size and automatic hide control. Automatic hiding waits six seconds and avoids active strip
-scrolling, hover, and modal dialogs. Undo/Redo use accessible icon buttons;
-Hold Original is momentary and returns to the edit on release/cancel.
-Tap the filename for metadata. Compact quick actions groups comparison,
-fit, history, copy/paste, and settings; reset retains confirmation and
-interface switching lives in Settings.
+The editor opens with a photo strip and a narrow category rail. Light, Color,
+Detail, and Crop open contextual tool drawers. Tapping the canvas toggles
+focus mode; double-tapping controls zoom. Undo and redo float at the lower
+left and hide during crop editing. The image reaches the top of the window;
+navigation and history buttons float without filled backgrounds and use
+white icons with shadows. Export lives in the left menu. One bottom chevron
+toggles the photo strip; its height can still be adjusted with its handle. Swipe upward on the fitted canvas to restore the strip.
+Quick settings control automatic hiding. Image information appears briefly
+on opening a photo and can be recalled from the active filmstrip thumbnail.
 
 `UiMetrics.qml` converts reported physical screen density into a 9.5 mm
 touch target, divided by the device pixel ratio. Targets are bounded to
@@ -100,21 +100,19 @@ Qt applies Windows scaling to logical coordinates. Reported physical
 sizes can be inaccurate, so physical touch and Windows scaling still need
 hardware validation; simulated scale factors do not establish that.
 
-Numeric fields keep a readable value above a full touch-height slider.
-Tap a value for precision entry, or its labeled options control for the
-native default reset. The drawer offers whole-module reset. Explanations
-for enum controls remain in accessible descriptions and focus/hover hints.
-
-Image information appears in the upper-left corner when a photo opens,
-then fades after four seconds. Tap the filename to show it again. Filenames
-remain literal Unicode text; camera and exposure information come from the engine's metadata, with en-US numbers.
-Busy operations and errors remain visible even after transient status
-messages fade. Focus navigation scrolls tool controls and quick actions
-into view on smaller screens.
+Parameter names and full touch-height values share a row above each slider.
+Long names can wrap without obscuring numeric entries. Changed scalar, enum,
+and boolean values expose direct resets using their native defaults.
+Each module header has its own reset beside its enable switch, including
+collapsed modules. The all-modules icon opens the complete side panel
+without a second popup and keeps that view while parameters change;
+whole-image reset requires confirmation through the separate quick actions.
+Numeric drafts preserve precision and validate before committing. Popups and
+dialogs share dark surfaces with inset focus and close controls.
 
 Small pill handles resize the filmstrip height and module-panel width.
-Their hit areas follow the shared touch target, with the visible pill
-inside the panel boundary. Thumbnails and module controls are inset
+Their slim hit areas use the shared resize gutter and retain a 112-pixel
+long axis, with the visible pill inside the panel boundary. Thumbnails and module controls are inset
 beyond the handles' hit areas so resizing does not intercept their taps.
 Drag the filmstrip handle up or down, or the module handle left or right.
 The handles have larger touch areas, support arrow-key adjustment and
@@ -132,7 +130,10 @@ add a history item or round an unchanged parameter.
 Mouse-wheel zoom anchors the image under the pointer; pinch zoom tracks
 the midpoint between fingers, including midpoint movement. Rotation offers
 a numeric precise-angle field backed by the native rotate-and-perspective
-operation, in addition to orientation controls.
+operation, in addition to orientation controls. Constrain rotation fits a
+centered crop inside the valid source area while preserving original format.
+The bounds are stored in native rotation parameters for export, history,
+and undo; repeated angle changes start from uncropped geometry.
 
 Crop opens an uncropped preview with a movable frame, four touch handles,
 thirds guides, free/preset/custom aspect ratios, and orientation swap.
@@ -161,7 +162,7 @@ as Classic. History and quick-action panels scroll at smaller window sizes.
 
 ### Library collections and import
 
-The funnel button at the upper-right of the library opens collections,
+The collections and filters entry in the left menu opens collections,
 filters, and sort priorities in one dialog. Filter rules appear above the
 checkable collection list; empty default filters start collapsed. Folder rows expand into subfolders; parent
 checkboxes select descendants and show partial selections. Other supported
@@ -205,7 +206,9 @@ closes its editor before changing the catalog.
 Windows photo, folder, and export browsing uses native file dialogs.
 Import supports adding photos at their existing locations. Choose files or
 a folder, optionally include subfolders, and review supported files before
-adding them. Existing catalog entries are identified and skipped; select all
+adding them. Compact rows show each filename and an elided path, with the
+full path available through accessibility and hover hints. Existing catalog
+entries are identified and skipped; select all
 new files, none, or individual files. Dropped paths use the same review step.
 The source files stay in place. Import does not replace a collection or clear
 filters, and reports added, existing, and failed counts. Copy-and-import,

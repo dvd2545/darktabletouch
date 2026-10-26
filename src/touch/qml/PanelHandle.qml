@@ -12,8 +12,8 @@ Control {
     property real stepSize: 16
     signal adjusted(real delta)
     signal resetRequested()
-    implicitWidth: vertical ? metrics.touchHeight : 112
-    implicitHeight: vertical ? 112 : metrics.touchHeight
+    implicitWidth: vertical ? metrics.resizeGutter : 112
+    implicitHeight: vertical ? 112 : metrics.resizeGutter
     focusPolicy: Qt.StrongFocus
     Accessible.role: Accessible.Slider
     Accessible.description: qsTr("drag to resize; arrow keys adjust; double-tap or press confirm to reset")

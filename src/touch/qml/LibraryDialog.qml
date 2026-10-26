@@ -30,7 +30,6 @@ TouchDialog {
     title: qsTr("collections and filters")
     width: Math.min(880, parent.width - 32); height: Math.min(700, parent.height - 32)
     anchors.centerIn: parent; padding: 16
-    background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
 
     function propertyIndex(item) {
         for(let i = 0; i < properties.length; ++i) if(properties[i].item === item) return i

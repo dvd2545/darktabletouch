@@ -594,15 +594,22 @@ int dt_touch_editor_crop_apply(dt_touch_editor_t *editor, const float bounds[4],
   return TRUE;
 }
 
-static gboolean _crop_inside_source(dt_touch_editor_t *editor, double width, double height)
+static gboolean _crop_inside_source(dt_touch_editor_t *editor, double width, double height,
+                                    dt_iop_module_t *space)
 {
+  const dt_dev_pixelpipe_iop_t *piece = space
+    ? dt_dev_distort_get_iop_pipe(&editor->dev, &editor->pipe, space) : NULL;
+  const int target_width = piece ? piece->buf_out.width : editor->pipe.processed_width;
+  const int target_height = piece ? piece->buf_out.height : editor->pipe.processed_height;
   float points[2 * 81];
   for(int y = 0; y <= 8; y++) for(int x = 0; x <= 8; x++)
   {
     const int i = 2 * (y * 9 + x);
-    points[i] = (0.5 - width / 2 + width * x / 8) * editor->pipe.processed_width;
-    points[i + 1] = (0.5 - height / 2 + height * y / 8) * editor->pipe.processed_height;
+    points[i] = (0.5 - width / 2 + width * x / 8) * target_width;
+    points[i + 1] = (0.5 - height / 2 + height * y / 8) * target_height;
   }
+  if(space && !dt_dev_distort_transform_plus(&editor->dev, &editor->pipe, space->iop_order,
+                                            DT_DEV_TRANSFORM_DIR_FORW_EXCL, points, 81)) return FALSE;
   const dt_iop_module_t *rawprepare = _module(editor, "rawprepare", NULL);
   const dt_dev_pixelpipe_iop_t *raw = rawprepare
     ? dt_dev_distort_get_iop_pipe(&editor->dev, &editor->pipe, (dt_iop_module_t *)rawprepare) : NULL;
@@ -620,21 +627,56 @@ static gboolean _crop_inside_source(dt_touch_editor_t *editor, double width, dou
   return TRUE;
 }
 
-int dt_touch_editor_auto_crop(dt_touch_editor_t *editor, double aspect, float bounds[4], char **error)
+static int _auto_crop(dt_touch_editor_t *editor, double aspect, dt_iop_module_t *space,
+                      float bounds[4], char **error)
 {
   if(!editor || !editor->pipe_ready || !isfinite(aspect) || aspect <= 0)
     return _error(error, N_("automatic cropping needs a rendered image and a valid aspect ratio"));
-  const double relative = aspect * editor->pipe.processed_height / editor->pipe.processed_width;
+  const dt_dev_pixelpipe_iop_t *piece = space
+    ? dt_dev_distort_get_iop_pipe(&editor->dev, &editor->pipe, space) : NULL;
+  const int width_px = piece ? piece->buf_out.width : editor->pipe.processed_width;
+  const int height_px = piece ? piece->buf_out.height : editor->pipe.processed_height;
+  if(width_px < 1 || height_px < 1) return _error(error, N_("crop geometry is not ready"));
+  const double relative = aspect * height_px / width_px;
   const double width = fmin(1.0, relative), height = fmin(1.0, 1.0 / relative);
   double lo = 0, hi = 1;
   for(int iteration = 0; iteration < 24; iteration++)
   {
     const double scale = (lo + hi) / 2;
-    if(_crop_inside_source(editor, width * scale, height * scale)) lo = scale; else hi = scale;
+    if(_crop_inside_source(editor, width * scale, height * scale, space)) lo = scale; else hi = scale;
   }
   if(lo < 0.02) return _error(error, N_("automatic cropping could not find a valid centered frame"));
   bounds[0] = (1 - width * lo) / 2; bounds[1] = (1 - height * lo) / 2;
   bounds[2] = 1 - bounds[0]; bounds[3] = 1 - bounds[1];
+  return TRUE;
+}
+
+int dt_touch_editor_auto_crop(dt_touch_editor_t *editor, double aspect, float bounds[4], char **error)
+{
+  return _auto_crop(editor, aspect, NULL, bounds, error);
+}
+
+static int _constrain_rotation(dt_touch_editor_t *editor, dt_iop_module_t *module, char **error)
+{
+  const int *mode = module->get_p(module->params, "cropmode");
+  if(!mode || (*mode != 0 && *mode != 2)) return TRUE;
+  const char *names[] = { "cl", "ct", "cr", "cb" };
+  for(int i = 0; i < 4; i++) *(float *)module->get_p(module->params, names[i]) = i < 2 ? 0.0f : 1.0f;
+  dt_dev_add_history_item_ext(&editor->dev, module, TRUE, TRUE);
+  if(*mode == 0) return TRUE;
+  // fit in the uncropped rotation output so repeated angle edits do not compound the crop
+  uint8_t *pixels = NULL;
+  int width = 0, height = 0;
+  if(!dt_touch_editor_preview(editor, 160, 160, &pixels, &width, &height, error)) return FALSE;
+  dt_touch_free(pixels);
+  const dt_dev_pixelpipe_iop_t *piece = dt_dev_distort_get_iop_pipe(&editor->dev, &editor->pipe, module);
+  if(!piece || piece->buf_in.height < 1) return _error(error, N_("crop geometry is not ready"));
+  // original format uses the module input, as in src/iop/ashift.c:2725
+  const double aspect = (double)piece->buf_in.width / piece->buf_in.height;
+  float bounds[4];
+  if(!_auto_crop(editor, aspect, module, bounds, error)) return FALSE;
+  for(int i = 0; i < 4; i++) *(float *)module->get_p(module->params, names[i]) = bounds[i];
+  dt_dev_add_history_item_ext(&editor->dev, module, TRUE, TRUE);
   return TRUE;
 }
 
@@ -794,17 +836,35 @@ char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, c
     for(guint i = 0; i < json_array_get_length(angle_fields); i++)
     {
       JsonObject *field = json_array_get_object_element(angle_fields, i);
-      if(strcmp(json_object_get_string_member(field, "name"), "rotation")) continue;
+      const char *name = json_object_get_string_member(field, "name");
+      if(strcmp(name, "rotation") && strcmp(name, "cropmode")) continue;
       JsonNode *copy = json_node_copy(json_array_get_element(angle_fields, i));
       JsonObject *control = json_node_get_object(copy);
       json_object_set_string_member(control, "operation", "ashift");
-      json_object_set_string_member(control, "label", _("precise angle"));
-      json_object_set_string_member(control, "unit", _("deg"));
-      json_object_set_double_member(control, "step", 0.01);
-      json_object_set_double_member(control, "soft_min", -15.0);
-      json_object_set_double_member(control, "soft_max", 15.0);
+      if(!strcmp(name, "rotation"))
+      {
+        json_object_set_string_member(control, "label", _("precise angle"));
+        json_object_set_string_member(control, "unit", _("deg"));
+        json_object_set_double_member(control, "step", 0.01);
+        json_object_set_double_member(control, "soft_min", -15.0);
+        json_object_set_double_member(control, "soft_max", 15.0);
+      }
+      else
+      {
+        json_object_set_string_member(control, "label", _("constrain rotation"));
+        json_object_set_int_member(control, "value", json_object_get_int_member(control, "value") == 2 ? 2 : 0);
+        json_object_set_int_member(control, "default", 0);
+        JsonArray *choices = json_array_new();
+        for(int choice = 0; choice < 2; choice++)
+        {
+          JsonObject *entry = json_object_new();
+          json_object_set_int_member(entry, "value", choice ? 2 : 0);
+          json_object_set_string_member(entry, "name", choice ? _("original format") : _("off"));
+          json_array_add_object_element(choices, entry);
+        }
+        json_object_set_array_member(control, "values", choices);
+      }
       json_array_add_element(fields, copy);
-      break;
     }
     g_object_unref(angle); g_free(angle_schema);
   }
@@ -928,6 +988,8 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
   if(!ok) return _error(error, N_("parameter value has an invalid type or is outside its limits"));
   module->enabled = TRUE;
   dt_dev_add_history_item_ext(&editor->dev, module, TRUE, TRUE);
+  if(!strcmp(operation, "ashift") && (!strcmp(name, "rotation") || !strcmp(name, "cropmode")))
+    return _constrain_rotation(editor, module, error);
   return TRUE;
 }
 
@@ -952,9 +1014,14 @@ int dt_touch_editor_reset(dt_touch_editor_t *editor, const char *operation, char
     dt_iop_module_t *perspective = _module(editor, "ashift", error);
     if(!perspective) return FALSE;
     float *rotation = perspective->get_p(perspective->params, "rotation");
-    if(rotation && *rotation != 0.0f)
+    if(rotation)
     {
       *rotation = 0.0f;
+      const char *names[] = { "cl", "ct", "cr", "cb" };
+      for(int i = 0; i < 4; i++)
+        *(float *)perspective->get_p(perspective->params, names[i]) = i < 2 ? 0.0f : 1.0f;
+      *(int *)perspective->get_p(perspective->params, "cropmode") =
+        *(int *)perspective->get_p(perspective->default_params, "cropmode");
       dt_dev_add_history_item_ext(&editor->dev, perspective, perspective->enabled, TRUE);
     }
   }

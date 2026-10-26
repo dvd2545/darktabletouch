@@ -31,7 +31,6 @@ TouchDialog {
         if(!validPattern) return qsTr("enter a valid filename pattern in advanced options; use only {name}, {sequence}, or {id} tokens and no filename separators")
         return ""
     }
-    background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
     FolderDialog { id: destination; title: qsTr("export destination"); onAccepted: dialog.folder = selectedFolder }
     contentItem: ColumnLayout {
         ScrollView {
@@ -104,8 +103,8 @@ TouchDialog {
                             TextField { id: maxHeight; objectName: "exportMaxHeight"; Layout.fillWidth: true; implicitHeight: 64; text: "0"; Accessible.name: qsTr("maximum height in pixels"); validator: IntValidator { bottom: 0; top: 100000 } }
                         }
                     }
-                    Switch { id: upscale; text: qsTr("allow upscaling"); implicitHeight: 64 }
-                    Switch { id: highQuality; text: qsTr("high quality resampling"); checked: true; implicitHeight: 64 }
+                    TouchSwitch { id: upscale; text: qsTr("allow upscaling"); implicitHeight: 64 }
+                    TouchSwitch { id: highQuality; text: qsTr("high quality resampling"); checked: true; implicitHeight: 64 }
                     TouchComboBox { id: profile; Accessible.name: qsTr("export output profile"); Layout.fillWidth: true; implicitHeight: 64; model: [qsTr("sRGB output profile"), qsTr("image output profile")] }
                 }
             }

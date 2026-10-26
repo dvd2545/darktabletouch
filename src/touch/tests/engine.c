@@ -14,7 +14,9 @@
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <stdio.h>
+#include <string.h>
 #ifdef _WIN32
 #include "win/main_wrapper.h"
 #endif
@@ -56,7 +58,11 @@ static void _test_library(const char *filename, const char *folder, int first)
 {
   char *other_folder = g_build_filename(folder, "second folder", NULL);
   g_mkdir_with_parents(other_folder, 0700);
-  char *other = g_build_filename(other_folder, "second #%.CR2", NULL);
+  char *basename = g_path_get_basename(filename);
+  const char *extension = strrchr(basename, '.');
+  char *other_name = g_strconcat("second #%", extension ? extension : "", NULL);
+  char *other = g_build_filename(other_folder, other_name, NULL);
+  g_free(other_name);
   GFile *source = g_file_new_for_path(filename), *target = g_file_new_for_path(other);
   g_assert_true(g_file_copy(source, target, G_FILE_COPY_NONE, NULL, NULL, NULL, NULL));
   g_object_unref(source); g_object_unref(target);
@@ -124,7 +130,8 @@ static void _test_library(const char *filename, const char *folder, int first)
     _count("SELECT COUNT(*) FROM main.images i WHERE EXISTS (SELECT 1 FROM main.history_hash h"
            " WHERE h.imgid = i.id AND (h.current_hash = h.auto_hash OR h.current_hash IS NULL))"));
   json_array_remove_element(rules, 0);
-  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILENAME, "รูป.CR2", 0, 0));
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILENAME, basename, 0, 0));
+  g_free(basename);
   _apply_collection(settings, 1);
   g_assert_cmpint(_count("SELECT imgid FROM memory.collected_images"), ==, first);
   json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILENAME, "second%", 1, 0));
@@ -322,7 +329,10 @@ int main(int argc, char **argv)
   char *cache = g_build_filename(folder, "แคช", NULL);
   char *config = g_build_filename(folder, "ตั้งค่า", NULL);
   g_mkdir_with_parents(folder, 0700);
-  char *filename = g_build_filename(folder, "รูป.CR2", NULL);
+  char *basename = g_path_get_basename(argv[1]);
+  char *test_name = g_strconcat("รูป-", basename, NULL);
+  char *filename = g_build_filename(folder, test_name, NULL);
+  g_free(basename);
   GFile *source = g_file_new_for_path(argv[1]);
   GFile *target = g_file_new_for_path(filename);
   g_assert_true(g_file_copy(source, target, G_FILE_COPY_NONE, NULL, NULL, NULL, &error));
@@ -352,7 +362,8 @@ int main(int argc, char **argv)
   g_assert_no_error(error);
   JsonObject *metadata = json_node_get_object(json_parser_get_root(parser));
   g_assert_cmpint(json_object_get_int_member(metadata, "imgid"), ==, image_id);
-  g_assert_cmpstr(json_object_get_string_member(metadata, "filename"), ==, "รูป.CR2");
+  g_assert_cmpstr(json_object_get_string_member(metadata, "filename"), ==, test_name);
+  g_free(test_name);
   g_assert_nonnull(json_object_get_object_member(metadata, "camera"));
   g_assert_cmpfloat(json_object_get_double_member(json_object_get_object_member(metadata, "exif"), "iso"), >, 0);
   dt_touch_free(information);
@@ -406,12 +417,42 @@ int main(int argc, char **argv)
   char *rotation_schema = dt_touch_editor_module(editor, "flip", &message);
   g_assert_nonnull(rotation_schema); g_assert_null(message);
   g_assert_nonnull(strstr(rotation_schema, "precise angle"));
+  g_assert_nonnull(strstr(rotation_schema, "constrain rotation"));
   g_free(rotation_schema);
   g_assert_true(dt_touch_editor_set(editor, "ashift", "rotation", "1.25", &message));
   uint8_t *rotated = NULL;
   g_assert_true(dt_touch_editor_preview(editor, 512, 512, &rotated, &w2, &h2, &message));
   g_assert_true(w2 != width || h2 != height || memcmp(edited, rotated, (size_t)w2 * h2 * 4) != 0);
-  g_free(rotated);
+  const int rotated_width = w2, rotated_height = h2;
+  g_assert_true(dt_touch_editor_set(editor, "ashift", "cropmode", "2", &message));
+  uint8_t *constrained = NULL;
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &constrained, &w2, &h2, &message));
+  g_assert_null(message);
+  g_assert_cmpfloat(fabs((double)w2 / h2 - (double)width / height), <, 0.01);
+  const int constrained_width = w2, constrained_height = h2;
+  g_assert_true(dt_touch_editor_set(editor, "ashift", "rotation", "7.5", &message));
+  uint8_t *changed_rotation = NULL;
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &changed_rotation, &w2, &h2, &message));
+  g_assert_cmpfloat(fabs((double)w2 / h2 - (double)width / height), <, 0.01);
+  g_free(changed_rotation);
+  char *rotation_export = g_build_filename(folder, "constrained rotation.png", NULL);
+  g_assert_true(dt_touch_editor_save(editor, &message));
+  g_assert_true(dt_touch_export_image(image_id, rotation_export, "png", 512, 512, 95, 8, FALSE, TRUE, TRUE, &message));
+  int export_width = 0, export_height = 0;
+  g_assert_nonnull(gdk_pixbuf_get_file_info(rotation_export, &export_width, &export_height));
+  g_assert_cmpfloat(fabs((double)export_width / export_height - (double)width / height), <, 0.01);
+  g_assert_cmpint(g_unlink(rotation_export), ==, 0);
+  g_free(rotation_export);
+  g_assert_true(dt_touch_editor_set(editor, "ashift", "rotation", "1.25", &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &changed_rotation, &w2, &h2, &message));
+  g_assert_cmpint(w2, ==, constrained_width); g_assert_cmpint(h2, ==, constrained_height);
+  g_assert_cmpmem(constrained, (size_t)w2 * h2 * 4, changed_rotation, (size_t)w2 * h2 * 4);
+  g_free(changed_rotation); g_free(constrained);
+  g_assert_true(dt_touch_editor_set(editor, "ashift", "cropmode", "0", &message));
+  g_assert_true(dt_touch_editor_preview(editor, 512, 512, &changed_rotation, &w2, &h2, &message));
+  g_assert_cmpint(w2, ==, rotated_width); g_assert_cmpint(h2, ==, rotated_height);
+  g_assert_cmpmem(rotated, (size_t)w2 * h2 * 4, changed_rotation, (size_t)w2 * h2 * 4);
+  g_free(changed_rotation); g_free(rotated);
   dt_touch_state_t *crop_before = dt_touch_editor_capture(editor);
   g_assert_true(dt_touch_editor_enable(editor, "crop", FALSE, &message));
   uint8_t *crop_preview = NULL;

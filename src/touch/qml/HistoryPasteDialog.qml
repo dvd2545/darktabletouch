@@ -20,7 +20,6 @@ TouchDialog {
     title: qsTr("paste selected history")
     modal: true; focus: true; anchors.centerIn: parent
     width: Math.min(760, parent.width - 32); height: Math.min(700, parent.height - 32)
-    background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
     function selectSteps(mode) {
         choices = choices.map(function(step) {
             const copy = Object.assign({}, step)

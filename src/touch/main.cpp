@@ -123,6 +123,7 @@ int main(int argc, char **argv)
   double fieldBaseline = 0, fieldDefault = 0;
   qreal drawerCanvasWidth = 0, compactStripHeight = 0;
   bool controlsFailed = false;
+  int unchangedCollectionRefreshes = 0;
   QElapsedTimer pointerClock;
   pointerClock.start();
   QPointF touchPosition;
@@ -133,6 +134,9 @@ int main(int argc, char **argv)
     event.setTimestamp(pointerClock.elapsed() + 1);
     QCoreApplication::sendEvent(window, &event);
   };
+  QObject::connect(&controller, &TouchController::imagesChanged, &app, [&] {
+    if(libraryStage >= 1 && libraryStage <= 3) ++unchangedCollectionRefreshes;
+  });
   QTimer libraryTest;
   libraryTest.setInterval(180);
   const auto libraryScreenshot = [&](const QString &suffix) {
@@ -167,9 +171,11 @@ int main(int argc, char **argv)
       case 2:
         if(selected != 0) { fail("invert did not clear the selected collection"); return; }
         controller.libraryCommand(QStringLiteral("single"), {}, controller.imageId());
+        controller.setShowRejected(controller.showRejected());
         break;
       case 3:
         if(selected != 1) { fail("single selection did not select the image"); return; }
+        if(unchangedCollectionRefreshes) { fail("selection unnecessarily rebuilt the photo collection"); return; }
         QMetaObject::invokeMethod(collectionDialog, "open");
         break;
       case 4:
@@ -257,7 +263,7 @@ int main(int argc, char **argv)
       {
         auto overlay = window->findChild<QObject *>(QStringLiteral("cropOverlay"));
         if(!controller.cropEditing() || !overlay) { fail("interactive crop did not start"); return; }
-        for(const auto &name : {"editorUndoButton", "editorCompareButton", "editorExportButton"})
+        for(const auto &name : {"editorUndoButton", "editorExportButton"})
         {
           auto action = window->findChild<QObject *>(QString::fromLatin1(name));
           if(!action || action->property("enabled").toBool()) { fail("editor actions must respect the active crop transaction"); return; }
@@ -549,7 +555,8 @@ int main(int argc, char **argv)
         auto comboBackground = combo->property("background").value<QQuickItem *>();
         if(!text || !background || text->property("color").value<QColor>() != QColor(QStringLiteral("#07191b"))
            || background->property("color").value<QColor>() != QColor(QStringLiteral("#00dbe5"))
-           || !comboBackground || comboBackground->property("color").value<QColor>() != QColor(QStringLiteral("#202329"))
+           || !comboBackground || comboBackground->property("color").value<QColor>() != QColor(combo->property("down").toBool()
+                ? QStringLiteral("#304147") : combo->property("hovered").toBool() ? QStringLiteral("#253439") : QStringLiteral("#202329"))
            || !libraryScreenshot(QStringLiteral("-dropdown"))) { fail("dropdown selection contrast is invalid"); return; }
         QMetaObject::invokeMethod(popup, "close"); QMetaObject::invokeMethod(dialog, "close");
         controller.setEditorVisible(true);
@@ -559,40 +566,36 @@ int main(int argc, char **argv)
       case 80:
       {
         auto bar = window->findChild<QQuickItem *>(QStringLiteral("editorActionBar"));
-        auto compare = window->findChild<QObject *>(QStringLiteral("editorCompareButton"));
-        auto back = window->findChild<QObject *>(QStringLiteral("editorLibraryButton"));
-        if(!bar || !bar->isVisible() || !compare || !back || bar->height() < 48 || bar->width() > window->width())
-        { fail("persistent editor actions are not usable at the supported window size"); return; }
-        qreal right = 0;
-        for(const auto &name : {"editorLibraryButton", "editorUndoButton", "editorRedoButton", "editorCompareButton", "editorExportButton"})
-        {
-          auto action = window->findChild<QQuickItem *>(QString::fromLatin1(name));
-          if(!action || !action->isVisible()) { fail("persistent editor action is missing"); return; }
-          const auto position = action->mapToItem(bar, QPointF());
-          if(position.x() < right || position.y() < 0 || position.x() + action->width() > bar->width()
-             || position.y() + action->height() > bar->height())
-          { fail("persistent editor actions overlap or exceed their toolbar"); return; }
-          right = position.x() + action->width();
-        }
-        auto target = qobject_cast<QQuickItem *>(compare);
-        if(!target || !target->isEnabled() || !back->property("enabled").toBool())
-        { fail("persistent navigation actions are unexpectedly disabled"); return; }
-        const auto position = target->mapToScene(QPointF(target->width() / 2, target->height() / 2));
-        touchPosition = position;
-        pointer(QEvent::MouseButtonPress, position);
+        auto history = window->findChild<QQuickItem *>(QStringLiteral("editorHistoryBar"));
+        if(!bar || !bar->isVisible() || !history || !history->isVisible() || bar->height() < 48)
+        { fail("editor toolbar or floating history actions are unavailable"); return; }
+        auto menu = window->findChild<QQuickItem *>(QStringLiteral("editorNavigationButton"));
+        auto toggle = window->findChild<QQuickItem *>(QStringLiteral("photoStripToggle"));
+        auto canvas = window->findChild<QQuickItem *>(QStringLiteral("imageStage"));
+        if(!menu || !menu->isVisible() || !toggle || !toggle->isVisible()
+           || canvas->mapToScene(QPointF()).y() != 0
+           || window->findChild<QObject *>(QStringLiteral("filmstripStateButton")))
+        { fail("floating editor navigation did not preserve a full-height canvas"); return; }
+        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("navigationDrawer")), "open");
         break;
       }
       case 81:
-        if(!controller.before()) { fail("persistent compare did not show the original"); return; }
-        pointer(QEvent::MouseButtonRelease, touchPosition);
-        if(controller.before()) { fail("releasing comparison did not restore the edit"); return; }
+        if(!window->findChild<QObject *>(QStringLiteral("navigationDrawer"))->property("visible").toBool())
+        { fail("the left navigation drawer did not open"); return; }
         QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("editorLibraryButton")), "clicked");
         break;
       case 82:
       {
         if(controller.editorVisible() || controller.before() || !controller.imageId())
         { fail("returning to the library lost the editing context"); return; }
+        auto grid = window->findChild<QQuickItem *>(QStringLiteral("libraryGrid"));
+        const auto gridSize = grid->size();
+        const auto scrollPosition = grid->property("contentY");
         window->setProperty("selectionMode", true);
+        QCoreApplication::processEvents();
+        if(grid->size() != gridSize || grid->property("contentY") != scrollPosition)
+        { fail("selection mode moved the photo grid"); return; }
+        if(!libraryScreenshot(QStringLiteral("-selection"))) { fail("selection screenshot failed"); return; }
         auto paste = window->findChild<QObject *>(QStringLiteral("pasteSelectedButton"));
         auto reset = window->findChild<QObject *>(QStringLiteral("resetSelectedButton"));
         if(!paste || !reset) { fail("selection actions are unavailable"); return; }
@@ -607,6 +610,9 @@ int main(int argc, char **argv)
         { fail("selection reset did not retain its target scope"); return; }
         QMetaObject::invokeMethod(resetDialog, "close");
         window->setProperty("selectionMode", false);
+        QCoreApplication::processEvents();
+        if(grid->size() != gridSize || grid->property("contentY") != scrollPosition)
+        { fail("leaving selection mode moved the photo grid"); return; }
         controller.libraryCommand(QStringLiteral("none"));
         break;
       }
@@ -699,7 +705,7 @@ int main(int argc, char **argv)
         numeric->forceActiveFocus();
         numeric->setProperty("text", QStringLiteral("9999999"));
         numeric->setProperty("edited", true);
-        auto next = window->findChild<QQuickItem *>(QStringLiteral("editorLibraryButton"));
+        auto next = window->findChild<QQuickItem *>(QStringLiteral("editorNavigationButton"));
         if(!next) { fail("numeric blur target is unavailable"); return; }
         next->forceActiveFocus();
         break;
@@ -741,11 +747,8 @@ int main(int argc, char **argv)
       {
         if(qAbs(controller.values().value(QStringLiteral("exposure")).toDouble() - 2.25) > 0.00001)
         { fail("a valid numeric edit did not commit"); return; }
-        auto options = findItem(window->contentItem(), QStringLiteral("field-options-exposure"));
-        if(!options) { fail("field options are unavailable"); return; }
-        QMetaObject::invokeMethod(options, "clicked");
         auto reset = findItem(window->contentItem(), QStringLiteral("reset-exposure"));
-        if(!reset || !reset->property("enabled").toBool()) { fail("field reset is unavailable"); return; }
+        if(!reset || !reset->property("enabled").toBool() || !reset->isVisible()) { fail("inline field reset is unavailable"); return; }
         QMetaObject::invokeMethod(reset, "clicked");
         break;
       }
@@ -834,8 +837,8 @@ int main(int argc, char **argv)
         QMetaObject::invokeMethod(window, "cycleFilmstrip");
         break;
       case 105:
-        if(window->findChild<QQuickItem *>(QStringLiteral("filmstripBar"))->height() <= compactStripHeight)
-        { fail("expanded photos did not grow"); return; }
+        if(window->findChild<QQuickItem *>(QStringLiteral("filmstripBar"))->isVisible())
+        { fail("the photo toggle did not hide the strip"); return; }
         QMetaObject::invokeMethod(window, "toggleChrome");
         break;
       case 106:
@@ -872,6 +875,60 @@ int main(int argc, char **argv)
         if(window->property("viewZoom").toDouble() != 2 || window->property("distractionFree").toBool())
         { fail("double-tap zoom also toggled editor controls"); return; }
         window->setProperty("viewZoom", 1);
+        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("quickSettings")), "open");
+        break;
+      case 117:
+      {
+        auto dialog = window->findChild<QObject *>(QStringLiteral("quickSettings"));
+        auto close = dialog->findChild<QQuickItem *>(QStringLiteral("dialogCloseButton"));
+        auto background = dialog->property("background").value<QQuickItem *>();
+        if(!close || !background || !dialog->property("opened").toBool())
+        { fail("quick settings did not open"); return; }
+        const auto bounds = close->mapRectToItem(background, close->boundingRect());
+        const auto popupBounds = background->mapRectToScene(background->boundingRect());
+        if(popupBounds.top() < 8 || popupBounds.bottom() > window->height() - 8
+           || popupBounds.left() < 8 || popupBounds.right() > window->width() - 8
+           || bounds.left() < 2 || bounds.top() < 2 || bounds.right() > background->width() - 2
+           || bounds.bottom() > background->height() - 2
+           || background->height() > window->height() || !libraryScreenshot(QStringLiteral("-settings")))
+        { fail("quick settings close and focus bounds exceed the popup"); return; }
+        QMetaObject::invokeMethod(close, "clicked");
+        historyWait = 0;
+        break;
+      }
+      case 118:
+        if(window->findChild<QObject *>(QStringLiteral("quickSettings"))->property("visible").toBool()) {
+          if(++historyWait < 10) return;
+          fail("quick settings did not close"); return;
+        }
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("allToolsButton")), "clicked");
+        break;
+      case 119:
+        if(!window->property("toolsOpen").toBool() || window->property("toolCategory").toString() != QStringLiteral("all")
+           || window->property("modalOpen").toBool()
+           || !findItem(window->contentItem(), QStringLiteral("card-exposure"))->isVisible()
+           || !findItem(window->contentItem(), QStringLiteral("card-agx"))->isVisible())
+        { fail("all modules did not open directly in the side panel"); return; }
+        window->setProperty("expandedTool", QString());
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("tool-agx")), "clicked");
+        if(window->property("toolCategory").toString() != QStringLiteral("all"))
+        { fail("selecting a module hid the all-modules list"); return; }
+        window->setProperty("expandedTool", QString());
+        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("moduleReset-exposure")), "clicked");
+        break;
+      case 120:
+        if(!window->property("expandedTool").toString().isEmpty()
+           || window->property("toolCategory").toString() != QStringLiteral("all")
+           || qAbs(controller.values().value(QStringLiteral("exposure")).toDouble() - fieldDefault) > 0.00001)
+        {
+          QTextStream(stderr) << "reset expanded=" << window->property("expandedTool").toString()
+            << " category=" << window->property("toolCategory").toString()
+            << " value=" << controller.values().value(QStringLiteral("exposure")).toDouble()
+            << " default=" << fieldDefault << '\n';
+          libraryScreenshot(QStringLiteral("-reset-module-debug"));
+          fail("resetting a collapsed module changed the panel view or missed its default"); return;
+        }
+        if(!libraryScreenshot(QStringLiteral("-all-modules"))) { fail("all-modules screenshot failed"); return; }
         controller.setEditorVisible(false);
         libraryStage = 24;
         break;
@@ -928,7 +985,7 @@ int main(int argc, char **argv)
         auto info = window->findChild<QQuickItem *>(QStringLiteral("imageInformation"));
         auto strip = window->findChild<QQuickItem *>(QStringLiteral("filmstripBar"));
         auto panel = window->findChild<QQuickItem *>(QStringLiteral("toolPanel"));
-        auto menu = window->findChild<QQuickItem *>(QStringLiteral("editorMenuButton"));
+        auto menu = window->findChild<QQuickItem *>(QStringLiteral("photoStripToggle"));
         auto filmstrip = window->findChild<QQuickItem *>(QStringLiteral("filmstrip"));
         auto imageStage = window->findChild<QQuickItem *>(QStringLiteral("imageStage"));
         auto thumb = findItem(window->contentItem(), QStringLiteral("filmThumbnail-") + QString::number(controller.imageId()));
@@ -936,10 +993,8 @@ int main(int argc, char **argv)
            || thumb->property("status").toInt() != 1 || thumb->width() <= 0 || thumb->height() <= 0
            || controller.imageInformation().value(QStringLiteral("filename")).toString() != QFileInfo(testPhoto).fileName()
            || menu->height() < 56 || menu->width() < 56
-           || menu->mapToScene(QPointF()).y() < strip->mapToScene(QPointF()).y()
-           || menu->mapToScene(QPointF(0, menu->height())).y() > strip->mapToScene(QPointF(0, strip->height())).y()
-           || menu->mapToScene(QPointF()).y() < imageStage->mapToScene(QPointF(0, imageStage->height())).y()
-           || menu->mapToScene(QPointF(menu->width(), 0)).x() > filmstrip->mapToScene(QPointF()).x()
+           || menu->mapToScene(QPointF()).y() < imageStage->mapToScene(QPointF()).y()
+           || menu->mapToScene(QPointF(0, menu->height())).y() > imageStage->mapToScene(QPointF(0, imageStage->height())).y() + 1
            || strip->mapToScene(QPointF(strip->width(), 0)).x() > panel->mapToScene(QPointF()).x() + 1)
         { QTextStream(stderr) << "editor layout or image information is invalid\n"; controller.shutdown(); return; }
         auto imageCanvas = window->findChild<QQuickItem *>(QStringLiteral("imageCanvas"));
@@ -972,8 +1027,10 @@ int main(int argc, char **argv)
         }
         auto filmHandle = window->findChild<QQuickItem *>(QStringLiteral("filmstripResizeHandle"));
         auto moduleHandle = window->findChild<QQuickItem *>(QStringLiteral("moduleResizeHandle"));
-        if(!filmHandle || !moduleHandle || filmHandle->width() < 112 || filmHandle->height() < 56
-           || moduleHandle->width() < 56 || moduleHandle->height() < 112
+        if(!filmHandle || !moduleHandle || filmHandle->width() < 112 || filmHandle->height() < 20
+           || moduleHandle->width() < 20 || moduleHandle->height() < 112
+           || !filmHandle->parentItem()->boundingRect().contains(filmHandle->mapRectToItem(filmHandle->parentItem(), filmHandle->boundingRect()))
+           || !moduleHandle->parentItem()->boundingRect().contains(moduleHandle->mapRectToItem(moduleHandle->parentItem(), moduleHandle->boundingRect()))
            || filmstrip->height() < 56
            || filmstrip->mapToScene(QPointF()).y() < filmHandle->mapToScene(QPointF(0, filmHandle->height())).y())
         { QTextStream(stderr) << "panel resize handles are unavailable\n"; controller.shutdown(); return; }
@@ -987,7 +1044,7 @@ int main(int argc, char **argv)
           QMetaObject::invokeMethod(moduleHandle, "adjusted", Q_ARG(double, 10000));
           QTimer::singleShot(150, &app, [&, strip, panel, filmHandle, moduleHandle, imageStage, menu] {
             if(imageStage->width() < 319 || strip->height() > window->height() * 0.45 + 1
-               || menu->mapToScene(QPointF()).y() < imageStage->mapToScene(QPointF(0, imageStage->height())).y())
+               || menu->mapToScene(QPointF(0, menu->height())).y() > imageStage->mapToScene(QPointF(0, imageStage->height())).y() + 1)
             { QTextStream(stderr) << "resizing covered the image or moved the menu into the viewport\n"; controller.shutdown(); return; }
             if(!screenshot.isEmpty())
             {

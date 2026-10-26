@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 TouchDialog {
     id: dialog
+    UiMetrics { id: reviewMetrics; pixelDensity: dialog.parent.Screen.pixelDensity; pixelRatio: dialog.parent.Screen.devicePixelRatio }
     required property var photoController
     property var chosen: ({})
     readonly property int selectedCount: Object.keys(chosen).filter(function(key) { return chosen[key] }).length
@@ -14,7 +15,6 @@ TouchDialog {
     width: Math.min(800, parent.width - 32)
     height: Math.min(650, parent.height - 32)
     padding: 16
-    background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
     function selectAll(value) {
         const next = {}
         for(const item of photoController.importCandidates) if(!item.existing) next[item.path] = value
@@ -34,13 +34,27 @@ TouchDialog {
             Label { Layout.fillWidth: true; horizontalAlignment: Text.AlignRight; text: qsTr("%1 selected").arg(dialog.selectedCount); color: "#e6eef0" }
         }
         ListView {
-            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 8
+            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 4
             model: dialog.photoController.importCandidates
             delegate: TouchButton {
                 required property var modelData
                 required property int index
-                width: ListView.view.width; implicitHeight: Math.max(84, contentItem.implicitHeight + 28)
-                text: (modelData.existing ? qsTr("already in library") : dialog.chosen[modelData.path] ? "\u2713" : "\u25a1") + "  " + modelData.path
+                width: ListView.view.width; implicitHeight: reviewMetrics.touchHeight
+                padding: 8
+                text: modelData.filename
+                Accessible.name: modelData.filename
+                Accessible.description: modelData.path + (modelData.existing ? " - " + qsTr("already in library") : "")
+                ToolTip.visible: hovered || activeFocus; ToolTip.text: modelData.path
+                contentItem: RowLayout {
+                    spacing: reviewMetrics.gap
+                    Icon { name: modelData.existing || dialog.chosen[modelData.path] ? "check" : "add"; color: dialog.chosen[modelData.path] ? "#07191b" : reviewMetrics.muted; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
+                    ColumnLayout {
+                        spacing: 2; Layout.fillWidth: true; Layout.minimumWidth: 0
+                        Label { text: modelData.filename; textFormat: Text.PlainText; font.pixelSize: reviewMetrics.bodySize; color: dialog.chosen[modelData.path] ? "#07191b" : reviewMetrics.text; Layout.fillWidth: true; elide: Text.ElideMiddle }
+                        Label { text: modelData.path; textFormat: Text.PlainText; font.pixelSize: reviewMetrics.captionSize; color: dialog.chosen[modelData.path] ? "#173c40" : reviewMetrics.muted; Layout.fillWidth: true; elide: Text.ElideMiddle }
+                    }
+                    Label { text: qsTr("already in library"); visible: modelData.existing; color: reviewMetrics.muted; font.pixelSize: reviewMetrics.captionSize }
+                }
                 checked: !!dialog.chosen[modelData.path]; enabled: !modelData.existing
                 onClicked: dialog.toggle(modelData.path)
                 onActiveFocusChanged: if(activeFocus) { ListView.view.currentIndex = index; ListView.view.positionViewAtIndex(index, ListView.Contain) }

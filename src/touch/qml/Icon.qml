@@ -3,6 +3,8 @@ import QtQuick
 Canvas {
     id: icon
     property string name: ""
+    property bool shadowed: false
+    onShadowedChanged: requestPaint()
     property color color: "#e6eef0"
     implicitWidth: 24; implicitHeight: 24
     onNameChanged: requestPaint()
@@ -12,6 +14,7 @@ Canvas {
     onPaint: {
         const c = getContext("2d")
         c.reset(); c.scale(width / 24, height / 24)
+        c.shadowColor = shadowed ? "#c0000000" : "transparent"; c.shadowBlur = shadowed ? 4 : 0; c.shadowOffsetY = shadowed ? 1 : 0
         c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.8
         c.lineCap = "round"; c.lineJoin = "round"
         function line(points) { c.beginPath(); c.moveTo(points[0], points[1]); for(let i = 2; i < points.length; i += 2) c.lineTo(points[i], points[i+1]); c.stroke() }
@@ -22,6 +25,7 @@ Canvas {
         else if(name === "fit") { line([3,9,3,3,9,3]); line([15,3,21,3,21,9]); line([21,15,21,21,15,21]); line([9,21,3,21,3,15]) }
         else if(name === "history") { c.beginPath(); c.arc(12,12,9,0,Math.PI*2); c.stroke(); line([12,6,12,12,16,14]) }
         else if(name === "chevron-right") line([9,5,16,12,9,19])
+        else if(name === "chevron-up") line([5,15,12,8,19,15])
         else if(name === "chevron-down") line([5,9,12,16,19,9])
         else if(name === "menu") { line([4,6,20,6]); line([4,12,20,12]); line([4,18,20,18]) }
         else if(name === "more") { for(let x = 5; x <= 19; x += 7) { c.beginPath(); c.arc(x,12,1.5,0,Math.PI*2); c.fill() } }

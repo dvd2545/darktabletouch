@@ -369,8 +369,10 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 ## Touch UI labels
 
 Keep visible text beside or below action icons in `src/touch/qml/`.
-The compact editor Undo/Redo controls are the exception: keep their
-accessible names, tooltips, and disabled states when hiding their labels.
+Floating editor navigation, Undo/Redo, the photo-strip chevron, all-modules,
+and per-module/per-value reset controls may use icons alone. Keep accessible
+names, tooltips, focus indicators, and disabled states for those controls.
+Library selection retains a visible text label.
 Use the shared `TouchButton` label by default. When space is limited, use
 short translated labels and a stacked icon/text layout rather than hiding
 the text. Check the library, editor, and dialogs at 960x540 and 1280x720

@@ -7,14 +7,16 @@ Control {
     property string text: ""
     signal clicked()
     signal pressAndHold()
-    implicitWidth: 64; implicitHeight: 64
+    UiMetrics { id: metrics; pixelDensity: control.Screen.pixelDensity; pixelRatio: control.Screen.devicePixelRatio }
+    implicitWidth: metrics.touchHeight; implicitHeight: metrics.touchHeight
+    opacity: enabled ? 1 : 0.55
     focusPolicy: Qt.StrongFocus; hoverEnabled: true
     Accessible.role: Accessible.Button
     Accessible.onPressAction: clicked()
     background: Rectangle {
-        radius: 12
-        color: control.checked ? "#00dbe5" : tap.pressed ? "#304147" : control.hovered ? "#253439" : "#1c272c"
-        border.width: control.activeFocus ? 2 : 1
+        radius: metrics.radius
+        color: tap.pressed ? "#304147" : control.checked ? "#153439" : control.hovered ? "#253439" : "#1c272c"
+        border.width: control.activeFocus || control.checked ? 2 : 1
         border.color: control.activeFocus || control.checked ? "#00dbe5" : "#334249"
     }
     TapHandler {

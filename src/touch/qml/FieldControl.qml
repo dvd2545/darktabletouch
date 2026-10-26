@@ -17,6 +17,18 @@ Item {
     property real increment: typeof field.step === "number" ? field.step : integerField ? 1 : field.name === "black" ? 0.0001 : 0.01
     implicitHeight: Math.max(metrics.touchHeight, fieldLoader.item ? fieldLoader.item.implicitHeight : 0)
 
+    signal resetRequested()
+    readonly property bool changedFromDefault: field.default !== undefined && field.value !== undefined
+        && (numericField || enumField ? Number(field.value) !== Number(field.default) : Boolean(field.value) !== Boolean(field.default))
+    component ResetButton: TouchButton {
+        objectName: "reset-" + root.field.name
+        text: qsTr("reset %1 to default").arg(root.label); iconName: "reset"; showLabel: false; flat: true
+        visible: root.changedFromDefault
+        enabled: root.field.editable !== false
+        Layout.preferredWidth: metrics.touchHeight; Layout.preferredHeight: metrics.touchHeight
+        onClicked: { root.resetRequested(); controller.setParameter(root.field.name, root.field.default, true, root.field.operation || "") }
+    }
+
     Loader {
         id: fieldLoader
         anchors.fill: parent
@@ -33,24 +45,28 @@ Item {
 
     Component {
         id: booleanControl
-        Switch {
-            objectName: "parameter-" + root.field.name
-            text: root.label
-            Accessible.name: root.label
-            checked: Boolean(root.field.value)
-            implicitHeight: metrics.touchHeight
-            font.pixelSize: metrics.bodySize
-            focusPolicy: Qt.StrongFocus
-            enabled: root.field.editable !== false
-            onToggled: if(enabled) controller.setParameter(root.field.name, checked, true, root.field.operation || "")
+        RowLayout {
+            TouchSwitch {
+                Layout.fillWidth: true
+                objectName: "parameter-" + root.field.name
+                text: root.label
+                Accessible.name: root.label
+                checked: Boolean(root.field.value)
+                implicitHeight: metrics.touchHeight
+                font.pixelSize: metrics.bodySize
+                focusPolicy: Qt.StrongFocus
+                enabled: root.field.editable !== false
+                onToggled: if(enabled) controller.setParameter(root.field.name, checked, true, root.field.operation || "")
+            }
+            ResetButton {}
         }
     }
 
     Component {
         id: enumControl
         RowLayout {
-            spacing: metrics.gap
-            Label { text: root.label; color: metrics.muted; font.pixelSize: metrics.captionSize; Layout.preferredWidth: 70; wrapMode: Text.Wrap }
+            spacing: 4
+            Label { text: root.label; color: metrics.text; font.pixelSize: metrics.captionSize + 1; Layout.preferredWidth: Math.min(96, root.width * 0.25); wrapMode: Text.Wrap }
             TouchComboBox {
                 objectName: "parameter-" + root.field.name
                 Accessible.name: root.label
@@ -80,6 +96,7 @@ Item {
                 }
                 onActivated: function(index) { if(enabled) controller.setParameter(root.field.name, root.field.values[index].value, true, root.field.operation || "") }
             }
+            ResetButton {}
         }
     }
 
@@ -89,14 +106,10 @@ Item {
             spacing: 0
             RowLayout {
                 Layout.fillWidth: true; spacing: 4
-                TouchButton {
-                    objectName: "field-options-" + root.field.name
+                Label {
                     text: root.label + (root.field.unit ? " (" + root.field.unit + ")" : "")
-                    iconName: "more"; flat: true; padding: 4
-                    Layout.fillWidth: true; Layout.minimumWidth: 0
-                    font.pixelSize: metrics.captionSize
-                    Accessible.description: qsTr("value options and reset")
-                    onClicked: fieldActions.open()
+                    color: metrics.text; font.pixelSize: metrics.captionSize + 1
+                    Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.Wrap
                 }
                 TextField {
                     id: numeric
@@ -122,7 +135,9 @@ Item {
                     }
                     function engineText() {
                         const value = Number(root.field.value || 0)
-                        return numeric.activeFocus || root.integerField ? String(value) : String(Number(value.toPrecision(6)))
+                        if(numeric.activeFocus || root.integerField) return String(value)
+                        const decimals = Math.min(6, Math.max(0, Math.ceil(-Math.log10(root.increment))))
+                        return String(Number(value.toFixed(decimals)))
                     }
                     function finishEdit() {
                         if(!edited || !enabled) return
@@ -147,10 +162,10 @@ Item {
                         else finishEdit()
                     }
                     onTextEdited: edited = true
-                    Layout.preferredWidth: Math.min(132, root.width * 0.44)
+                    Layout.preferredWidth: Math.max(80, metrics.touchHeight * 1.2); Layout.minimumWidth: 80
                     Layout.preferredHeight: metrics.touchHeight
-                    font.pixelSize: 14
-                    padding: 6
+                    font.pixelSize: metrics.bodySize
+                    padding: metrics.inset
                     horizontalAlignment: TextInput.AlignHCenter
                     selectByMouse: true
                     inputMethodHints: Qt.ImhFormattedNumbersOnly
@@ -176,6 +191,7 @@ Item {
                     Keys.onEnterPressed: function(event) { finishEdit(); event.accepted = true }
                     Keys.onEscapePressed: function(event) { discardEdit(); event.accepted = true }
                 }
+                ResetButton {}
             }
                 Slider {
                     id: slider
@@ -192,6 +208,7 @@ Item {
                     focusPolicy: Qt.StrongFocus
                     onActiveFocusChanged: if(activeFocus) controller.rememberParameter(root.field.name, root.field.operation || "", root.increment)
                     property real lastMoved: value
+                    property bool gestureEdited: false
                     background: Rectangle {
                         x: slider.leftPadding; y: slider.topPadding + slider.availableHeight / 2 - height / 2
                         width: slider.availableWidth; height: 6; radius: 3; color: "#3b484d"
@@ -208,13 +225,21 @@ Item {
                     onMoved: {
                         if(!enabled) return
                         lastMoved = value
+                        if(pressed) gestureEdited = true
                         controller.setParameter(root.field.name, value, !pressed, root.field.operation || "")
                     }
                     onPressedChanged: {
-                        if(pressed) lastMoved = value
-                        else if(enabled) controller.setParameter(root.field.name, lastMoved, true, root.field.operation || "")
+                        if(pressed) { lastMoved = value; gestureEdited = false }
+                        else if(enabled && gestureEdited) controller.setParameter(root.field.name, lastMoved, true, root.field.operation || "")
                     }
                 }
+            Connections {
+                target: root
+                function onResetRequested() {
+                    numeric.edited = false; numeric.validationRequested = false
+                    numeric.text = String(root.field.default)
+                }
+            }
             Label {
                 id: validation
                 objectName: "validation-" + root.field.name
@@ -234,37 +259,6 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: metrics.touchHeight
                 onClicked: numeric.discardEdit()
-            }
-            TouchPopup {
-                id: fieldActions
-                parent: Overlay.overlay; anchors.centerIn: parent
-                width: Math.min(400, parent.width - 32); padding: metrics.inset; modal: true; focus: true
-                background: Rectangle { color: metrics.floating; radius: metrics.radius }
-                onOpened: contentItem.forceActiveFocus()
-                contentItem: ColumnLayout {
-                    objectName: "fieldActionsContent"
-                    Label { text: root.label; color: metrics.text; font.pixelSize: metrics.titleSize; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                    Label { text: String(root.field.value); color: metrics.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                    TouchButton {
-                        objectName: "reset-" + root.field.name
-                        text: qsTr("reset")
-                        Accessible.name: qsTr("reset %1 to default").arg(root.label)
-                        Layout.preferredWidth: 64
-                        Layout.preferredHeight: metrics.touchHeight
-                        padding: 6
-                        enabled: root.field.editable !== false
-                            && typeof root.field.default === "number" && isFinite(root.field.default)
-                            && Number(root.field.value) !== root.field.default
-                        onClicked: {
-                            fieldActions.close()
-                            if(!enabled) return
-                            numeric.edited = false
-                            numeric.validationRequested = false
-                            controller.setParameter(root.field.name, root.field.default, true, root.field.operation || "")
-                            numeric.text = numeric.engineText()
-                        }
-                    }
-                }
             }
         }
     }

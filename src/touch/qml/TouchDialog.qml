@@ -4,11 +4,12 @@ import QtQuick.Layouts
 
 Dialog {
     id: dialog
-    UiMetrics { id: metrics }
+    parent: Overlay.overlay
+    UiMetrics { id: metrics; pixelDensity: dialog.parent ? dialog.parent.Screen.pixelDensity : 0; pixelRatio: dialog.parent ? dialog.parent.Screen.devicePixelRatio : 1 }
     padding: metrics.inset
     background: Rectangle { color: "#121a1e"; radius: metrics.radius; border.color: "#334249" }
     header: RowLayout {
-        implicitHeight: metrics.touchHeight + 8; spacing: 12
+        implicitHeight: metrics.touchHeight + 2 * metrics.inset; spacing: metrics.gap
         Label {
             text: dialog.title; textFormat: Text.PlainText
             Layout.fillWidth: true; leftPadding: 20
@@ -18,7 +19,7 @@ Dialog {
         TouchButton {
             objectName: "dialogCloseButton"
             text: qsTr("close"); iconName: "close"; showLabel: true
-            Layout.rightMargin: 12
+            Layout.rightMargin: metrics.inset; Layout.topMargin: metrics.inset; Layout.bottomMargin: metrics.inset
             onClicked: dialog.reject()
         }
     }
