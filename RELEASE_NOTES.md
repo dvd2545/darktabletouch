@@ -119,6 +119,21 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch film roll selection now keeps imported subfolders separate, while
+  folder selection includes descendants. Collection leaves no longer leave
+  an empty expand button, and More actions applies image actions to a selection.
+
+- Touch settings now separate interface, library, and editor options, with
+  optional interface scaling, swipe navigation, and fitted preview quality.
+  Zooming requests more preview detail and returning to fit restores the chosen
+  quality. Filmstrip and module panels animate when shown or hidden, with
+  tighter parameter spacing, clearer floating-button shadows, and a monochrome
+  Windows application icon.
+
+- Touch export's Add modifier browser searches the native filename variables
+  and user metadata. Native modifiers use the same expansion engine as Classic
+  and appear as removable name tokens.
+
 - Touch adds multi-image filmstrip selection, optional quick reject/delete
   shortcuts, centered loading feedback, and a collections shortcut in the
   library. Quick actions opens above its trigger, resize grips use balanced
