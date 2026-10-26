@@ -119,6 +119,10 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch quick actions now sit beside undo and redo. Settings place the
+  Classic interface switch last, and film-roll collections show imported
+  folder names instead of the computer's directory tree.
+
 - Touch images now fill the editor height, with shadowed navigation and
   history icons, one photo-strip chevron, and export in the left menu.
   Compact import rows, inline parameter values, slim resize gutters, and
