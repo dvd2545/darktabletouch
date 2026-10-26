@@ -119,6 +119,13 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Reworked Touch editing around contextual Light, Color, Detail, and Crop
+  drawers and a full-image focus mode. The photo strip can be hidden,
+  compact, expanded, or hidden automatically. Quick actions are grouped in
+  a smaller sheet, with interface switching in Settings. Parameter controls
+  are more compact, and shared screen-density tokens size touch targets.
+  Empty libraries now prioritize importing photos.
+
 - Added visible text to Touch action icons, including filters, tool actions,
   and folder controls. Library actions wrap on smaller windows, crop actions
   retain their labels, and module switches show their on/off state.
