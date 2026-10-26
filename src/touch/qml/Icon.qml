@@ -15,7 +15,13 @@ Canvas {
         c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.8
         c.lineCap = "round"; c.lineJoin = "round"
         function line(points) { c.beginPath(); c.moveTo(points[0], points[1]); for(let i = 2; i < points.length; i += 2) c.lineTo(points[i], points[i+1]); c.stroke() }
-        if(name === "chevron-right") line([9,5,16,12,9,19])
+        if(name === "light") { c.beginPath(); c.arc(12,12,5,0,Math.PI*2); c.stroke(); for(let i=0;i<8;i++) { const a=i*Math.PI/4; line([12+Math.cos(a)*8,12+Math.sin(a)*8,12+Math.cos(a)*10,12+Math.sin(a)*10]) } }
+        else if(name === "color") { for(let i=0;i<3;i++) { c.beginPath(); c.arc(8+i*4, i===1?8:14,5,0,Math.PI*2); c.stroke() } }
+        else if(name === "detail") { c.strokeRect(4,4,12,12); line([15,15,21,21]); line([7,10,13,10]); line([10,7,10,13]) }
+        else if(name === "compare") { c.strokeRect(3,4,18,16); line([12,4,12,20]); c.fillRect(4,5,7,14) }
+        else if(name === "fit") { line([3,9,3,3,9,3]); line([15,3,21,3,21,9]); line([21,15,21,21,15,21]); line([9,21,3,21,3,15]) }
+        else if(name === "history") { c.beginPath(); c.arc(12,12,9,0,Math.PI*2); c.stroke(); line([12,6,12,12,16,14]) }
+        else if(name === "chevron-right") line([9,5,16,12,9,19])
         else if(name === "chevron-down") line([5,9,12,16,19,9])
         else if(name === "menu") { line([4,6,20,6]); line([4,12,20,12]); line([4,18,20,18]) }
         else if(name === "more") { for(let x = 5; x <= 19; x += 7) { c.beginPath(); c.arc(x,12,1.5,0,Math.PI*2); c.fill() } }

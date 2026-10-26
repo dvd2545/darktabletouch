@@ -7,17 +7,18 @@ Button {
     property string iconName: ""
     property bool showLabel: true
     property bool stacked: false
+    UiMetrics { id: metrics; pixelDensity: control.Screen.pixelDensity; pixelRatio: control.Screen.devicePixelRatio }
     Accessible.name: text
     ToolTip.visible: hovered && !!iconName
     ToolTip.text: text
     scale: down ? 0.96 : 1
     Behavior on scale { NumberAnimation { duration: 90 } }
-    implicitHeight: Math.max(64, contentItem.implicitHeight + topPadding + bottomPadding)
-    implicitWidth: Math.max(64, contentItem.implicitWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(metrics.touchHeight, contentItem.implicitHeight + topPadding + bottomPadding)
+    implicitWidth: Math.max(metrics.touchHeight, contentItem.implicitWidth + leftPadding + rightPadding)
     focusPolicy: Qt.StrongFocus
-    padding: 14
-    font.pixelSize: 15
-    opacity: enabled ? 1 : 0.35
+    padding: metrics.inset
+    font.pixelSize: metrics.bodySize
+    opacity: enabled ? 1 : 0.55
     contentItem: GridLayout {
         columns: control.stacked ? 1 : 2
         columnSpacing: 10; rowSpacing: 4
@@ -36,9 +37,9 @@ Button {
     }
 
     background: Rectangle {
-        radius: 12
-        color: control.checked ? "#00dbe5" : control.down ? "#304147" : control.hovered ? "#253439" : "#1c272c"
-        border.width: control.activeFocus ? 2 : 1
+        radius: metrics.radius
+        color: control.checked ? "#00dbe5" : control.down ? "#304147" : control.hovered ? "#253439" : control.flat ? "transparent" : "#1c272c"
+        border.width: control.activeFocus ? 2 : 0
         border.color: control.activeFocus || control.checked ? "#00dbe5" : "#334249"
         Behavior on color { ColorAnimation { duration: 100 } }
     }

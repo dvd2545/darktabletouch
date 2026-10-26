@@ -4,10 +4,11 @@ import QtQuick.Layouts
 
 Dialog {
     id: dialog
-    padding: 16
-    background: Rectangle { color: "#121a1e"; radius: 16; border.color: "#334249" }
+    UiMetrics { id: metrics }
+    padding: metrics.inset
+    background: Rectangle { color: "#121a1e"; radius: metrics.radius; border.color: "#334249" }
     header: RowLayout {
-        implicitHeight: 72; spacing: 12
+        implicitHeight: metrics.touchHeight + 8; spacing: 12
         Label {
             text: dialog.title; textFormat: Text.PlainText
             Layout.fillWidth: true; leftPadding: 20

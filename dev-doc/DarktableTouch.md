@@ -75,25 +75,47 @@ editor includes native scalar/enum controls, reset, undo/redo, numeric
 entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
 markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 
-The editor places a virtualized photo filmstrip below the canvas and the
-six priority tools in a vertical panel on the right. One tool expands at a
-time; its menu contains reset and additional controls. The lower-left
-hamburger button sits beside the thumbnails inside the filmstrip, outside
-the image viewport, and opens library, export,
-history, undo/redo, comparison, import, and interface-switching actions.
+The editor opens with a compact photo strip and a narrow category rail.
+Light, Color, Detail, and Crop open contextual tool drawers; tapping the
+active category or Hide closes the drawer. All Tools retains access to
+all registered tools. A canvas tap toggles focus mode, hiding the toolbar,
+rail, drawer, and photo strip; a second tap restores the previous layout.
+Double-tap zoom, pinch, pan, crop, and image hold menus remain separate.
+
+The photo strip has Hidden, Compact, and Expanded states. Photos cycles
+these states, and an upward swipe on the fitted image restores a hidden
+strip. Zoomed images retain pan gestures; Photos also restores the strip.
+Settings contains the session's strip size and automatic hide control. Automatic hiding waits six seconds and avoids active strip
+scrolling, hover, and modal dialogs. Undo/Redo use accessible icon buttons;
+Hold Original is momentary and returns to the edit on release/cancel.
+Tap the filename for metadata. Compact quick actions groups comparison,
+fit, history, copy/paste, and settings; reset retains confirmation and
+interface switching lives in Settings.
+
+`UiMetrics.qml` converts reported physical screen density into a 9.5 mm
+touch target, divided by the device pixel ratio. Targets are bounded to
+56-80 logical pixels; missing or implausible density uses 64. Shared spacing,
+fonts, surfaces, drawer width, and strip sizes derive from these tokens.
+Qt applies Windows scaling to logical coordinates. Reported physical
+sizes can be inaccurate, so physical touch and Windows scaling still need
+hardware validation; simulated scale factors do not establish that.
+
+Numeric fields keep a readable value above a full touch-height slider.
+Tap a value for precision entry, or its labeled options control for the
+native default reset. The drawer offers whole-module reset. Explanations
+for enum controls remain in accessible descriptions and focus/hover hints.
+
 Image information appears in the upper-left corner when a photo opens,
-then fades after four seconds. Tap the canvas or choose "image information"
-to show it again. Filenames remain literal Unicode text; camera and
-exposure information come from the engine's metadata, with en-US numbers.
+then fades after four seconds. Tap the filename to show it again. Filenames
+remain literal Unicode text; camera and exposure information come from the engine's metadata, with en-US numbers.
 Busy operations and errors remain visible even after transient status
 messages fade. Focus navigation scrolls tool controls and quick actions
 into view on smaller screens.
 
 Small pill handles resize the filmstrip height and module-panel width.
-Their short axis is 24 logical pixels, with the visible pill centered on
-the panel boundary. The filmstrip leaves 14 pixels above its thumbnails,
-and the module panel uses an 18-pixel left gutter. Primary buttons retain
-their 64-pixel touch targets.
+Their hit areas follow the shared touch target, with the visible pill
+centered on the panel boundary. Thumbnails and module controls are inset
+beyond the handles' hit areas so resizing does not intercept their taps.
 Drag the filmstrip handle up or down, or the module handle left or right.
 The handles have larger touch areas, support arrow-key adjustment and
 accessibility actions, and reset to their automatic sizes on a double-tap
@@ -303,7 +325,7 @@ Additional Touch checks:
 
 ```sh
 QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic qmltestrunner \
-  -platform offscreen -input src/touch/tests/tst_touchbutton.qml
+  -platform offscreen -input src/touch/tests
 python tools/test_touch_launcher.py
 build/bin/test-touch-engine.exe /path/to/sample.CR2
 QT_QUICK_BACKEND=software build/bin/darktable-touch.exe -platform offscreen \

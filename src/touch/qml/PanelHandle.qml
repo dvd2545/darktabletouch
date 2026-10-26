@@ -3,6 +3,7 @@ import QtQuick.Controls
 
 Control {
     id: control
+    UiMetrics { id: metrics; pixelDensity: control.Screen.pixelDensity; pixelRatio: control.Screen.devicePixelRatio }
     property bool vertical: false
     required property real panelSize
     property real value: 0
@@ -11,8 +12,8 @@ Control {
     property real stepSize: 16
     signal adjusted(real delta)
     signal resetRequested()
-    implicitWidth: vertical ? 24 : 112
-    implicitHeight: vertical ? 112 : 24
+    implicitWidth: vertical ? metrics.touchHeight : 112
+    implicitHeight: vertical ? 112 : metrics.touchHeight
     focusPolicy: Qt.StrongFocus
     Accessible.role: Accessible.Slider
     Accessible.description: qsTr("drag to resize; arrow keys adjust; double-tap or press confirm to reset")

@@ -15,6 +15,7 @@ set_target_properties(darktable-touch PROPERTIES
   AUTOMOC ON
   RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
 
+set_source_files_properties(qml/UiMetrics.qml PROPERTIES QT_RESOURCE_ALIAS UiMetrics.qml)
 set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
 set_source_files_properties(qml/TouchButton.qml PROPERTIES QT_RESOURCE_ALIAS TouchButton.qml)
 set_source_files_properties(qml/FieldControl.qml PROPERTIES QT_RESOURCE_ALIAS FieldControl.qml)
@@ -36,7 +37,7 @@ qt_add_qml_module(darktable-touch
   URI DarktableTouch
   VERSION 1.0
   RESOURCE_PREFIX /qt/qml
-  QML_FILES qml/HistoryPasteDialog.qml qml/ThumbnailButton.qml qml/ThumbnailImage.qml qml/ChoiceDelegate.qml qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
+  QML_FILES qml/UiMetrics.qml qml/HistoryPasteDialog.qml qml/ThumbnailButton.qml qml/ThumbnailImage.qml qml/ChoiceDelegate.qml qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
 
 qt_add_executable(darktabletouch launcher.cpp)
 target_link_libraries(darktabletouch PRIVATE Qt6::Core PkgConfig::TOUCH_JSON)

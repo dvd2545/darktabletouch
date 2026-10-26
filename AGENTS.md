@@ -358,8 +358,15 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 ## Touch UI labels
 
-Keep visible text beside or below every action icon in `src/touch/qml/`.
+Keep visible text beside or below action icons in `src/touch/qml/`.
+The compact editor Undo/Redo controls are the exception: keep their
+accessible names, tooltips, and disabled states when hiding their labels.
 Use the shared `TouchButton` label by default. When space is limited, use
 short translated labels and a stacked icon/text layout rather than hiding
 the text. Check the library, editor, and dialogs at 960x540 and 1280x720
-after changing action sizes. Keep touch targets at least 64 pixels high.
+after changing action sizes. Use `UiMetrics.qml` for shared touch sizing,
+spacing, and surfaces. Its 9.5 mm target uses reported screen density and
+device pixel ratio, bounded to 56-80 logical pixels with a 64-pixel fallback.
+Do not multiply logical coordinates by Windows scaling a second time.
+Keep tool drawers, filmstrip controls, and numeric editing recoverable
+with touch, keyboard, and controller navigation.
