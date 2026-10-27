@@ -5,6 +5,7 @@ Control {
     id: control
     property bool checked: false
     property string text: ""
+    property bool inputBlocked: false
     signal clicked()
     signal pressAndHold()
     UiMetrics { id: metrics; pixelDensity: control.Screen.pixelDensity; pixelRatio: control.Screen.devicePixelRatio }
@@ -12,7 +13,7 @@ Control {
     opacity: enabled ? 1 : 0.55
     focusPolicy: Qt.StrongFocus; hoverEnabled: true
     Accessible.role: Accessible.Button
-    Accessible.onPressAction: clicked()
+    Accessible.onPressAction: if(!inputBlocked) clicked()
     background: Rectangle {
         radius: metrics.radius
         color: tap.pressed ? "#304147" : control.checked ? "#153439" : control.hovered ? "#253439" : "#1c272c"
@@ -21,6 +22,7 @@ Control {
     }
     TapHandler {
         id: tap
+        enabled: !control.inputBlocked
         acceptedButtons: Qt.LeftButton
         gesturePolicy: TapHandler.DragThreshold
         longPressThreshold: 0.6
@@ -29,6 +31,12 @@ Control {
         onLongPressed: { held = true; control.forceActiveFocus(); control.pressAndHold() }
         onTapped: if(!held) { control.forceActiveFocus(); control.clicked() }
     }
-    Keys.onSpacePressed: function(event) { clicked(); event.accepted = true }
-    Keys.onReturnPressed: function(event) { clicked(); event.accepted = true }
+    TapHandler {
+        enabled: !control.inputBlocked
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        acceptedButtons: Qt.RightButton
+        onTapped: { control.forceActiveFocus(); control.pressAndHold() }
+    }
+    Keys.onSpacePressed: function(event) { if(!inputBlocked) clicked(); event.accepted = true }
+    Keys.onReturnPressed: function(event) { if(!inputBlocked) clicked(); event.accepted = true }
 }

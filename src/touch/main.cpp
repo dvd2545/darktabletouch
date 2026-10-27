@@ -401,7 +401,8 @@ int main(int argc, char **argv)
       case 26:
         if(controller.imageId() != 0 || controller.editorVisible() || controller.images().size() != 1 || !QFile::exists(testPhoto))
         { fail("catalog removal did not release the editing session or preserve the file"); return; }
-        controller.libraryCommand(QStringLiteral("remove-folder"), {{QStringLiteral("folder"), QFileInfo(testNeighbor).absolutePath()}});
+        controller.libraryCommand(QStringLiteral("remove-folder"), {{QStringLiteral("folder"),
+          QFileInfo(controller.images().first().toMap().value(QStringLiteral("path")).toString()).absolutePath()}});
         break;
       case 27:
         if(!sawLoadingOverlay) { fail("long-running operations did not show the centered loading animation"); return; }
@@ -613,12 +614,20 @@ int main(int argc, char **argv)
       case 81:
         if(!window->findChild<QObject *>(QStringLiteral("navigationDrawer"))->property("visible").toBool())
         { fail("the left navigation drawer did not open"); return; }
+        QMetaObject::invokeMethod(window, "showImageInformation");
+        QMetaObject::invokeMethod(window, "showImageActions", Q_ARG(QVariant, controller.images().first()));
+        if(window->property("blockingPopups").toInt() < 1
+           || window->findChild<QObject *>(QStringLiteral("canvasTapHandler"))->property("enabled").toBool())
+        { fail("image actions did not block background canvas gestures"); return; }
         QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("editorLibraryButton")), "clicked");
         break;
       case 82:
       {
         if(controller.editorVisible() || controller.before() || !controller.imageId())
         { fail("returning to the library lost the editing context"); return; }
+        if(window->property("informationVisible").toBool()
+           || window->findChild<QObject *>(QStringLiteral("imageActions"))->property("visible").toBool())
+        { fail("editor image properties remained open in the library"); return; }
         auto grid = window->findChild<QQuickItem *>(QStringLiteral("libraryGrid"));
         const auto gridSize = grid->size();
         const auto scrollPosition = grid->property("contentY");
@@ -822,6 +831,7 @@ int main(int argc, char **argv)
         { fail("focus mode did not give the image the full viewport"); return; }
         if(!libraryScreenshot(QStringLiteral("-focus"))) { fail("focus screenshot failed"); return; }
         QMetaObject::invokeMethod(window, "toggleChrome");
+        historyWait = 0;
         QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("category-color")), "clicked");
         break;
       }
@@ -829,7 +839,16 @@ int main(int argc, char **argv)
         if(!window->property("toolsOpen").toBool() || window->property("toolCategory").toString() != QStringLiteral("color")
            || !findItem(window->contentItem(), QStringLiteral("card-agx"))->isVisible()
            || findItem(window->contentItem(), QStringLiteral("card-exposure"))->isVisible())
-        { fail("the color category did not open its contextual controls"); return; }
+        {
+          if(++historyWait < 10) return;
+          QTextStream(stderr) << "tools=" << window->property("toolsOpen").toBool()
+            << " category=" << window->property("toolCategory").toString()
+            << " focus=" << window->property("distractionFree").toBool()
+            << " popups=" << window->property("blockingPopups").toInt()
+            << " operation=" << controller.operation() << '\n';
+          libraryScreenshot(QStringLiteral("-category-failure"));
+          fail("the color category did not open its contextual controls"); return;
+        }
         QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("editorQuickActionsButton")), "clicked");
         break;
       case 99:

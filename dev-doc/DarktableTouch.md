@@ -107,8 +107,10 @@ navigation and history buttons float without filled backgrounds and use
 white icons with shadows. Export lives in the left menu. One bottom chevron
 toggles the photo strip; its height can still be adjusted with its handle. Swipe upward on the fitted canvas to restore the strip.
 Settings control automatic hiding, with switch to Classic as the last option.
-Image information appears briefly
-on opening a photo and can be recalled from the active filmstrip thumbnail.
+Image information is available through the current image context menu.
+A normal filmstrip tap selects an image without opening its information or
+actions. Right-click and long-press open image actions; returning to Library
+closes editor information and contextual menus.
 
 Quick actions opens above its lower-left trigger. Its selection action enables
 multi-image filmstrip selection without switching the active preview. Holding
@@ -241,15 +243,21 @@ It is separate from the active editor image. Export still targets that active
 image when using the direct export API. The export settings dialog supports
 selected photos, the visible collection, or the current image.
 
-The menu panel and Library settings offer independent rating choices for
+Collections and filters offers independent rating choices for
 rejected, unrated, and one-to-five-star images. These update native rating
 filters without changing the base collection or other filter properties.
+Rating edits remain in the collection draft until Apply; Cancel discards them.
 All ratings are visible unless a native filter excludes them; the separate
 show-rejected preference has been removed. Settings retain an optional
 next-image action after rejecting. Self-tests use isolated catalogs.
 
-Dialog overlays consume outside taps until release, then dismiss without
-activating controls underneath. Settings categories share equal widths.
+Dialogs and popups consume outside taps until release, then dismiss without
+activating controls underneath. Modal popups also suspend background canvas
+taps, pan, zoom, thumbnail gestures, and resize handles, including parameter
+dropdowns. The loading overlay consumes background input while processing.
+Dropdown height follows the actual choice list so modal choices remain usable.
+Right-click handlers accept mouse and touchpad devices, never touchscreen
+taps; touchscreen context menus require a stationary long-press. Settings categories share equal widths.
 Shared padding and explicit content insets are reduced by 15%, preserving
 minimum touch targets.
 

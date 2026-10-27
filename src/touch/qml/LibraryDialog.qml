@@ -156,6 +156,16 @@ TouchDialog {
             ColumnLayout {
                 id: ruleColumn
                 width: scroll.availableWidth; spacing: 10
+                RatingFilter {
+                    objectName: "collectionRatingFilter"
+                    photoController: libraryDialog.photoController
+                    rules: libraryDialog.draft.filtering
+                    deferred: true; Layout.fillWidth: true
+                    onEdited: function(filtering) {
+                        const next = JSON.parse(JSON.stringify(libraryDialog.draft))
+                        next.filtering = filtering; libraryDialog.draft = next
+                    }
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     Label { text: qsTr("filter rules"); color: "#00dbe5"; font.pixelSize: 18; Layout.fillWidth: true }

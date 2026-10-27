@@ -24,12 +24,14 @@ ComboBox {
     }
     delegate: ChoiceDelegate { required property int index; width: control.width; height: metrics.touchHeight; text: control.textAt(index); highlighted: control.highlightedIndex === index }
     popup: TouchPopup {
+        id: choicePopup
         onOpened: gamepad.choicesOpen++
         onClosed: gamepad.choicesOpen = Math.max(0, gamepad.choicesOpen - 1)
         y: control.height; width: control.width
-        implicitHeight: Math.min(contentItem.implicitHeight + topPadding + bottomPadding, 360)
+        implicitHeight: Math.min(choiceList.contentHeight + choicePopup.topPadding + choicePopup.bottomPadding, 360)
         padding: Math.round(6 * metrics.paddingScale)
         contentItem: ListView {
+            id: choiceList
             objectName: "choicePopupList"
             clip: true; implicitHeight: contentHeight
             model: control.popup.visible ? control.delegateModel : null

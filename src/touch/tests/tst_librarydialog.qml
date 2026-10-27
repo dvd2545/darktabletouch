@@ -12,7 +12,7 @@ TestCase {
     Button { width: 35; height: 100; onClicked: tests.backgroundClicks++ }
     QtObject {
         id: mock
-        property var library: ({folders: [
+        property var library: ({rating_property: 21, rating_range_property: 22, folders: [
             {folder: "C:/Users/person/Pictures/trip", images: 2},
             {folder: "C:/Users/person/Pictures/trip/day one", images: 3},
             {folder: "D:/archive/trip", images: 4},
@@ -101,5 +101,16 @@ TestCase {
         compare(backgroundClicks, 0)
         mouseClick(tests, 15, 40)
         compare(backgroundClicks, 1)
+    }
+    function test_ratingEditsStayInDraft() {
+        const dialog = createDialog()
+        const rating = findChild(dialog, "collectionRatingFilter")
+        verify(rating !== null)
+        rating.setAllowed(-1, false)
+        compare(dialog.draft.filtering.length, 1)
+        verify(!rating.allowed(-1)); verify(rating.allowed(0))
+        verify(!mock.library.filtering || mock.library.filtering.length === 0)
+        dialog.resetAll()
+        verify(rating.allowed(-1))
     }
 }

@@ -5,6 +5,9 @@ import QtQuick.Layouts
 ColumnLayout {
     id: control
     required property var photoController
+    property var rules: photoController.library.filtering || []
+    property bool deferred: false
+    signal edited(var filtering)
     readonly property int ratingProperty: Number(photoController.library.rating_property)
     readonly property int rangeProperty: Number(photoController.library.rating_range_property)
     property string errorText: ""
@@ -27,7 +30,7 @@ ColumnLayout {
     }
     function allowed(value) {
         let result = true, first = true
-        for(const rule of photoController.library.filtering || []) {
+        for(const rule of rules) {
             if(!isRating(rule) || rule.off || !rule.string) continue
             const match = matches(value, rule.string)
             result = rule.mode === 2 ? result && !match : rule.mode === 1 && !first ? result || match : result && match
@@ -39,13 +42,14 @@ ColumnLayout {
         const enabled = []
         for(let rating = -1; rating <= 5; rating++) enabled.push(rating === value ? checked : allowed(rating))
         const state = photoController.library
-        const filtering = (state.filtering || []).filter(function(rule) { return !isRating(rule) })
+        const filtering = rules.filter(function(rule) { return !isRating(rule) })
         // exclusions intersect with other filters without an OR escaping their scope
         for(let rating = -1; rating <= 5; rating++)
             if(!enabled[rating + 1]) filtering.push({item: ratingProperty, string: "=" + rating, mode: 2, off: 0, top: 0})
         if(filtering.length > 10) { errorText = qsTr("remove another filter before adding more rating choices"); return }
         errorText = ""
-        photoController.libraryCommand("collection", {collection: state.collection, filtering: filtering, sort: state.sort}, 0)
+        if(deferred) edited(filtering)
+        else photoController.libraryCommand("collection", {collection: state.collection, filtering: filtering, sort: state.sort}, 0)
     }
     Label { text: qsTr("rating filter"); color: metrics.muted }
     Flow {
