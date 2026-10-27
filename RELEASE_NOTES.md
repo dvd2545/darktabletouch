@@ -120,7 +120,7 @@ changes (where available).
 ## UI/UX Improvements
 
 - DarktableTouch offers independent rejected and zero-to-five-star rating
-  filters in the menu panel, replacing the separate rejected visibility
+  filters in collections and filters, replacing the separate rejected visibility
   preference. Zoomed previews can reach original image resolution. Settings
   tabs have equal widths, padding is tighter, and tapping outside collections
   closes the dialog without activating controls behind it.
@@ -515,6 +515,12 @@ changes (where available).
   ready to splice into another invocation.
 
 ## Bug Fixes
+
+- Fixed DarktableTouch thumbnail taps opening image actions through the
+  right-click handler. Context menus require right-click or long-press,
+  editor properties close when returning to Library, and modal popups block
+  background canvas and thumbnail gestures until dismissed. Fixed collapsed
+  dropdown lists so their choices remain visible and selectable.
 
 - Touch select all and invert now target its visible images, with consistent
   selection identities for filmstrip actions and batch export.
