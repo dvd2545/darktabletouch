@@ -334,6 +334,14 @@ ICC integration, fit/100% behavior, and broader UI sizing also need work.
 
 ## Building and packaging on Windows
 
+`Run-Touch-Build.bat` opens the existing `build/bin` application without an
+installer. It honors `DT_MSYS2_ROOT` when set, otherwise discovers the UCRT64
+runtime beside the compiler recorded in `build/CMakeCache.txt`, then checks
+the user-local, standard MSYS2, and Codex Store app-local runtime locations.
+This supports launching from Explorer outside Codex's redirected environment.
+`Run-Touch-Build.bat --check-runtime` prints and validates the chosen runtime
+without opening the application. Other arguments are forwarded to the launcher.
+
 Use MSYS2 UCRT64 and the dependencies listed in
 `.github/workflows/touch-platform.yml`. The Qt additions are `qt6-base` and
 `qt6-declarative`; NSIS builds the installer. For example:
