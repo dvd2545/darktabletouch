@@ -882,7 +882,7 @@ ApplicationWindow {
                 model: controller.operation === "crop" ? null : controller.fields
                 FieldControl {
                     required property var model
-                    enabled: !controller.exportRunning
+                    enabled: controller.editorReady && !controller.exportRunning
                     field: model.field
                     Layout.fillWidth: true; Layout.leftMargin: ui.parameterInset; Layout.rightMargin: ui.parameterInset
                     visible: controller.operation === "exposure" && !window.advanced
@@ -908,7 +908,7 @@ ApplicationWindow {
         visible: controller.busy && shown
         Timer { interval: 150; running: controller.busy; onTriggered: loadingOverlay.shown = true }
         Connections { target: controller; function onStateChanged() { if(!controller.busy) loadingOverlay.shown = false } }
-        MouseArea { anchors.fill: parent; onWheel: function(wheel) { wheel.accepted = true } }
+        MouseArea { anchors.fill: parent; enabled: !controller.editorVisible || controller.exportRunning; onWheel: function(wheel) { wheel.accepted = true } }
         Rectangle {
             anchors.centerIn: parent; width: 180; height: ui.touchHeight + 64; radius: ui.radius; color: ui.floating; border.color: "#435259"
             ColumnLayout {

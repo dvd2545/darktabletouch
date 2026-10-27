@@ -71,6 +71,11 @@ if(WIN32)
 endif()
 set_target_properties(test-touch-engine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
 
+qt_add_executable(test-touch-performance tests/performance.cpp TouchController.cpp TouchController.h)
+target_link_libraries(test-touch-performance PRIVATE dt_touch_engine Qt6::Quick Qt6::QuickControls2)
+target_compile_definitions(test-touch-performance PRIVATE DT_TOUCH_FRAME_CACHE_TEST=1)
+set_target_properties(test-touch-performance PROPERTIES AUTOMOC ON RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
+
 qt_add_executable(test-touch-launcher-child tests/launcher_child.cpp)
 target_link_libraries(test-touch-launcher-child PRIVATE Qt6::Core)
 set_target_properties(test-touch-launcher-child PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})

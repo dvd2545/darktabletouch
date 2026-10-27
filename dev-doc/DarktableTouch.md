@@ -71,6 +71,70 @@ new edits. Slider changes are coalesced and one completed gesture records
 one undo entry. Preview processing releases the full-resolution input lock
 before thumbnail generation or export. The preview pipeline remains cached.
 
+After the first render, Touch previews retain up to twelve native pixelpipe
+cache lines. The initial render keeps the original two-buffer allocation.
+A parameter
+change can synchronize the top history item; history replacement uses a full
+synchronization, and resizing an unchanged image only changes its ROI.
+Verified clean edits do not rewrite the catalog and sidecar on each switch.
+Explicit Retry Save still attempts the original sidecar again.
+
+After 200 ms without an editing command, Touch prefetches RAW inputs for the
+two neighbors on each side in filmstrip order. Full preview preparation
+starts after 1.5 seconds of idle time, in the current navigation direction,
+so rapid browsing does not compete with speculative module processing.
+It retains up to five finished frames and three editor contexts. Parked
+contexts release their pixelpipes and RAW locks. Additional retained caches
+are limited to 2 GiB, and speculative work stops below 2 GiB of available
+physical or commit memory. Native processing buffers and the existing global
+mipmap cache also consume memory; the limit is not a process working-set cap.
+
+Speculative history loading uses temporary snapshots and does not save
+catalog history or sidecars. Uninitialized images and histories requiring
+module, blending, or mask migrations receive RAW prefetch only; their normal
+initialization or migration occurs when they are actually opened. Snapshot
+ids are globally unique while reading, and inactive future history rows are
+retained. Collection and history changes invalidate prepared frames; source
+and sidecar timestamps and catalog history hashes are checked before reuse.
+
+Prepared frames appear before refinement, with image id and revision checks
+on every publication. A shared, bounded frame store lets the UI display a
+prepared image without waiting for a background GPU module to return.
+Generation checks prevent an in-flight result from repopulating an
+invalidated frame, and failed opens restore the previous displayed photo.
+Editing stays disabled until the target image is bound and its final frame
+is ready; navigation remains available while processing. A thumbnail draft
+is used only when it is already cached and its native history hash is
+current. Obsolete renders stop through the native pixelpipe shutdown
+mechanism. Committed slider values remain ordered before image switches,
+and failed opens retain the previous editor.
+
+`test-touch-performance --root <photos> --rounds 20 --warm-pair --stress`
+benchmarks copied RAW/XMP fixtures in a temporary catalog. The current fixture
+selector takes five sorted CR3 files from each of the first two folders
+containing at least five CR3 files below the root. `--heavy` enables AgX,
+lens correction, and profiled denoise;
+`--opencl` enables the existing AMD platform option in the temporary profile.
+`--frames-dir <folder>` saves final frames for CPU/GPU comparisons. Startup
+and kernel compilation are outside the recorded image-operation times.
+Results distinguish cold opens, sequential switching, prepared pairs, and
+Exposure edits; the heavy workload also measures AgX saturation, lens scale,
+and denoise strength, checking that each edit changes visible pixels.
+Each sample includes first-frame and final-frame times. Stress
+checks cover rapid navigation and a committed edit followed by a switch.
+They also remove a copied source temporarily and simulate a 1 GiB memory
+headroom using `DARKTABLETOUCH_TEST_AVAILABLE_MEMORY_MIB`, which can only
+lower the detected available-memory value.
+`--diagnose-gpu-rounding` is an explicit OpenCL diagnostic: repeat renders
+may differ by at most one 8-bit channel level, recorded per sample in JSON.
+It does not establish exact cache parity. Normal benchmark runs require
+identical final RGB pixels. The native engine test can use
+`DARKTABLETOUCH_TEST_OPENCL_CACHE=<cache directory>` for a strict GPU check;
+without it the test uses CPU processing.
+`DARKTABLETOUCH_PERF=1` logs frame-cache use, pixelpipe cache hits, and retained
+bytes. `DARKTABLETOUCH_DISABLE_PIPE_CACHE=1` and
+`DARKTABLETOUCH_DISABLE_PRELOAD=1` provide diagnostic comparison paths.
+
 When an adjacent XMP cannot be saved, Touch verifies the catalog history and
 writes a validated recovery XMP under the configuration directory's
 `recovery-sidecars/<catalog hash>/image-<id>.xmp`. Atomic replacement preserves

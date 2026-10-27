@@ -10,6 +10,7 @@
 #include <QAbstractListModel>
 #include <QCache>
 #include <QImage>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
@@ -37,6 +38,22 @@ private:
   QVariantList m_rows;
 };
 
+class PreparedFrames final
+{
+public:
+  quint64 generation() const;
+  void put(int id, const QImage &frame, const QString &path, quint64 generation);
+  QImage get(int id) const;
+  void remove(int id = 0);
+  quint64 bytes() const;
+private:
+  struct Frame { QImage pixels; QString path; QByteArray version; };
+  mutable QReadWriteLock m_lock;
+  QHash<int, Frame> m_frames;
+  QList<int> m_order;
+  quint64 m_generation = 0;
+};
+
 class PreviewStore final : public QQuickImageProvider
 {
 public:
@@ -46,7 +63,9 @@ public:
   void setThumbnail(int image, const QImage &thumbnail);
   bool hasThumbnail(int image) const;
   void removeThumbnail(int image);
+  std::shared_ptr<PreparedFrames> preparedFrames() const { return m_prepared; }
 private:
+  std::shared_ptr<PreparedFrames> m_prepared = std::make_shared<PreparedFrames>();
   mutable QReadWriteLock m_lock;
   QImage m_frame, m_before;
   QCache<int, QImage> m_thumbnails;
@@ -56,7 +75,8 @@ class EngineWorker final : public QObject
 {
   Q_OBJECT
 public:
-  explicit EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::shared_ptr<std::atomic<bool>> cancel);
+  explicit EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::shared_ptr<std::atomic<bool>> cancel,
+                        std::shared_ptr<dt_touch_render_t> render, std::shared_ptr<PreparedFrames> prepared);
 public slots:
   void initialize(QStringList arguments);
   void importPaths(QStringList paths);
@@ -64,7 +84,8 @@ public slots:
   void reviewImport(QStringList paths, bool recursive);
   void openImage(int id, quint64 revision);
   void loadModule(QString operation, quint64 revision);
-  void setParameter(QString operation, QString name, QVariant value, bool commit, quint64 revision);
+  void setParameter(int image, QString operation, QString name, QVariant value, bool commit, quint64 revision);
+  void setPreloadOrder(QList<int> images, int extent);
   void changeEnabled(QString operation, bool enabled, quint64 revision);
   void resetModule(QString operation, quint64 revision);
   void historyStep(int direction, quint64 revision);
@@ -93,9 +114,10 @@ signals:
   void historyActionDone(QJsonArray changed);
   void importReviewed(QJsonArray candidates);
   void imageOpened(int id, quint64 revision);
+  void openFailed(int id, quint64 revision);
   void informationReady(QJsonObject information, quint64 revision);
   void moduleReady(QJsonObject module, quint64 revision);
-  void frameReady(QImage image, quint64 revision);
+  void frameReady(QImage image, int id, quint64 revision, int extent, bool final);
   void thumbnailReady(int id, QImage image);
   void historyChanged(bool undo, bool redo);
   void historyReady(QJsonObject history, quint64 revision);
@@ -105,14 +127,33 @@ signals:
   void stopped();
 private:
   struct Edit { dt_touch_state_t *before; dt_touch_state_t *after; dt_touch_catalog_edit_t *catalog = nullptr; QJsonArray targets; };
-  bool render(quint64 revision, int extent = 0);
+  bool render(quint64 revision, int extent = 0, bool final = true);
+  QImage renderImage(dt_touch_editor_t *editor, int extent, quint64 revision, bool speculative = false);
+  struct CachedImage { dt_touch_editor_t *editor = nullptr; QImage frame; QByteArray stamp; int extent = 0; };
+  QHash<int, CachedImage> m_imageCache;
+  QList<int> m_preloadOrder, m_preloadQueue;
+  QSet<int> m_prefetchRequested;
+  int m_prefetchAttempts = 0;
+  QTimer m_preloadTimer;
+  QElapsedTimer m_idleTime;
+  std::shared_ptr<dt_touch_render_t> m_render;
+  std::shared_ptr<PreparedFrames> m_prepared;
+  quint64 m_idleRevision = 0;
+  int m_direction = 1, m_fittedExtent = 1280;
+  void preload();
+  void schedulePreload(quint64 revision);
+  void clearPreload();
+  void trimPreload();
+  void prepareFrame(int id, const QImage &frame, quint64 generation);
+  void restoreOpen(quint64 revision);
+  QByteArray imageStamp(int id) const;
   int m_previewExtent = 1280;
   void abortCrop();
   void beginEdit();
   void commitEdit();
   void clearHistory();
   void report(char *error);
-  bool saveEditor();
+  bool saveEditor(bool force = false);
   QJsonArray images();
   std::shared_ptr<std::atomic<bool>> m_exportCancel;
   std::shared_ptr<std::atomic<quint64>> m_revision;
@@ -144,6 +185,7 @@ class TouchController final : public QObject
   Q_PROPERTY(bool quickDelete READ quickDelete WRITE setQuickDelete NOTIFY stateChanged)
   Q_PROPERTY(bool ready READ ready NOTIFY stateChanged)
   Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
+  Q_PROPERTY(bool editorReady READ editorReady NOTIFY stateChanged)
   Q_PROPERTY(bool canUndo READ canUndo NOTIFY stateChanged)
   Q_PROPERTY(bool canRedo READ canRedo NOTIFY stateChanged)
   Q_PROPERTY(QVariantList history READ history NOTIFY historyChanged)
@@ -193,8 +235,9 @@ public:
   Q_INVOKABLE void adjustLastParameter(int direction);
   bool ready() const { return m_ready; }
   bool busy() const { return m_busy; }
-  bool canUndo() const { return m_canUndo; }
-  bool canRedo() const { return m_canRedo; }
+  bool editorReady() const { return m_imageId > 0 && !m_openingImage; }
+  bool canUndo() const { return editorReady() && m_canUndo; }
+  bool canRedo() const { return editorReady() && m_canRedo; }
   QVariantList history() const { return m_history; }
   int historyEnd() const { return m_historyEnd; }
   bool canClose() const { return m_canClose; }
@@ -270,7 +313,8 @@ signals:
   void importReviewRequested(QStringList paths, bool recursive);
   void openRequested(int id, quint64 revision);
   void moduleRequested(QString operation, quint64 revision);
-  void parameterRequested(QString operation, QString name, QVariant value, bool commit, quint64 revision);
+  void parameterRequested(int image, QString operation, QString name, QVariant value, bool commit, quint64 revision);
+  void preloadOrderRequested(QList<int> images, int extent);
   void enabledRequested(QString operation, bool enabled, quint64 revision);
   void resetRequested(QString operation, quint64 revision);
   void historyRequested(int direction, quint64 revision);
@@ -287,10 +331,14 @@ private:
   void flush(bool commit);
   void applyModule(const QJsonObject &module);
   PreviewStore *m_store;
+  std::shared_ptr<PreparedFrames> m_prepared;
+  QImage m_previousFrame;
+  int m_previousImage = 0;
   QThread m_thread;
   EngineWorker *m_worker;
   std::shared_ptr<std::atomic<bool>> m_exportCancel;
   std::shared_ptr<std::atomic<quint64>> m_revision;
+  std::shared_ptr<dt_touch_render_t> m_render;
   QTimer m_editTimer;
   QVariantList m_allImages;
   bool m_touchSettingsLoaded = false;
@@ -325,6 +373,8 @@ private:
   QString m_message = tr("starting the photo engine");
   QString m_saveIssue, m_recoveryPath;
   int m_imageId = 0;
+  int m_requestedImage = 0;
+  bool m_openingImage = false;
   int m_historyEnd = 0;
   quint64 m_frameRevision = 0;
   bool m_ready = false, m_busy = true, m_canUndo = false, m_canRedo = false;

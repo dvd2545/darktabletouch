@@ -6,10 +6,12 @@
 
 #include "touch/TouchController.h"
 #include <QFileInfo>
+#include <QDateTime>
 #include <QFile>
 #include <QUuid>
 #include <QRegularExpression>
 #include <QDirIterator>
+#include <cstdio>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QUrl>
@@ -17,6 +19,15 @@
 #include <algorithm>
 
 namespace {
+QByteArray sourceVersion(const QString &path)
+{
+  const QFileInfo raw(path), sidecar(path + QStringLiteral(".xmp"));
+  if(!raw.isFile()) return {};
+  return QByteArray::number(raw.size()) + ':' + QByteArray::number(raw.lastModified().toMSecsSinceEpoch())
+    + ':' + QByteArray::number(sidecar.exists() ? sidecar.size() : -1)
+    + ':' + QByteArray::number(sidecar.exists() ? sidecar.lastModified().toMSecsSinceEpoch() : 0);
+}
+
 QJsonDocument takeJson(char *text)
 {
   const auto document = QJsonDocument::fromJson(text ? QByteArray(text) : QByteArray());
@@ -93,6 +104,48 @@ QImage takePixels(uint8_t *pixels, int width, int height)
 }
 }
 
+quint64 PreparedFrames::generation() const
+{
+  QReadLocker lock(&m_lock);
+  return m_generation;
+}
+
+void PreparedFrames::put(int id, const QImage &frame, const QString &path, quint64 generation)
+{
+  if(frame.isNull() || frame.sizeInBytes() > 64 * 1024 * 1024) return;
+  const QByteArray version = sourceVersion(path);
+  if(version.isEmpty()) return;
+  QWriteLocker lock(&m_lock);
+  if(generation != m_generation) return;
+  m_frames.insert(id, {frame, path, version});
+  m_order.removeAll(id);
+  m_order.append(id);
+  while(m_order.size() > 5) m_frames.remove(m_order.takeFirst());
+}
+
+QImage PreparedFrames::get(int id) const
+{
+  QReadLocker lock(&m_lock);
+  const auto frame = m_frames.constFind(id);
+  return frame != m_frames.cend() && frame->version == sourceVersion(frame->path) ? frame->pixels : QImage();
+}
+
+void PreparedFrames::remove(int id)
+{
+  QWriteLocker lock(&m_lock);
+  ++m_generation;
+  if(id) { m_frames.remove(id); m_order.removeAll(id); }
+  else { m_frames.clear(); m_order.clear(); }
+}
+
+quint64 PreparedFrames::bytes() const
+{
+  QReadLocker lock(&m_lock);
+  quint64 size = 0;
+  for(const auto &frame : m_frames) size += frame.pixels.sizeInBytes();
+  return size;
+}
+
 PreviewStore::PreviewStore() : QQuickImageProvider(QQuickImageProvider::Image), m_thumbnails(64 * 1024) {}
 
 QImage PreviewStore::requestImage(const QString &id, QSize *size, const QSize &requested)
@@ -138,7 +191,14 @@ void PreviewStore::removeThumbnail(int image)
 }
 
 
-EngineWorker::EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::shared_ptr<std::atomic<bool>> cancel) : m_exportCancel(std::move(cancel)), m_revision(std::move(revision)) {}
+EngineWorker::EngineWorker(std::shared_ptr<std::atomic<quint64>> revision, std::shared_ptr<std::atomic<bool>> cancel,
+                           std::shared_ptr<dt_touch_render_t> render, std::shared_ptr<PreparedFrames> prepared)
+  : m_render(std::move(render)), m_prepared(std::move(prepared)), m_exportCancel(std::move(cancel)), m_revision(std::move(revision))
+{
+  m_preloadTimer.setParent(this);
+  m_preloadTimer.setSingleShot(true);
+  connect(&m_preloadTimer, &QTimer::timeout, this, &EngineWorker::preload);
+}
 
 void EngineWorker::report(char *error)
 {
@@ -146,10 +206,10 @@ void EngineWorker::report(char *error)
   dt_touch_free(error);
 }
 
-bool EngineWorker::saveEditor()
+bool EngineWorker::saveEditor(bool force)
 {
   char *error = nullptr;
-  const bool saved = dt_touch_editor_save(m_editor, &error);
+  const bool saved = force ? dt_touch_editor_save(m_editor, &error) : dt_touch_editor_save_changed(m_editor, &error);
   const auto information = takeJson(dt_touch_editor_information(m_editor, nullptr)).object();
   const QString path = information.value(QStringLiteral("recovery_sidecar")).toString();
   char *source = m_editor ? dt_touch_image_path(m_imageId) : nullptr;
@@ -165,7 +225,7 @@ bool EngineWorker::saveEditor()
 
 void EngineWorker::retrySave()
 {
-  if(saveEditor()) emit completed(tr("save checked"));
+  if(saveEditor(true)) emit completed(tr("save checked"));
 }
 
 QJsonArray EngineWorker::images()
@@ -241,6 +301,7 @@ void EngineWorker::importPaths(QStringList paths)
 void EngineWorker::libraryCommand(QString action, QJsonObject settings, int image)
 {
   if(!m_initialized) return;
+  clearPreload();
   if(action == QStringLiteral("ui-options")) {
     dt_touch_ui_options_set(settings.value(QStringLiteral("scale_override")).toBool(), settings.value(QStringLiteral("scale")).toInt(100),
       settings.value(QStringLiteral("swipe_images")).toBool(), settings.value(QStringLiteral("preview_quality")).toInt(1280)); return;
@@ -388,23 +449,99 @@ void EngineWorker::clearHistory()
 
 void EngineWorker::openImage(int id, quint64 revision)
 {
-  if(!m_initialized) return;
+  if(!m_initialized || revision != m_revision->load()) return;
+  const quint64 cacheGeneration = m_prepared->generation();
+  m_preloadTimer.stop();
   abortCrop();
   char *error = nullptr;
-  if(!saveEditor()) return;
-  auto next = dt_touch_editor_new(id, &error);
-  if(!next) { report(error); return; }
+  if(!saveEditor()) { restoreOpen(revision); return; }
+  const auto stamp = imageStamp(id);
+  if(id == m_imageId && m_editor && !stamp.isEmpty() && m_imageCache.value(id).stamp == stamp)
+  {
+    emit imageOpened(id, revision);
+    loadModule(m_operation, revision);
+    const auto &current = m_imageCache[id];
+    if(!current.frame.isNull() && current.extent == m_previewExtent)
+    {
+      emit frameReady(current.frame, id, revision, current.extent, true);
+      schedulePreload(revision);
+    }
+    else render(revision);
+    return;
+  }
+  auto &cached = m_imageCache[id];
+  if(stamp.isEmpty() || cached.stamp != stamp)
+  {
+    if(!cached.stamp.isEmpty()) dt_touch_image_invalidate(id);
+    dt_touch_editor_free(cached.editor);
+    cached = {};
+  }
+  auto next = cached.editor ? cached.editor : dt_touch_editor_new(id, &error);
+  if(!next) { report(error); restoreOpen(revision); return; }
+  if(revision != m_revision->load())
+  {
+    if(next != cached.editor) dt_touch_editor_free(next);
+    return;
+  }
+  cached.editor = nullptr;
+  const QImage frame = cached.frame;
+  const int cachedExtent = cached.extent;
+  if(qEnvironmentVariableIsSet("DARKTABLETOUCH_PERF"))
+    std::fprintf(stderr, "[touch perf] open %d cached %d\n", id, !frame.isNull());
   clearHistory();
-  dt_touch_editor_free(m_editor);
+  const int oldIndex = m_preloadOrder.indexOf(m_imageId), newIndex = m_preloadOrder.indexOf(id);
+  if(oldIndex >= 0 && newIndex >= 0 && oldIndex != newIndex) m_direction = newIndex > oldIndex ? 1 : -1;
+  if(m_editor && m_imageId == id) dt_touch_editor_free(m_editor);
+  else if(m_editor)
+  {
+    auto &previous = m_imageCache[m_imageId];
+    previous.editor = m_editor;
+    dt_touch_editor_park(previous.editor);
+    previous.stamp = imageStamp(m_imageId);
+  }
   m_editor = next;
   m_imageId = id;
+  m_previewExtent = m_fittedExtent;
   emit imageOpened(id, revision);
+  if(!frame.isNull()) emit frameReady(frame, id, revision, cachedExtent, false);
   const auto information = takeJson(dt_touch_editor_information(m_editor, &error)).object();
   if(error) report(error);
   else emit informationReady(information, revision);
   saveEditor();
   loadModule(m_operation, revision);
-  render(revision);
+  if(!frame.isNull() && cachedExtent == m_previewExtent)
+  {
+    m_imageCache[id].stamp = imageStamp(id);
+    prepareFrame(id, frame, cacheGeneration);
+    emit frameReady(frame, id, revision, cachedExtent, true);
+    schedulePreload(revision);
+  }
+  else
+  {
+    if(frame.isNull() && m_previewExtent > 640)
+    {
+      dt_touch_render_reset(m_render.get());
+      uint8_t *pixels = nullptr;
+      int width = 0, height = 0;
+      if(revision == m_revision->load() && dt_touch_editor_draft(m_editor, &pixels, &width, &height, m_render.get()))
+      {
+        const QImage draft(pixels, width, height, width * 4, QImage::Format_RGBA8888, dt_touch_free, pixels);
+        emit frameReady(draft.convertToFormat(QImage::Format_RGB32), id, revision, std::max(width, height), false);
+      }
+    }
+    render(revision);
+  }
+}
+
+void EngineWorker::restoreOpen(quint64 revision)
+{
+  emit openFailed(m_imageId, revision);
+  if(!m_editor) return;
+  emit informationReady(takeJson(dt_touch_editor_information(m_editor, nullptr)).object(), revision);
+  loadModule(m_operation, revision);
+  const auto cached = m_imageCache.value(m_imageId);
+  if(!cached.frame.isNull()) emit frameReady(cached.frame, m_imageId, revision, cached.extent, true);
+  else render(revision);
 }
 
 void EngineWorker::loadModule(QString operation, quint64 revision)
@@ -425,6 +562,8 @@ void EngineWorker::loadModule(QString operation, quint64 revision)
 
 void EngineWorker::beginEdit()
 {
+  m_imageCache.remove(m_imageId);
+  m_preloadTimer.stop();
   if(!m_before) m_before = dt_touch_editor_capture(m_editor);
 }
 
@@ -450,10 +589,10 @@ void EngineWorker::commitEdit()
   if(saveEditor()) emit completed(tr("edits saved"));
 }
 
-void EngineWorker::setParameter(QString operation, QString name, QVariant value,
+void EngineWorker::setParameter(int image, QString operation, QString name, QVariant value,
                                  bool commit, quint64 revision)
 {
-  if(!m_editor) return;
+  if(!m_editor || image != m_imageId) return;
   if(!commit && revision != m_revision->load()) return;
   beginEdit();
   const auto document = QJsonDocument(QJsonArray{QJsonValue::fromVariant(value)}).toJson(QJsonDocument::Compact);
@@ -494,6 +633,7 @@ void EngineWorker::resetModule(QString operation, quint64 revision)
 
 void EngineWorker::historyStep(int direction, quint64 revision)
 {
+  clearPreload();
   abortCrop();
   if((direction < 0 && !m_position) || (direction > 0 && m_position == m_edits.size())) return;
   const auto &edit = m_edits[direction < 0 ? m_position - 1 : m_position];
@@ -522,17 +662,198 @@ void EngineWorker::historyStep(int direction, quint64 revision)
   else if(saved) emit completed(tr("edits saved"));
 }
 
-bool EngineWorker::render(quint64 revision, int extent)
+QImage EngineWorker::renderImage(dt_touch_editor_t *editor, int extent, quint64 revision, bool speculative)
 {
-  if(!m_editor || revision != m_revision->load()) return false;
-  if(extent == 0) extent = m_previewExtent;
+  dt_touch_render_reset(m_render.get());
+  if(!editor || revision != m_revision->load()) return {};
   uint8_t *pixels = nullptr;
   int width = 0, height = 0;
   char *error = nullptr;
-  if(!dt_touch_editor_preview(m_editor, extent, extent, &pixels, &width, &height, &error))
-  { report(error); return false; }
-  emit frameReady(takePixels(pixels, width, height), revision);
+  if(!dt_touch_editor_render(editor, extent, extent, &pixels, &width, &height, m_render.get(), &error))
+  {
+    if(error && !speculative && revision == m_revision->load()) report(error);
+    else dt_touch_free(error);
+    return {};
+  }
+  return takePixels(pixels, width, height);
+}
+
+bool EngineWorker::render(quint64 revision, int extent, bool final)
+{
+  if(!m_editor || revision != m_revision->load()) return false;
+  if(extent == 0) extent = m_previewExtent;
+  const quint64 generation = m_prepared->generation();
+  const QImage frame = renderImage(m_editor, extent, revision);
+  if(frame.isNull() || revision != m_revision->load()) return false;
+  emit frameReady(frame, m_imageId, revision, extent, final);
+  if(final && !m_cropBefore && !m_before)
+  {
+    auto &cached = m_imageCache[m_imageId];
+    cached.frame = frame;
+    cached.extent = extent;
+    cached.stamp = imageStamp(m_imageId);
+    prepareFrame(m_imageId, frame, generation);
+    schedulePreload(revision);
+  }
+  trimPreload();
+  if(qEnvironmentVariableIsSet("DARKTABLETOUCH_PERF"))
+    std::fprintf(stderr, "[touch perf] rendered %d extent %d hits %llu bytes %llu\n", m_imageId, extent,
+      (unsigned long long)dt_touch_editor_cache_hits(m_editor), (unsigned long long)dt_touch_editor_cache_bytes(m_editor));
   return true;
+}
+
+QByteArray EngineWorker::imageStamp(int id) const
+{
+  char *stamp = dt_touch_image_stamp(id);
+  QByteArray result(stamp ? stamp : "");
+  dt_touch_free(stamp);
+  char *path = dt_touch_image_path(id);
+  if(!result.isEmpty() && path) result += ':' + sourceVersion(QString::fromUtf8(path));
+  dt_touch_free(path);
+  return result;
+}
+
+void EngineWorker::clearPreload()
+{
+  m_prepared->remove();
+  m_preloadTimer.stop();
+  m_preloadQueue.clear();
+  m_prefetchRequested.clear();
+  for(auto &cached : m_imageCache) dt_touch_editor_free(cached.editor);
+  m_imageCache.clear();
+}
+
+void EngineWorker::setPreloadOrder(QList<int> images, int extent)
+{
+  if(images == m_preloadOrder && extent == m_fittedExtent) return;
+  clearPreload();
+  m_preloadOrder = images;
+  m_fittedExtent = std::clamp(extent, 640, 4096);
+  if(m_editor) schedulePreload(m_revision->load());
+}
+
+void EngineWorker::schedulePreload(quint64 revision)
+{
+  if(qEnvironmentVariableIsSet("DARKTABLETOUCH_DISABLE_PRELOAD") || !m_editor
+     || m_cropBefore || m_before || revision != m_revision->load()) return;
+  m_idleRevision = revision;
+  m_idleTime.start();
+  m_prefetchAttempts = 0;
+  m_preloadQueue.clear();
+  const int index = m_preloadOrder.indexOf(m_imageId);
+  if(index < 0) return;
+  for(int distance : {1, 2}) for(int direction : {m_direction, -m_direction})
+  {
+    const int neighbor = index + distance * direction;
+    if(neighbor >= 0 && neighbor < m_preloadOrder.size()) m_preloadQueue.append(m_preloadOrder[neighbor]);
+  }
+  trimPreload();
+  m_preloadTimer.start(200);
+}
+
+void EngineWorker::trimPreload()
+{
+  constexpr quint64 budget = quint64(2) << 30;
+  const bool low = dt_touch_memory_available() < budget;
+  const int index = m_preloadOrder.indexOf(m_imageId);
+  const auto bytes = [&] {
+    quint64 total = dt_touch_editor_cache_bytes(m_editor) + m_prepared->bytes();
+    for(const auto &cached : m_imageCache)
+      total += cached.frame.sizeInBytes() + dt_touch_editor_cache_bytes(cached.editor);
+    return total;
+  };
+  QList<int> ids = m_imageCache.keys();
+  std::sort(ids.begin(), ids.end(), [&](int a, int b) {
+    return std::abs(m_preloadOrder.indexOf(a) - index) > std::abs(m_preloadOrder.indexOf(b) - index);
+  });
+  for(int id : ids)
+  {
+    auto &cached = m_imageCache[id];
+    const int distance = std::abs(m_preloadOrder.indexOf(id) - index);
+    if(cached.editor && (low || distance > 1 || bytes() > budget))
+    {
+      dt_touch_editor_free(cached.editor);
+      cached.editor = nullptr;
+    }
+    if(id != m_imageId && (low || distance > 2 || bytes() > budget))
+    {
+      m_imageCache.remove(id);
+      m_prepared->remove(id);
+    }
+  }
+  const quint64 total = bytes(), active = dt_touch_editor_cache_bytes(m_editor);
+  const quint64 other = total - active;
+  dt_touch_editor_trim(m_editor, low ? 0 : other < budget ? budget - other : 0);
+}
+
+void EngineWorker::preload()
+{
+  if(m_preloadQueue.isEmpty() || m_idleRevision != m_revision->load()
+     || !m_editor || m_cropBefore || m_before) return;
+  trimPreload();
+  if(dt_touch_memory_available() < (quint64(2) << 30)) return;
+  bool waiting = false;
+  for(int id : m_preloadQueue)
+  {
+    if(dt_touch_image_prefetch(id, !m_prefetchRequested.contains(id))) m_prefetchRequested.remove(id);
+    else { m_prefetchRequested.insert(id); waiting = true; }
+  }
+  if(m_idleTime.elapsed() < 1500)
+  {
+    m_preloadTimer.start(1500 - int(m_idleTime.elapsed()));
+    return;
+  }
+  const int id = m_preloadQueue.front();
+  if(!dt_touch_image_prefetch(id, false))
+  {
+    if(++m_prefetchAttempts < 50) { m_preloadTimer.start(100); return; }
+    m_preloadQueue.pop_front();
+    m_prefetchRequested.remove(id);
+    m_prefetchAttempts = 0;
+    if(!m_preloadQueue.isEmpty()) m_preloadTimer.start(100);
+    return;
+  }
+  m_prefetchAttempts = 0;
+  m_preloadQueue.pop_front();
+  const QByteArray stamp = imageStamp(id);
+  auto &cached = m_imageCache[id];
+  if(stamp.isEmpty() || cached.stamp != stamp)
+  {
+    dt_touch_editor_free(cached.editor);
+    cached = {};
+  }
+  if(!stamp.isEmpty() && (cached.frame.isNull() || cached.extent != m_fittedExtent))
+  {
+    auto editor = cached.editor ? cached.editor : dt_touch_editor_preload(id);
+    cached.editor = nullptr;
+    if(editor)
+    {
+      const quint64 generation = m_prepared->generation();
+      const QImage frame = renderImage(editor, m_fittedExtent, m_idleRevision, true);
+      if(!frame.isNull() && m_idleRevision == m_revision->load())
+      {
+        cached.frame = frame;
+        cached.extent = m_fittedExtent;
+        cached.stamp = imageStamp(id);
+        prepareFrame(id, frame, generation);
+        if(std::abs(m_preloadOrder.indexOf(id) - m_preloadOrder.indexOf(m_imageId)) == 1)
+        {
+          dt_touch_editor_park(editor);
+          cached.editor = editor;
+        }
+      }
+      if(cached.editor != editor) dt_touch_editor_free(editor);
+    }
+  }
+  trimPreload();
+  if(!m_preloadQueue.isEmpty()) m_preloadTimer.start(waiting ? 100 : 0);
+}
+
+void EngineWorker::prepareFrame(int id, const QImage &frame, quint64 generation)
+{
+  char *path = dt_touch_image_path(id);
+  if(path) m_prepared->put(id, frame, QString::fromUtf8(path), generation);
+  dt_touch_free(path);
 }
 
 void EngineWorker::updatePreview(int extent, quint64 revision)
@@ -571,6 +892,7 @@ void EngineWorker::thumbnail(int id)
 
 void EngineWorker::exportImage(QString path, QString format)
 {
+  clearPreload();
   abortCrop();
   if(!m_editor) return;
   if(!saveEditor()) return;
@@ -589,6 +911,7 @@ void EngineWorker::shutdown()
   if(!dt_touch_save_session(m_nextInterface.toUtf8().constData(), m_imageId, m_editorVisible,
                              m_zoom, m_centerX, m_centerY, &error)) { m_nextInterface.clear(); report(error); return; }
   clearHistory();
+  clearPreload();
   dt_touch_editor_free(m_editor);
   m_editor = nullptr;
   if(m_initialized) dt_touch_shutdown();
@@ -598,9 +921,10 @@ void EngineWorker::shutdown()
 
 void EngineWorker::saveView(int image, bool editor, double zoom, double centerX, double centerY)
 {
-  m_imageId = image;
+  if(image != m_imageId) return;
   m_editorVisible = editor;
   m_zoom = zoom; m_centerX = centerX; m_centerY = centerY;
+  if(!editor) m_preloadTimer.stop();
 }
 
 void EngineWorker::switchInterface(QString mode)
@@ -613,9 +937,11 @@ void EngineWorker::switchInterface(QString mode)
 TouchController::TouchController(PreviewStore *store, QObject *parent)
   : QObject(parent), m_store(store), m_revision(std::make_shared<std::atomic<quint64>>(0))
 {
+  m_prepared = store->preparedFrames();
   m_fields.setParent(this);
   m_exportCancel = std::make_shared<std::atomic<bool>>(false);
-  m_worker = new EngineWorker(m_revision, m_exportCancel);
+  m_render = std::shared_ptr<dt_touch_render_t>(dt_touch_render_new(), dt_touch_render_free);
+  m_worker = new EngineWorker(m_revision, m_exportCancel, m_render, m_prepared);
   m_worker->moveToThread(&m_thread);
   connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
   connect(this, &TouchController::boot, m_worker, &EngineWorker::initialize);
@@ -661,6 +987,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   connect(this, &TouchController::cropRequested, m_worker, &EngineWorker::cropCommand);
   connect(m_worker, &EngineWorker::cropReady, this, [this](QJsonArray bounds, QSize originalSize) { if(originalSize.isValid()) m_cropOriginalSize = originalSize; m_cropBounds = bounds.toVariantList(); m_cropEditing = !bounds.isEmpty(); emit cropChanged(); });
   connect(this, &TouchController::openRequested, m_worker, &EngineWorker::openImage);
+  connect(this, &TouchController::preloadOrderRequested, m_worker, &EngineWorker::setPreloadOrder);
   connect(this, &TouchController::moduleRequested, m_worker, &EngineWorker::loadModule);
   connect(this, &TouchController::parameterRequested, m_worker, &EngineWorker::setParameter);
   connect(this, &TouchController::enabledRequested, m_worker, &EngineWorker::changeEnabled);
@@ -725,9 +1052,23 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
   });
   connect(m_worker, &EngineWorker::imageOpened, this, [this](int id, quint64 revision) {
     if(revision != m_revision->load()) return;
+    const bool changed = m_imageId != id;
     m_imageId = id;
+    m_requestedImage = id;
     m_failed = false;
-    m_needBefore = true;
+    if(changed) m_needBefore = true;
+    emit stateChanged();
+  });
+  connect(m_worker, &EngineWorker::openFailed, this, [this](int id, quint64 revision) {
+    if(revision != m_revision->load()) return;
+    if(m_imageId != id) m_needBefore = true;
+    m_imageId = m_requestedImage = id;
+    m_openingImage = m_waitingFrame = m_busy = false;
+    QImage frame = m_prepared->get(id);
+    if(frame.isNull() && id == m_previousImage) frame = m_previousFrame;
+    m_store->setFrame(frame);
+    ++m_frameSerial;
+    emit previewChanged();
     emit stateChanged();
   });
   connect(m_worker, &EngineWorker::moduleReady, this, [this](QJsonObject module, quint64 revision) {
@@ -736,15 +1077,18 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
     if(revision > m_frameRevision && !m_failed) { m_deferredModule = module; return; }
     applyModule(module);
   });
-  connect(m_worker, &EngineWorker::frameReady, this, [this](QImage image, quint64 revision) {
-    if(revision != m_revision->load()) return;
+  connect(m_worker, &EngineWorker::frameReady, this, [this](QImage image, int id, quint64 revision, int extent, bool final) {
+    if(revision != m_revision->load() || id != m_imageId) return;
     m_store->setFrame(image);
     ++m_frameSerial;
-    if(m_needBefore) { m_store->setFrame(image, true); m_needBefore = false; }
-    m_waitingFrame = false;
-    m_frameRevision = revision;
-    if(!m_deferredModule.isEmpty()) { const auto module = m_deferredModule; m_deferredModule = {}; applyModule(module); }
-    m_busy = m_exportRunning;
+    if(final && m_needBefore) { m_store->setFrame(image, true); m_needBefore = false; }
+    m_waitingFrame = !final;
+    if(final) m_openingImage = false;
+    if(final) m_previewExtent = extent;
+    if(final) m_previousFrame = {};
+    if(final) m_frameRevision = revision;
+    if(final && !m_deferredModule.isEmpty()) { const auto module = m_deferredModule; m_deferredModule = {}; applyModule(module); }
+    m_busy = m_exportRunning || m_waitingFrame;
     if(!m_failed) m_message = tr("edits are saved when an adjustment finishes");
     emit previewChanged();
     emit stateChanged();
@@ -796,6 +1140,7 @@ TouchController::~TouchController()
 {
   if(m_thread.isRunning())
   {
+    advance();
     QMetaObject::invokeMethod(m_worker, &EngineWorker::shutdown, Qt::BlockingQueuedConnection);
     m_thread.quit();
     m_thread.wait();
@@ -803,7 +1148,13 @@ TouchController::~TouchController()
 }
 
 void TouchController::initialize(const QStringList &arguments) { emit boot(arguments); }
-quint64 TouchController::advance() { return ++(*m_revision); }
+quint64 TouchController::advance()
+{
+  if(!m_openingImage) m_prepared->remove(m_imageId);
+  const auto revision = ++(*m_revision);
+  dt_touch_render_cancel(m_render.get());
+  return revision;
+}
 
 QString TouchController::preview() const
 {
@@ -820,6 +1171,7 @@ void TouchController::setUiOption(const QString &name, const QVariant &value)
   m_uiOptions.insert(name, next);
   emit libraryRequested(QStringLiteral("ui-options"), QJsonObject::fromVariantMap(m_uiOptions), 0);
   emit stateChanged();
+  updateImages(QJsonArray::fromVariantList(m_allImages));
 }
 
 void TouchController::requestPreview(int extent)
@@ -829,6 +1181,7 @@ void TouchController::requestPreview(int extent)
   if(extent == m_previewExtent) return;
   m_previewExtent = extent;
   m_busy = true; m_waitingFrame = true; emit stateChanged();
+  dt_touch_render_cancel(m_render.get());
   emit previewRequested(extent, m_revision->load());
 }
 
@@ -848,6 +1201,9 @@ void TouchController::updateImages(const QJsonArray &images)
     m_images = visibleImages;
     emit imagesChanged();
   }
+  QList<int> order;
+  for(const auto &entry : m_images) order.append(entry.toMap().value(QStringLiteral("imgid")).toInt());
+  emit preloadOrderRequested(order, m_uiOptions.value(QStringLiteral("preview_quality"), 1280).toInt());
   emit stateChanged();
 }
 
@@ -896,7 +1252,9 @@ void TouchController::reviewImport(const QVariantList &urls, bool recursive)
 
 void TouchController::libraryCommand(const QString &action, const QVariantMap &settings, int image)
 {
+  m_prepared->remove();
   if(!m_ready || m_busy) return;
+  dt_touch_render_cancel(m_render.get());
   if(action == QStringLiteral("collection"))
     for(const QString &group : {QStringLiteral("collection"), QStringLiteral("filtering")})
       for(const auto &rule : settings.value(group).toList())
@@ -921,17 +1279,35 @@ void TouchController::selectImage(int id)
 {
   if(!m_ready || id <= 0) return;
   flush(true);
+  if(!m_openingImage)
+  {
+    m_previousFrame = m_store->requestImage(QStringLiteral("current"), nullptr, QSize());
+    m_previousImage = m_imageId;
+  }
+  m_requestedImage = id;
+  m_openingImage = true;
+  m_previewExtent = 0;
+  m_fields.setFields({});
+  emit moduleChanged();
   m_deferredModule = {};
   m_waitingFrame = true;
   m_editorVisible = true; m_busy = true; m_before = false;
   m_message = tr("opening image");
   emit stateChanged();
   emit openRequested(id, advance());
+  const QImage prepared = m_prepared->get(id);
+  if(!prepared.isNull())
+  {
+    m_store->setFrame(prepared);
+    ++m_frameSerial;
+    emit previewChanged();
+  }
 }
 
 void TouchController::selectTool(const QString &operation)
 {
-  if(!m_ready || !m_imageId) return;
+  if(!m_ready || !editorReady()) return;
+  if(!m_busy) dt_touch_render_cancel(m_render.get());
   if(m_cropEditing) cropCommand(QStringLiteral("cancel"));
   flush(true);
   m_deferredModule = {};
@@ -944,7 +1320,8 @@ void TouchController::selectTool(const QString &operation)
 
 void TouchController::setParameter(const QString &name, const QVariant &value, bool commit, const QString &operation)
 {
-  if(!m_imageId) return;
+  if(!editorReady()) return;
+  m_prepared->remove(m_imageId);
   const QString target = operation.isEmpty() ? m_operation : operation;
   if(!m_pendingName.isEmpty() && (m_pendingName != name || m_pendingOperation != target)) flush(true);
   m_pendingName = name;
@@ -965,20 +1342,21 @@ void TouchController::flush(bool commit)
 {
   if(m_pendingName.isEmpty()) return;
   m_editTimer.stop();
-  emit parameterRequested(m_pendingOperation, m_pendingName, m_pendingValue, commit, advance());
+  emit parameterRequested(m_imageId, m_pendingOperation, m_pendingName, m_pendingValue, commit, advance());
   if(commit) { m_pendingName.clear(); m_pendingOperation.clear(); }
 }
 
 void TouchController::setEnabled(bool enabled)
 {
-  if(!m_imageId) return;
+  if(!editorReady()) return;
   flush(true); m_waitingFrame = true; m_busy = true; emit stateChanged(); emit enabledRequested(m_operation, enabled, advance());
 }
-void TouchController::reset() { if(!m_imageId) return; m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit resetRequested(m_operation, advance()); }
-void TouchController::undo() { if(!m_canUndo) return; m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit historyRequested(-1, advance()); }
-void TouchController::redo() { if(!m_canRedo) return; m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit historyRequested(1, advance()); }
+void TouchController::reset() { if(!editorReady()) return; m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit resetRequested(m_operation, advance()); }
+void TouchController::undo() { if(!editorReady() || !m_canUndo) return; m_prepared->remove(); m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit historyRequested(-1, advance()); }
+void TouchController::redo() { if(!editorReady() || !m_canRedo) return; m_prepared->remove(); m_waitingFrame = true; m_busy = true; emit stateChanged(); flush(true); emit historyRequested(1, advance()); }
 void TouchController::jumpHistory(int end)
 {
+  if(!editorReady()) return;
   flush(true);
   if(end != m_historyEnd) emit historyJumpRequested(end, advance());
 }
@@ -991,16 +1369,18 @@ void TouchController::requestThumbnail(int image)
 
 void TouchController::exportTo(const QUrl &url, const QString &format)
 {
+  if(!editorReady()) return;
   if(!url.isValid() || !url.isLocalFile() || !validText(url.toLocalFile()))
   { m_message = tr("export requires a valid Unicode local file path"); emit stateChanged(); return; }
   flush(true); m_busy = true; m_message = tr("exporting image"); emit stateChanged();
+  dt_touch_render_cancel(m_render.get());
   emit exportRequested(url.toLocalFile(), format);
 }
 
 void TouchController::navigateImage(int direction)
 {
   for(int i = 0; i < m_images.size(); i++)
-    if(m_images[i].toMap().value(QStringLiteral("imgid")).toInt() == m_imageId)
+    if(m_images[i].toMap().value(QStringLiteral("imgid")).toInt() == (m_requestedImage ? m_requestedImage : m_imageId))
     {
       const int next = qBound(0, i + direction, int(m_images.size()) - 1);
       selectImage(m_images[next].toMap().value(QStringLiteral("imgid")).toInt());
@@ -1013,8 +1393,8 @@ void TouchController::setEditorVisible(bool visible)
   if(!visible && m_cropEditing) cropCommand(QStringLiteral("cancel"));
   flush(true); m_editorVisible = visible; emit stateChanged();
 }
-void TouchController::setBefore(bool before) { m_before = before; emit previewChanged(); }
-void TouchController::shutdown() { m_exportCancel->store(true); flush(true); emit shutdownRequested(); }
+void TouchController::setBefore(bool before) { if(!editorReady()) return; m_before = before; emit previewChanged(); }
+void TouchController::shutdown() { m_exportCancel->store(true); flush(true); advance(); emit shutdownRequested(); }
 
 void TouchController::retrySave()
 {
@@ -1147,13 +1527,13 @@ void EngineWorker::cropCommand(QString action, QJsonObject settings, quint64 rev
 }
 void TouchController::cropCommand(const QString &action, const QVariantMap &settings)
 {
-  if(!m_imageId) return;
+  if(!editorReady()) return;
   flush(true); m_busy = true; m_waitingFrame = action != QStringLiteral("auto"); emit stateChanged();
   emit cropRequested(action, QJsonObject::fromVariantMap(settings), advance());
 }
 void TouchController::setEnabledFor(const QString &operation, bool enabled)
 {
-  if(!m_imageId) return;
+  if(!editorReady()) return;
   m_moduleStates.insert(operation, enabled);
   if(operation == m_operation) m_moduleEnabled = enabled;
   emit moduleChanged();
@@ -1183,10 +1563,12 @@ void TouchController::exportBatch(const QVariantMap &settings)
   { m_failed = true; m_message = tr("choose an export folder"); emit stateChanged(); return; }
   request.insert(QStringLiteral("folder"), folder.toLocalFile());
   flush(true); m_exportCancel->store(false); m_exportRunning = true; m_busy = true; m_failed = false; emit stateChanged();
+  dt_touch_render_cancel(m_render.get());
   emit batchExportRequested(QJsonObject::fromVariantMap(request));
 }
 void EngineWorker::exportBatch(QJsonObject settings)
 {
+  clearPreload();
   abortCrop();
   char *error = nullptr;
   if(!saveEditor()) { emit exportFinished(); return; }
@@ -1241,6 +1623,7 @@ void EngineWorker::exportBatch(QJsonObject settings)
 void TouchController::historyCommand(const QString &action, const QVariantMap &settings, int image)
 {
   if(!m_ready || m_busy) return;
+  if(action != QStringLiteral("copy")) m_prepared->remove();
   QVariantMap request = settings;
   if(action == QStringLiteral("copy")) request.insert(QStringLiteral("source"), image > 0 ? image : m_imageId);
   else {
@@ -1261,6 +1644,7 @@ void TouchController::historyCommand(const QString &action, const QVariantMap &s
 
 void EngineWorker::historyCommand(QString action, QJsonObject settings, quint64 revision)
 {
+  clearPreload();
   abortCrop(); char *error = nullptr;
   if(!saveEditor()) return;
   if(action == QStringLiteral("copy")) {

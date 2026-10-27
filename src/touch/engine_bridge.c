@@ -44,7 +44,154 @@ struct dt_touch_editor_t
   gboolean pipe_ready;
   gboolean input_ready;
   guint64 generation;
+  char *synced_token;
+  char *saved_token;
+  gboolean speculative;
+  gboolean rendered;
+  dt_iop_module_t *sync_top;
 };
+
+struct dt_touch_render_t
+{
+  GMutex mutex;
+  dt_dev_pixelpipe_t *pipe;
+  gboolean canceled;
+};
+
+static char *_history_token(dt_touch_editor_t *source);
+
+dt_touch_render_t *dt_touch_render_new(void)
+{
+  dt_touch_render_t *render = g_new0(dt_touch_render_t, 1);
+  g_mutex_init(&render->mutex);
+  return render;
+}
+
+void dt_touch_render_free(dt_touch_render_t *render)
+{
+  g_mutex_clear(&render->mutex);
+  g_free(render);
+}
+
+void dt_touch_render_cancel(dt_touch_render_t *render)
+{
+  g_mutex_lock(&render->mutex);
+  render->canceled = TRUE;
+  // the stop request is also honored before process() marks the pipe as running
+  if(render->pipe) dt_atomic_set_int(&render->pipe->shutdown, DT_DEV_PIXELPIPE_STOP_NODES);
+  g_mutex_unlock(&render->mutex);
+}
+
+void dt_touch_render_reset(dt_touch_render_t *render)
+{
+  g_mutex_lock(&render->mutex);
+  g_assert(render->pipe == NULL);
+  render->canceled = FALSE;
+  g_mutex_unlock(&render->mutex);
+}
+
+uint64_t dt_touch_memory_available(void)
+{
+  uint64_t available;
+#ifdef _WIN32
+  MEMORYSTATUSEX memory = { .dwLength = sizeof(MEMORYSTATUSEX) };
+  if(!GlobalMemoryStatusEx(&memory)) return 0;
+  available = MIN(memory.ullAvailPhys, memory.ullAvailPageFile);
+#else
+  // the resource budget already reserves unified GPU memory
+  available = dt_get_available_mem();
+#endif
+  const char *cap = g_getenv("DARKTABLETOUCH_TEST_AVAILABLE_MEMORY_MIB");
+  if(cap)
+  {
+    char *end = NULL;
+    const uint64_t mib = g_ascii_strtoull(cap, &end, 10);
+    if(end != cap && !*end && mib < 1048576) available = MIN(available, mib * DT_MEGA);
+  }
+  return available;
+}
+
+int dt_touch_image_prefetch(int image_id, int request)
+{
+  dt_mipmap_buffer_t input = { 0 };
+  dt_mipmap_cache_get(&input, image_id, DT_MIPMAP_FULL, DT_MIPMAP_TESTLOCK, 'r');
+  const gboolean ready = input.buf != NULL;
+  dt_mipmap_cache_release(&input);
+  if(!ready && request) dt_mipmap_cache_get(&input, image_id, DT_MIPMAP_F, DT_MIPMAP_PREFETCH, 'r');
+  return ready;
+}
+
+void dt_touch_image_invalidate(int image_id)
+{
+  dt_mipmap_cache_remove_at_size(image_id, DT_MIPMAP_F);
+  dt_mipmap_cache_remove_at_size(image_id, DT_MIPMAP_FULL);
+}
+
+char *dt_touch_image_stamp(int image_id)
+{
+  if(!dt_image_exists(image_id)) return NULL;
+  char path[PATH_MAX] = { 0 };
+  dt_image_full_path(image_id, path, sizeof(path), NULL);
+  GStatBuf source;
+  if(g_stat(path, &source)) return NULL;
+  dt_history_hash_values_t hash = { 0 };
+  dt_history_hash_read(image_id, &hash);
+  GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
+  if(hash.current) g_checksum_update(checksum, hash.current, hash.current_len);
+  g_checksum_update(checksum, (const guchar *)&source.st_size, sizeof(source.st_size));
+  g_checksum_update(checksum, (const guchar *)&source.st_mtime, sizeof(source.st_mtime));
+  char *xmp = g_strconcat(path, ".xmp", NULL);
+  GStatBuf sidecar;
+  if(!g_stat(xmp, &sidecar))
+  {
+    g_checksum_update(checksum, (const guchar *)&sidecar.st_size, sizeof(sidecar.st_size));
+    g_checksum_update(checksum, (const guchar *)&sidecar.st_mtime, sizeof(sidecar.st_mtime));
+  }
+  char *stamp = g_strdup(g_checksum_get_string(checksum));
+  g_free(xmp);
+  g_checksum_free(checksum);
+  dt_history_hash_free(&hash);
+  return stamp;
+}
+
+uint64_t dt_touch_editor_cache_bytes(dt_touch_editor_t *editor)
+{
+  if(!editor || !editor->pipe_ready) return 0;
+  return editor->pipe.cache.allmem + editor->pipe.bcache_size
+         + editor->pipe.mask_cache_size + editor->pipe.scharr.size;
+}
+
+uint64_t dt_touch_editor_cache_hits(dt_touch_editor_t *editor)
+{
+  return editor && editor->pipe_ready ? editor->pipe.cache.hits : 0;
+}
+
+void dt_touch_editor_trim(dt_touch_editor_t *editor, uint64_t limit)
+{
+  if(!editor || !editor->pipe_ready) return;
+  dt_dev_pixelpipe_t *pipe = &editor->pipe;
+  dt_dev_pixelpipe_cache_t *cache = &pipe->cache;
+  while(dt_touch_editor_cache_bytes(editor) > limit)
+  {
+    int oldest = -1;
+    for(int k = DT_PIPECACHE_MIN; k < cache->entries; k++)
+      if(cache->data[k] && (oldest < 0 || cache->used[k] > cache->used[oldest])) oldest = k;
+    if(oldest < 0) break;
+    void *data = cache->data[oldest];
+    if(data == pipe->backbuf) pipe->backbuf = NULL;
+    dt_dev_pixelpipe_clear_cacheline(pipe, data, "touch memory budget");
+  }
+}
+
+void dt_touch_editor_park(dt_touch_editor_t *editor)
+{
+  if(!editor) return;
+  if(editor->pipe_ready) dt_dev_pixelpipe_cleanup(&editor->pipe);
+  editor->pipe_ready = FALSE;
+  editor->speculative = FALSE;
+  editor->sync_top = NULL;
+  g_clear_pointer(&editor->synced_token, g_free);
+}
 
 static guint64 _editor_generation = 0;
 static GHashTable *_recovery_sidecars = NULL;
@@ -505,10 +652,11 @@ char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error)
   return text;
 }
 
-int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, char **error)
+static int _thumbnail(int image_id, uint8_t **pixels, int *width, int *height,
+                       dt_mipmap_get_flags_t flags, char **error)
 {
   dt_mipmap_buffer_t buffer = { 0 };
-  dt_mipmap_cache_get(&buffer, image_id, DT_MIPMAP_1, DT_MIPMAP_BLOCKING, 'r');
+  dt_mipmap_cache_get(&buffer, image_id, DT_MIPMAP_1, flags, 'r');
   if(!buffer.buf)
   {
     dt_mipmap_cache_release(&buffer);
@@ -546,6 +694,11 @@ int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, 
   return TRUE;
 }
 
+int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, char **error)
+{
+  return _thumbnail(image_id, pixels, width, height, DT_MIPMAP_BLOCKING, error);
+}
+
 char *dt_touch_import(const char *path, char **error)
 {
   GError *failure = NULL;
@@ -571,10 +724,24 @@ dt_touch_editor_t *dt_touch_editor_new(int image_id, char **error)
     _error(error, N_("image does not exist in this catalog"));
     return NULL;
   }
+  char *path = dt_touch_image_path(image_id);
+  const gboolean available = path && g_file_test(path, G_FILE_TEST_IS_REGULAR);
+  g_free(path);
+  if(!available)
+  {
+    _error(error, N_("original image is unavailable"));
+    return NULL;
+  }
   dt_touch_editor_t *editor = g_new0(dt_touch_editor_t, 1);
   editor->generation = ++_editor_generation;
   dt_dev_init(&editor->dev, FALSE);
   dt_dev_load_image(&editor->dev, image_id);
+  if(editor->dev.image_storage.load_status != DT_IMAGEIO_OK)
+  {
+    dt_touch_editor_free(editor);
+    _error(error, N_("could not decode the source image"));
+    return NULL;
+  }
   dt_dev_pop_history_items_ext(&editor->dev, editor->dev.history_end);
   return editor;
 }
@@ -585,7 +752,22 @@ void dt_touch_editor_free(dt_touch_editor_t *editor)
   if(editor->pipe_ready) dt_dev_pixelpipe_cleanup(&editor->pipe);
   if(editor->input_ready) dt_mipmap_cache_release(&editor->input);
   dt_dev_cleanup(&editor->dev);
+  g_free(editor->synced_token);
+  g_free(editor->saved_token);
   g_free(editor);
+}
+
+dt_touch_editor_t *dt_touch_editor_preload(int image_id)
+{
+  dt_touch_editor_t *editor = g_new0(dt_touch_editor_t, 1);
+  if(!dt_touch_session_preload(&editor->dev, image_id))
+  {
+    g_free(editor);
+    return NULL;
+  }
+  editor->generation = ++_editor_generation;
+  editor->speculative = TRUE;
+  return editor;
 }
 
 static dt_iop_module_t *_module(dt_touch_editor_t *editor, const char *operation, char **error)
@@ -634,6 +816,7 @@ int dt_touch_editor_crop_bounds(dt_touch_editor_t *editor, float bounds[4], char
 int dt_touch_editor_crop_apply(dt_touch_editor_t *editor, const float bounds[4],
                                int ratio_n, int ratio_d, char **error)
 {
+  if(editor) editor->sync_top = NULL;
   dt_iop_module_t *module = _module(editor, "crop", error);
   if(!module || !editor->pipe_ready) return FALSE;
   for(int i = 0; i < 4; i++)
@@ -983,6 +1166,7 @@ char *dt_touch_editor_history(dt_touch_editor_t *editor)
 
 int dt_touch_editor_history_select(dt_touch_editor_t *editor, int end, char **error)
 {
+  if(editor) editor->sync_top = NULL;
   if(!editor || end < 0 || end > g_list_length(editor->dev.history))
     return _error(error, N_("history step is outside the current editing session"));
   dt_dev_pop_history_items_ext(&editor->dev, end);
@@ -997,6 +1181,10 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
   dt_introspection_field_t *field = module->get_f(name);
   void *value = module->get_p(module->params, name);
   if(!field || !value) return _error(error, N_("unknown module parameter"));
+  char *before = _history_token(editor);
+  const gboolean synchronized = !g_strcmp0(before, editor->synced_token);
+  g_free(before);
+  editor->sync_top = NULL;
   const gboolean exposure = !strcmp(operation, "exposure");
   const int *mode = exposure ? module->get_p(module->params, "mode") : NULL;
   if(mode && _exposure_automatic_supported(module) && _exposure_automatic(module, *mode) && !strcmp(name, "exposure"))
@@ -1061,6 +1249,7 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
   if(!ok) return _error(error, N_("parameter value has an invalid type or is outside its limits"));
   module->enabled = TRUE;
   dt_dev_add_history_item_ext(&editor->dev, module, TRUE, TRUE);
+  if(synchronized && strcmp(operation, "ashift")) editor->sync_top = module;
   if(!strcmp(operation, "ashift") && (!strcmp(name, "rotation") || !strcmp(name, "cropmode")))
     return _constrain_rotation(editor, module, error);
   return TRUE;
@@ -1069,6 +1258,7 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
 int dt_touch_editor_enable(dt_touch_editor_t *editor, const char *operation,
                            int enabled, char **error)
 {
+  if(editor) editor->sync_top = NULL;
   dt_iop_module_t *module = _module(editor, operation, error);
   if(!module) return FALSE;
   if(!enabled && module->hide_enable_button)
@@ -1080,6 +1270,7 @@ int dt_touch_editor_enable(dt_touch_editor_t *editor, const char *operation,
 
 int dt_touch_editor_reset(dt_touch_editor_t *editor, const char *operation, char **error)
 {
+  if(editor) editor->sync_top = NULL;
   dt_iop_module_t *module = _module(editor, operation, error);
   if(!module) return FALSE;
   if(!strcmp(operation, "flip"))
@@ -1203,10 +1394,21 @@ int dt_touch_editor_save(dt_touch_editor_t *editor, char **error)
   if(!_saved_history_matches(editor)) return _error(error, N_("could not verify the saved catalog history; keep this session open"));
   if(dt_image_write_sidecar_file(editor->dev.image_storage.id))
   {
-    return _save_recovery(editor->dev.image_storage.id, error);
+    if(!_save_recovery(editor->dev.image_storage.id, error)) return FALSE;
   }
-  if(_recovery_sidecars) g_hash_table_remove(_recovery_sidecars, GINT_TO_POINTER(editor->dev.image_storage.id));
+  else if(_recovery_sidecars) g_hash_table_remove(_recovery_sidecars, GINT_TO_POINTER(editor->dev.image_storage.id));
+  g_free(editor->saved_token);
+  editor->saved_token = _history_token(editor);
   return TRUE;
+}
+
+int dt_touch_editor_save_changed(dt_touch_editor_t *editor, char **error)
+{
+  if(!editor) return TRUE;
+  char *token = _history_token(editor);
+  const gboolean saved = !g_strcmp0(token, editor->saved_token);
+  g_free(token);
+  return saved || dt_touch_editor_save(editor, error);
 }
 
 dt_touch_state_t *dt_touch_editor_capture(dt_touch_editor_t *editor)
@@ -1224,6 +1426,7 @@ dt_touch_state_t *dt_touch_editor_capture(dt_touch_editor_t *editor)
 
 int dt_touch_editor_restore(dt_touch_editor_t *editor, const dt_touch_state_t *state, char **error)
 {
+  if(editor) editor->sync_top = NULL;
   if(!editor || !state || state->image != editor->dev.image_storage.id)
     return _error(error, N_("history snapshot belongs to a different image"));
   if(state->generation != editor->generation)
@@ -1246,7 +1449,8 @@ void dt_touch_state_free(dt_touch_state_t *state)
 }
 
 static int _preview(dt_touch_editor_t *editor, int max_width, int max_height,
-                      uint8_t **pixels, int *width, int *height, char **error)
+                      uint8_t **pixels, int *width, int *height,
+                      dt_touch_render_t *render, char **error)
 {
   if(!editor || max_width < 1 || max_height < 1)
     return _error(error, N_("invalid preview request"));
@@ -1268,36 +1472,106 @@ static int _preview(dt_touch_editor_t *editor, int max_width, int max_height,
                                                       MIN(max_height, editor->input.height),
                                                       IMAGEIO_RGB | IMAGEIO_INT8, FALSE);
     if(!editor->pipe_ready) return _error(error, N_("could not allocate the preview pipeline"));
+    if(editor->rendered && !editor->speculative && !g_getenv("DARKTABLETOUCH_DISABLE_PIPE_CACHE"))
+    {
+      dt_dev_pixelpipe_cache_cleanup(&editor->pipe);
+      dt_dev_pixelpipe_cache_init(&editor->pipe, 12, 0, 2);
+    }
     dt_dev_pixelpipe_set_input(&editor->pipe, &editor->dev, (float *)editor->input.buf,
                                editor->input.width, editor->input.height, editor->input.iscale);
     dt_dev_pixelpipe_set_icc(&editor->pipe, DT_COLORSPACE_SRGB, NULL, DT_INTENT_LAST);
     dt_dev_pixelpipe_create_nodes(&editor->pipe, &editor->dev);
+    // every newly created node needs its parameters, including unchanged modules
+    editor->sync_top = NULL;
   }
-  else dt_dev_pixelpipe_set_input(&editor->pipe, &editor->dev, (float *)editor->input.buf,
-                             editor->input.width, editor->input.height, editor->input.iscale);
-  dt_dev_pixelpipe_synch_all(&editor->pipe, &editor->dev);
-  dt_dev_pixelpipe_get_dimensions(&editor->pipe, &editor->dev,
-                                  editor->input.width, editor->input.height,
-                                  &editor->pipe.processed_width, &editor->pipe.processed_height);
+  else
+  {
+    if(editor->rendered && !editor->speculative && editor->pipe.cache.entries == DT_PIPECACHE_MIN
+       && !g_getenv("DARKTABLETOUCH_DISABLE_PIPE_CACHE"))
+    {
+      dt_dev_pixelpipe_cache_cleanup(&editor->pipe);
+      editor->pipe.backbuf = NULL;
+      dt_dev_pixelpipe_cache_init(&editor->pipe, 12, 0, 2);
+    }
+    dt_dev_pixelpipe_set_input(&editor->pipe, &editor->dev, (float *)editor->input.buf,
+                               editor->input.width, editor->input.height, editor->input.iscale);
+  }
+  char *token = _history_token(editor);
+  if(g_strcmp0(token, editor->synced_token))
+  {
+    const GList *top = g_list_nth(editor->dev.history, editor->dev.history_end - 1);
+    if(editor->sync_top && top && ((dt_dev_history_item_t *)top->data)->module == editor->sync_top)
+      dt_dev_pixelpipe_synch_top(&editor->pipe, &editor->dev);
+    else dt_dev_pixelpipe_synch_all(&editor->pipe, &editor->dev);
+    editor->sync_top = NULL;
+    dt_dev_pixelpipe_get_dimensions(&editor->pipe, &editor->dev,
+                                    editor->input.width, editor->input.height,
+                                    &editor->pipe.processed_width, &editor->pipe.processed_height);
+    g_free(editor->synced_token);
+    editor->synced_token = token;
+  }
+  else g_free(token);
   if(editor->pipe.processed_width < 1 || editor->pipe.processed_height < 1)
     return _error(error, N_("the processing pipeline produced invalid image dimensions"));
   const float scale = fminf(1.0f, fminf((float)max_width / editor->pipe.processed_width,
                                        (float)max_height / editor->pipe.processed_height));
   *width = MAX(1, (int)floorf(editor->pipe.processed_width * scale));
   *height = MAX(1, (int)floorf(editor->pipe.processed_height * scale));
-  if(dt_dev_pixelpipe_process(&editor->pipe, &editor->dev, 0, 0, *width, *height, scale, DT_DEVICE_NONE)
-     || !editor->pipe.backbuf)
+  if(render)
+  {
+    g_mutex_lock(&render->mutex);
+    if(render->canceled)
+    {
+      g_mutex_unlock(&render->mutex);
+      return FALSE;
+    }
+    dt_atomic_set_int(&editor->pipe.shutdown, DT_DEV_PIXELPIPE_STOP_NO);
+    render->pipe = &editor->pipe;
+    g_mutex_unlock(&render->mutex);
+  }
+  else dt_atomic_set_int(&editor->pipe.shutdown, DT_DEV_PIXELPIPE_STOP_NO);
+  const gboolean failure = dt_dev_pixelpipe_process(&editor->pipe, &editor->dev, 0, 0, *width, *height, scale, DT_DEVICE_NONE);
+  gboolean canceled = FALSE;
+  if(render)
+  {
+    g_mutex_lock(&render->mutex);
+    render->pipe = NULL;
+    canceled = render->canceled;
+    g_mutex_unlock(&render->mutex);
+  }
+  if(canceled) return FALSE;
+  if(failure || !editor->pipe.backbuf)
     return _error(error, N_("could not render the preview"));
+  editor->rendered = TRUE;
   const size_t size = (size_t)*width * *height * 4;
   *pixels = g_malloc(size);
   memcpy(*pixels, editor->pipe.backbuf, size);
+  // gamma leaves the unused BGRX byte undefined; frames must compare deterministically
+  for(size_t i = 3; i < size; i += 4) (*pixels)[i] = 255;
   return TRUE;
 }
 
 int dt_touch_editor_preview(dt_touch_editor_t *editor, int max_width, int max_height,
                             uint8_t **pixels, int *width, int *height, char **error)
 {
-  const int result = _preview(editor, max_width, max_height, pixels, width, height, error);
+  return dt_touch_editor_render(editor, max_width, max_height, pixels, width, height, NULL, error);
+}
+
+int dt_touch_editor_draft(dt_touch_editor_t *editor, uint8_t **pixels, int *width, int *height,
+                          dt_touch_render_t *render)
+{
+  if(!editor || !dt_history_hash_is_mipmap_synced(editor->dev.image_storage.id)) return FALSE;
+  g_mutex_lock(&render->mutex);
+  const gboolean canceled = render->canceled;
+  g_mutex_unlock(&render->mutex);
+  return !canceled && _thumbnail(editor->dev.image_storage.id, pixels, width, height, DT_MIPMAP_TESTLOCK, NULL);
+}
+
+int dt_touch_editor_render(dt_touch_editor_t *editor, int max_width, int max_height,
+                           uint8_t **pixels, int *width, int *height,
+                           dt_touch_render_t *render, char **error)
+{
+  const int result = _preview(editor, max_width, max_height, pixels, width, height, render, error);
   if(editor && editor->input_ready)
   {
     dt_mipmap_cache_release(&editor->input);
@@ -1414,6 +1688,8 @@ int dt_touch_editor_reload(dt_touch_editor_t *editor, char **error)
   if(editor->pipe_ready) dt_dev_pixelpipe_cleanup(&editor->pipe);
   if(editor->input_ready) dt_mipmap_cache_release(&editor->input);
   dt_dev_cleanup(&editor->dev);
+  g_free(editor->synced_token);
+  g_free(editor->saved_token);
   memset(editor, 0, sizeof(*editor)); editor->generation = ++_editor_generation;
   dt_dev_init(&editor->dev, FALSE); dt_dev_load_image(&editor->dev, id);
   dt_dev_pop_history_items_ext(&editor->dev, editor->dev.history_end);

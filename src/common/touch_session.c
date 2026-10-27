@@ -8,10 +8,16 @@
 #include "common/collection.h"
 #include "common/darktable.h"
 #include "common/database.h"
+#include "common/debug.h"
 #include "common/image.h"
+#include "common/image_cache.h"
+#include "common/iop_order.h"
+#include "common/history_snapshot.h"
 #include "common/selection.h"
 #include "control/conf.h"
 #include "develop/develop.h"
+#include "develop/imageop.h"
+#include "develop/masks.h"
 #include "develop/pixelpipe_hb.h"
 #include "views/view.h"
 #include "whereami.h"
@@ -19,6 +25,95 @@
 #include <math.h>
 
 static gboolean _switch_pending = FALSE;
+
+gboolean dt_touch_session_preload(dt_develop_t *dev, int image_id)
+{
+  if(!dt_image_exists(image_id)) return FALSE;
+  dt_lock_image(image_id);
+  const dt_image_t *image = dt_image_cache_get(image_id, 'r');
+  dt_image_t metadata = *image;
+  dt_image_cache_read_release(image);
+  if(!(metadata.flags & DT_IMAGE_AUTO_PRESETS_APPLIED))
+  {
+    dt_unlock_image(image_id);
+    return FALSE;
+  }
+  dt_dev_init(dev, FALSE);
+  dev->image_storage = metadata;
+  dev->requested_id = image_id;
+  dev->first_load = TRUE;
+  dt_pthread_mutex_lock(&darktable.dev_threadsafe);
+  dev->iop = dt_iop_load_modules(dev);
+  dt_ioppr_set_default_iop_order(dev, image_id);
+  dt_dev_reset_chroma(dev);
+  for(GList *item = g_list_last(dev->iop); item; item = g_list_previous(item))
+    dt_iop_reload_defaults(item->data);
+
+  // migrations can write mask history even when reading a snapshot
+  sqlite3_stmt *statement = NULL;
+  // clang-format off
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db),
+      "SELECT operation, module, length(op_params), blendop_version, blendop_params IS NULL"
+      " FROM main.history WHERE imgid=?1", -1, &statement, NULL);
+  // clang-format on
+  DT_DEBUG_SQLITE3_BIND_INT(statement, 1, image_id);
+  gboolean supported = TRUE;
+  int rows = 0;
+  int status;
+  while((status = sqlite3_step(statement)) == SQLITE_ROW)
+  {
+    rows++;
+    const char *operation = (const char *)sqlite3_column_text(statement, 0);
+    dt_iop_module_t *module = NULL;
+    for(GList *item = dev->iop; item; item = g_list_next(item))
+      if(!g_strcmp0(((dt_iop_module_t *)item->data)->op, operation)) { module = item->data; break; }
+    const int size = sqlite3_column_int(statement, 2);
+    if(!module || abs(sqlite3_column_int(statement, 1)) != module->version()
+       || (size && size != module->params_size)
+       || (!sqlite3_column_int(statement, 4) && sqlite3_column_int(statement, 3) != dt_develop_blend_version()))
+      supported = FALSE;
+  }
+  supported = supported && status == SQLITE_DONE;
+  sqlite3_finalize(statement);
+  // clang-format off
+  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db),
+      "SELECT version FROM main.masks_history WHERE imgid=?1", -1, &statement, NULL);
+  // clang-format on
+  DT_DEBUG_SQLITE3_BIND_INT(statement, 1, image_id);
+  while((status = sqlite3_step(statement)) == SQLITE_ROW)
+    if(sqlite3_column_int(statement, 0) != dt_masks_version()) supported = FALSE;
+  supported = supported && status == SQLITE_DONE;
+  sqlite3_finalize(statement);
+
+  if(supported && rows)
+  {
+    int end = 0;
+    dt_image_get_history_end(image_id, &end);
+    // snapshot reads select by id alone, while undo ids are normally per image
+    DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db),
+        "SELECT COALESCE(MAX(id), 0) + 1 FROM memory.snapshot_history", -1, &statement, NULL);
+    int snapshot = 0;
+    if(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int64(statement, 0) < INT_MAX)
+      snapshot = sqlite3_column_int(statement, 0);
+    sqlite3_finalize(statement);
+    // keep inactive future rows too: opening a preloaded editor must not truncate history
+    if(snapshot > 0)
+    {
+      dt_history_snapshot_create(image_id, snapshot, INT_MAX);
+      dev->snapshot_id = snapshot;
+      dt_dev_read_history_ext(dev, image_id, TRUE);
+      dev->snapshot_id = -1;
+      dt_history_snapshot_clear(image_id, snapshot);
+      dt_dev_pop_history_items_ext(dev, MIN(end, g_list_length(dev->history)));
+    }
+    else supported = FALSE;
+  }
+  dt_pthread_mutex_unlock(&darktable.dev_threadsafe);
+  dev->first_load = FALSE;
+  dt_unlock_image(image_id);
+  if(!supported || !rows) dt_dev_cleanup(dev);
+  return supported && rows;
+}
 
 static char *_path(void)
 {

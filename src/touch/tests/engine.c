@@ -396,6 +396,145 @@ static void _test_history(dt_touch_editor_t *source, int source_id)
   g_object_unref(parser); g_free(clipboard); g_free(request); g_free(token);
 }
 
+static void _test_preview_cache(int image)
+{
+  char *error = NULL;
+  dt_touch_editor_t *reference = dt_touch_editor_new(image, &error);
+  dt_touch_editor_t *cached = dt_touch_editor_new(image, &error);
+  g_assert_null(error);
+  g_assert_nonnull(reference);
+  g_assert_nonnull(cached);
+  for(int step = 0; step < 4; step++)
+  {
+    const char *value = step % 2 ? "0.5" : "-0.5";
+    g_assert_true(dt_touch_editor_set(reference, "exposure", "exposure", value, &error));
+    g_assert_true(dt_touch_editor_set(cached, "exposure", "exposure", value, &error));
+    uint8_t *expected = NULL, *actual = NULL;
+    int ew, eh, aw, ah;
+    g_setenv("DARKTABLETOUCH_DISABLE_PIPE_CACHE", "1", TRUE);
+    g_assert_true(dt_touch_editor_preview(reference, 1280, 1280, &expected, &ew, &eh, &error));
+    g_unsetenv("DARKTABLETOUCH_DISABLE_PIPE_CACHE");
+    g_assert_true(dt_touch_editor_preview(cached, 1280, 1280, &actual, &aw, &ah, &error));
+    g_assert_null(error);
+    g_assert_cmpint(ew, ==, aw);
+    g_assert_cmpint(eh, ==, ah);
+    if(memcmp(expected, actual, (size_t)ew * eh * 4))
+    {
+      int changed = 0, maximum = 0;
+      for(size_t i = 0; i < (size_t)ew * eh * 4; i++)
+      {
+        const int delta = abs((int)expected[i] - actual[i]);
+        changed += delta != 0;
+        maximum = MAX(maximum, delta);
+      }
+      g_printerr("cache parity step %d: %d changed bytes, maximum difference %d\n", step, changed, maximum);
+    }
+    g_assert_cmpmem(expected, (size_t)ew * eh * 4, actual, (size_t)aw * ah * 4);
+    dt_touch_free(expected);
+    dt_touch_free(actual);
+  }
+  g_assert_true(dt_touch_editor_set(reference, "exposure", "exposure", "0.75", &error));
+  g_assert_true(dt_touch_editor_set(cached, "exposure", "exposure", "0.75", &error));
+  dt_touch_editor_park(cached);
+  uint8_t *parked_expected = NULL, *parked_actual = NULL;
+  int pw, ph, qw, qh;
+  g_assert_true(dt_touch_editor_preview(reference, 1280, 1280, &parked_expected, &pw, &ph, &error));
+  g_assert_true(dt_touch_editor_preview(cached, 1280, 1280, &parked_actual, &qw, &qh, &error));
+  g_assert_cmpint(pw, ==, qw); g_assert_cmpint(ph, ==, qh);
+  g_assert_cmpmem(parked_expected, (size_t)pw * ph * 4, parked_actual, (size_t)qw * qh * 4);
+  dt_touch_free(parked_expected); dt_touch_free(parked_actual);
+  g_assert_true(dt_touch_editor_set(reference, "exposure", "exposure", "0.5", &error));
+  g_assert_true(dt_touch_editor_set(cached, "exposure", "exposure", "0.5", &error));
+  g_assert_true(dt_touch_editor_enable(reference, "agx", FALSE, &error));
+  g_assert_true(dt_touch_editor_enable(cached, "agx", FALSE, &error));
+  g_assert_true(dt_touch_editor_enable(reference, "exposure", TRUE, &error));
+  g_assert_true(dt_touch_editor_enable(cached, "exposure", TRUE, &error));
+  g_assert_true(dt_touch_editor_preview(reference, 1280, 1280, &parked_expected, &pw, &ph, &error));
+  g_assert_true(dt_touch_editor_preview(cached, 1280, 1280, &parked_actual, &qw, &qh, &error));
+  g_assert_cmpmem(parked_expected, (size_t)pw * ph * 4, parked_actual, (size_t)qw * qh * 4);
+  dt_touch_free(parked_expected); dt_touch_free(parked_actual);
+  dt_touch_render_t *render = dt_touch_render_new();
+  dt_touch_render_cancel(render);
+  uint8_t *pixels = NULL;
+  int width, height;
+  g_assert_false(dt_touch_editor_render(cached, 640, 640, &pixels, &width, &height, render, &error));
+  g_assert_null(error);
+  g_assert_null(pixels);
+  dt_touch_render_reset(render);
+  g_assert_true(dt_touch_editor_render(cached, 640, 640, &pixels, &width, &height, render, &error));
+  g_assert_null(error);
+  dt_touch_free(pixels);
+  dt_touch_render_free(render);
+  dt_touch_editor_trim(cached, 0);
+  pixels = NULL;
+  g_assert_true(dt_touch_editor_preview(cached, 1280, 1280, &pixels, &width, &height, &error));
+  g_assert_null(error);
+  dt_touch_free(pixels);
+  dt_touch_editor_free(cached);
+  dt_touch_editor_free(reference);
+  g_print("passed: cached preview parity, cancellation, resize, and cache eviction\n");
+}
+
+static void _persistent_write(void *data, int operation, const char *database,
+                               const char *table, sqlite3_int64 row)
+{
+  (void)row;
+  if(!strcmp(database, "main")
+     && (!strcmp(table, "history") || !strcmp(table, "masks_history")
+         || !strcmp(table, "module_order") || !strcmp(table, "history_hash")))
+  {
+    g_printerr("unexpected preload write: %d %s.%s\n", operation, database, table);
+    g_atomic_int_inc((gint *)data);
+  }
+}
+
+static void _test_preload(int image)
+{
+  char *error = NULL;
+  dt_touch_editor_t *reference = dt_touch_editor_new(image, &error);
+  g_assert_nonnull(reference);
+  g_assert_true(dt_touch_editor_save(reference, &error));
+  dt_touch_state_t *held = dt_touch_editor_capture(reference);
+  const int duplicate = dt_image_duplicate(image);
+  g_assert_cmpint(duplicate, >, 0);
+  dt_touch_editor_t *initialized = dt_touch_editor_new(duplicate, &error);
+  g_assert_nonnull(initialized);
+  g_assert_true(dt_touch_editor_save(initialized, &error));
+  char *before = dt_touch_image_stamp(image);
+  char *target_before = dt_touch_image_stamp(duplicate);
+  const int snapshots = _count("SELECT COUNT(*) FROM memory.snapshot_history");
+  gint writes = 0;
+  sqlite3_update_hook(dt_database_get(darktable.db), _persistent_write, &writes);
+  g_assert_true(dt_touch_editor_save_changed(initialized, &error));
+  dt_touch_editor_t *preloaded = dt_touch_editor_preload(duplicate);
+  sqlite3_update_hook(dt_database_get(darktable.db), NULL, NULL);
+  g_assert_cmpint(writes, ==, 0);
+  g_assert_nonnull(preloaded);
+  char *after = dt_touch_image_stamp(image);
+  g_assert_cmpstr(before, ==, after);
+  char *target_after = dt_touch_image_stamp(duplicate);
+  g_assert_cmpstr(target_before, ==, target_after);
+  g_assert_cmpint(snapshots, ==, _count("SELECT COUNT(*) FROM memory.snapshot_history"));
+  uint8_t *expected = NULL, *actual = NULL;
+  int ew, eh, aw, ah;
+  g_assert_true(dt_touch_editor_preview(initialized, 1280, 1280, &expected, &ew, &eh, &error));
+  g_assert_true(dt_touch_editor_preview(preloaded, 1280, 1280, &actual, &aw, &ah, &error));
+  g_assert_null(error);
+  g_assert_cmpint(ew, ==, aw);
+  g_assert_cmpint(eh, ==, ah);
+  g_assert_cmpmem(expected, (size_t)ew * eh * 4, actual, (size_t)aw * ah * 4);
+  dt_touch_free(expected); dt_touch_free(actual);
+  dt_touch_editor_park(preloaded);
+  g_assert_cmpuint(dt_touch_editor_cache_bytes(preloaded), ==, 0);
+  dt_touch_editor_free(reference); dt_touch_editor_free(preloaded);
+  dt_touch_editor_free(initialized);
+  dt_touch_state_free(held);
+  dt_image_remove(duplicate);
+  g_free(before); g_free(after);
+  g_free(target_before); g_free(target_after);
+  g_print("passed: read-only preload parity and snapshot cleanup\n");
+}
+
 int main(int argc, char **argv)
 {
   if(argc < 2 || argc > 3 || (argc == 3 && strcmp(argv[2], "--save-recovery-only")))
@@ -416,9 +555,21 @@ int main(int argc, char **argv)
   g_assert_true(g_file_copy(source, target, G_FILE_COPY_NONE, NULL, NULL, NULL, &error));
   g_assert_no_error(error);
   g_object_unref(source); g_object_unref(target);
-  char *args[] = { argv[0], "--configdir", config, "--cachedir", cache,
-    "--disable-opencl", "--conf", "host_memory_limit=2048", "--conf", "worker_threads=2", "-t", "2", NULL };
-  g_assert_true(dt_touch_initialize(G_N_ELEMENTS(args) - 1, args));
+  GPtrArray *args = g_ptr_array_new();
+  const char *test_cache = g_getenv("DARKTABLETOUCH_TEST_OPENCL_CACHE");
+  const char *base_args[] = { argv[0], "--configdir", config, "--cachedir", test_cache ? test_cache : cache,
+    "--conf", "host_memory_limit=2048", "--conf", "worker_threads=2", "-t", "2" };
+  for(size_t i = 0; i < G_N_ELEMENTS(base_args); i++) g_ptr_array_add(args, (gpointer)base_args[i]);
+  if(test_cache)
+  {
+    g_ptr_array_add(args, "--conf"); g_ptr_array_add(args, "clplatform_amdacceleratedparallelprocessing=true");
+    g_ptr_array_add(args, "--conf"); g_ptr_array_add(args, "opencl=true");
+    g_ptr_array_add(args, "-d"); g_ptr_array_add(args, "opencl");
+  }
+  else g_ptr_array_add(args, "--disable-opencl");
+  g_ptr_array_add(args, NULL);
+  g_assert_true(dt_touch_initialize(args->len - 1, (char **)args->pdata));
+  g_ptr_array_free(args, TRUE);
   g_assert_true(dt_touch_import_is_raw("folder/IMAGE.CR3"));
   g_assert_true(dt_touch_import_is_raw("folder/image.dng"));
   g_assert_false(dt_touch_import_is_raw("folder/image.jpg"));
@@ -445,6 +596,8 @@ int main(int argc, char **argv)
   g_assert_no_error(error);
   JsonArray *images = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "images");
   const int image_id = json_object_get_int_member(json_array_get_object_element(images, 0), "imgid");
+  _test_preview_cache(image_id);
+  _test_preload(image_id);
   char *export_name = dt_touch_export_name(image_id, "$(FILE.NAME)_$(IMAGE.ID)_$(SEQUENCE[4,1])", 7, 1920, 1080, FALSE);
   char *expected_suffix = g_strdup_printf("_%d_0007", image_id);
   g_assert_nonnull(export_name);

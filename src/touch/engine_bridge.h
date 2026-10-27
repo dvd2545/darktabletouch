@@ -15,6 +15,7 @@ extern "C" {
 typedef struct dt_touch_editor_t dt_touch_editor_t;
 typedef struct dt_touch_state_t dt_touch_state_t;
 typedef struct dt_touch_catalog_edit_t dt_touch_catalog_edit_t;
+typedef struct dt_touch_render_t dt_touch_render_t;
 
 /* all text crossing this boundary is UTF-8; returned text and pixels use dt_touch_free */
 int dt_touch_initialize(int argc, char **argv);
@@ -45,6 +46,7 @@ int dt_touch_save_session(const char *next_ui, int image_id, int editor,
 /* thumbnail pixels are RGBA8 sRGB; preview pixels are native BGRX8 sRGB on Windows */
 int dt_touch_thumbnail(int image_id, uint8_t **pixels, int *width, int *height, char **error);
 dt_touch_editor_t *dt_touch_editor_new(int image_id, char **error);
+dt_touch_editor_t *dt_touch_editor_preload(int image_id);
 void dt_touch_editor_free(dt_touch_editor_t *editor);
 char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error);
 char *dt_touch_editor_module(dt_touch_editor_t *editor, const char *operation, char **error);
@@ -67,6 +69,24 @@ int dt_touch_editor_crop_bounds(dt_touch_editor_t *editor, float bounds[4], char
 int dt_touch_editor_crop_apply(dt_touch_editor_t *editor, const float bounds[4], int ratio_n, int ratio_d, char **error);
 int dt_touch_editor_auto_crop(dt_touch_editor_t *editor, double aspect, float bounds[4], char **error);
 int dt_touch_editor_save(dt_touch_editor_t *editor, char **error);
+int dt_touch_editor_save_changed(dt_touch_editor_t *editor, char **error);
+char *dt_touch_image_stamp(int image_id);
+int dt_touch_image_prefetch(int image_id, int request);
+void dt_touch_image_invalidate(int image_id);
+uint64_t dt_touch_memory_available(void);
+uint64_t dt_touch_editor_cache_bytes(dt_touch_editor_t *editor);
+uint64_t dt_touch_editor_cache_hits(dt_touch_editor_t *editor);
+void dt_touch_editor_trim(dt_touch_editor_t *editor, uint64_t limit);
+void dt_touch_editor_park(dt_touch_editor_t *editor);
+dt_touch_render_t *dt_touch_render_new(void);
+void dt_touch_render_free(dt_touch_render_t *render);
+void dt_touch_render_cancel(dt_touch_render_t *render);
+void dt_touch_render_reset(dt_touch_render_t *render);
+int dt_touch_editor_render(dt_touch_editor_t *editor, int max_width, int max_height,
+                           uint8_t **pixels, int *width, int *height,
+                           dt_touch_render_t *render, char **error);
+int dt_touch_editor_draft(dt_touch_editor_t *editor, uint8_t **pixels, int *width, int *height,
+                          dt_touch_render_t *render);
 dt_touch_state_t *dt_touch_editor_capture(dt_touch_editor_t *editor);
 int dt_touch_editor_restore(dt_touch_editor_t *editor, const dt_touch_state_t *state, char **error);
 void dt_touch_state_free(dt_touch_state_t *state);
