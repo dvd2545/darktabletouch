@@ -119,6 +119,12 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- DarktableTouch offers independent rejected and zero-to-five-star rating
+  filters in the menu panel, replacing the separate rejected visibility
+  preference. Zoomed previews can reach original image resolution. Settings
+  tabs have equal widths, padding is tighter, and tapping outside collections
+  closes the dialog without activating controls behind it.
+
 - The Windows Touch build launcher now finds the runtime used by the build,
   including MSYS2 installed in the Codex Store application's local data.
 
