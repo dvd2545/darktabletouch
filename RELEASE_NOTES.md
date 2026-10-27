@@ -119,6 +119,9 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- The Windows Touch build launcher now finds the runtime used by the build,
+  including MSYS2 installed in the Codex Store application's local data.
+
 - Touch film roll selection now keeps imported subfolders separate, while
   folder selection includes descendants. Collection leaves no longer leave
   an empty expand button, and More actions applies image actions to a selection.
