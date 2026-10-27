@@ -104,7 +104,8 @@ gboolean dt_touch_session_preload(dt_develop_t *dev, int image_id)
       dt_dev_read_history_ext(dev, image_id, TRUE);
       dev->snapshot_id = -1;
       dt_history_snapshot_clear(image_id, snapshot);
-      dt_dev_pop_history_items_ext(dev, MIN(end, g_list_length(dev->history)));
+      supported = g_list_length(dev->history) == rows;
+      if(supported) dt_dev_pop_history_items_ext(dev, MIN(end, rows));
     }
     else supported = FALSE;
   }

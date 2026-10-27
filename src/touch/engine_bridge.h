@@ -71,7 +71,7 @@ int dt_touch_editor_auto_crop(dt_touch_editor_t *editor, double aspect, float bo
 int dt_touch_editor_save(dt_touch_editor_t *editor, char **error);
 int dt_touch_editor_save_changed(dt_touch_editor_t *editor, char **error);
 char *dt_touch_image_stamp(int image_id);
-int dt_touch_image_prefetch(int image_id, int request);
+int dt_touch_image_prefetch(int image_id, int request, dt_touch_render_t *render);
 void dt_touch_image_invalidate(int image_id);
 uint64_t dt_touch_memory_available(void);
 uint64_t dt_touch_editor_cache_bytes(dt_touch_editor_t *editor);
@@ -80,6 +80,7 @@ void dt_touch_editor_trim(dt_touch_editor_t *editor, uint64_t limit);
 void dt_touch_editor_park(dt_touch_editor_t *editor);
 dt_touch_render_t *dt_touch_render_new(void);
 void dt_touch_render_free(dt_touch_render_t *render);
+void dt_touch_render_stop_inputs(dt_touch_render_t *render);
 void dt_touch_render_cancel(dt_touch_render_t *render);
 void dt_touch_render_reset(dt_touch_render_t *render);
 int dt_touch_editor_render(dt_touch_editor_t *editor, int max_width, int max_height,

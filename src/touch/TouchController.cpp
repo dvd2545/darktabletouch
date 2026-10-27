@@ -715,6 +715,7 @@ QByteArray EngineWorker::imageStamp(int id) const
 
 void EngineWorker::clearPreload()
 {
+  dt_touch_render_cancel(m_render.get());
   m_prepared->remove();
   m_preloadTimer.stop();
   m_preloadQueue.clear();
@@ -736,10 +737,12 @@ void EngineWorker::schedulePreload(quint64 revision)
 {
   if(qEnvironmentVariableIsSet("DARKTABLETOUCH_DISABLE_PRELOAD") || !m_editor
      || m_cropBefore || m_before || revision != m_revision->load()) return;
+  dt_touch_render_reset(m_render.get());
   m_idleRevision = revision;
   m_idleTime.start();
   m_prefetchAttempts = 0;
   m_preloadQueue.clear();
+  m_prefetchRequested.clear();
   const int index = m_preloadOrder.indexOf(m_imageId);
   if(index < 0) return;
   for(int distance : {1, 2}) for(int direction : {m_direction, -m_direction})
@@ -791,11 +794,17 @@ void EngineWorker::preload()
   if(m_preloadQueue.isEmpty() || m_idleRevision != m_revision->load()
      || !m_editor || m_cropBefore || m_before) return;
   trimPreload();
-  if(dt_touch_memory_available() < (quint64(2) << 30)) return;
+  if(dt_touch_memory_available() < (quint64(2) << 30))
+  {
+    m_prefetchRequested.clear();
+    m_preloadTimer.start(1000);
+    return;
+  }
   bool waiting = false;
   for(int id : m_preloadQueue)
   {
-    if(dt_touch_image_prefetch(id, !m_prefetchRequested.contains(id))) m_prefetchRequested.remove(id);
+    if(m_idleRevision != m_revision->load()) return;
+    if(dt_touch_image_prefetch(id, !m_prefetchRequested.contains(id), m_render.get())) m_prefetchRequested.remove(id);
     else { m_prefetchRequested.insert(id); waiting = true; }
   }
   if(m_idleTime.elapsed() < 1500)
@@ -804,7 +813,7 @@ void EngineWorker::preload()
     return;
   }
   const int id = m_preloadQueue.front();
-  if(!dt_touch_image_prefetch(id, false))
+  if(!dt_touch_image_prefetch(id, false, m_render.get()))
   {
     if(++m_prefetchAttempts < 50) { m_preloadTimer.start(100); return; }
     m_preloadQueue.pop_front();
@@ -912,6 +921,7 @@ void EngineWorker::shutdown()
                              m_zoom, m_centerX, m_centerY, &error)) { m_nextInterface.clear(); report(error); return; }
   clearHistory();
   clearPreload();
+  dt_touch_render_stop_inputs(m_render.get());
   dt_touch_editor_free(m_editor);
   m_editor = nullptr;
   if(m_initialized) dt_touch_shutdown();

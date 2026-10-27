@@ -52,6 +52,7 @@ int main(int argc, char **argv)
   const int rounds = option("--rounds", "20").toInt();
   const int idle = option("--idle-ms", "750").toInt();
   const bool rounding = arguments.contains("--opencl") && arguments.contains("--diagnose-gpu-rounding");
+  const bool resumeModules = arguments.contains("--resume-module-edits");
   if(root.isEmpty()) return 2;
   QTemporaryDir temporary;
   if(!temporary.isValid()) return 2;
@@ -189,7 +190,7 @@ int main(int argc, char **argv)
     if(checkpoint.open(QIODevice::WriteOnly))
     {
       checkpoint.write(QJsonDocument(QJsonObject{{"opencl_requested", arguments.contains("--opencl")},
-        {"heavy_modules", arguments.contains("--heavy")}, {"gpu_rounding_diagnostic", rounding},
+        {"heavy_modules", arguments.contains("--heavy")}, {"gpu_rounding_diagnostic", rounding}, {"resume_module_edits", resumeModules},
         {"rounds", rounds}, {"idle_ms", idle}, {"samples", samples}}).toJson());
       checkpoint.flush();
     }
@@ -199,8 +200,35 @@ int main(int argc, char **argv)
     waitFor([&] { return pause.elapsed() >= idle; }, idle + 1000);
     return true;
   };
+  const auto lensField = [&] {
+    const auto values = controller.values();
+    const int method = values.value("method").toInt();
+    if(method == 0) return values.value("md_version").toInt() == 0
+      ? QStringLiteral("scale_md_v1") : QStringLiteral("scale_md");
+    return method == 1 ? QStringLiteral("scale") : QStringLiteral("v_strength");
+  };
+  if(arguments.contains("--probe-lens"))
+  {
+    const int id = ids[1];
+    if(!run(id, "probe-open", 0, [&] { controller.selectImage(id); })
+       || !run(id, "probe-enable-lens", 0, [&] { controller.setEnabledFor("lens", true); })) return 9;
+    controller.selectTool("lens");
+    if(!waitFor([&] { return controller.values().contains("method"); })) return 9;
+    const auto values = controller.values();
+    QJsonObject diagnostic;
+    for(const char *key : {"method", "md_version", "scale", "scale_md", "scale_md_v1", "v_strength", "camera", "lens"})
+      diagnostic.insert(QString::fromLatin1(key), QJsonValue::fromVariant(values.value(QString::fromLatin1(key))));
+    QTextStream(stderr) << "lens parameters: " << QJsonDocument(diagnostic).toJson(QJsonDocument::Compact) << '\n';
+    const QString field = lensField();
+    const bool vignette = field == "v_strength";
+    for(int i = 0; i < 2; i++)
+      if(!run(id, "lens-probe", i, [&] { controller.setParameter(field, vignette ? (i ? 0.5 : 0.25) : (i ? 1.0 : 1.05), true, "lens"); })) return 9;
+    if(samples.last().toObject().value("rgb_sha256") == samples[samples.size() - 2].toObject().value("rgb_sha256")) return 9;
+    controller.shutdown();
+    return waitFor([&] { return controller.canClose(); }) ? 0 : 9;
+  }
   if(arguments.contains("--heavy"))
-    for(int id : ids)
+    for(int id : resumeModules ? QVector<int>{ids[1]} : ids)
     {
       if(!run(id, "setup", 0, [&] { controller.selectImage(id); })) return 9;
       for(const QString &module : {QStringLiteral("agx"), QStringLiteral("lens"), QStringLiteral("denoiseprofile")})
@@ -209,14 +237,14 @@ int main(int argc, char **argv)
         if(!controller.moduleStates().value(module).toBool()) return 9;
       }
     }
-  for(int round = 0; round <= rounds; ++round)
+  for(int round = 0; !resumeModules && round <= rounds; ++round)
   {
     auto sequence = ids;
     if(round % 2) std::reverse(sequence.begin(), sequence.end());
     for(int id : sequence)
       if(!run(id, round ? "switch" : "cold", round, [&] { controller.selectImage(id); })) return 5;
   }
-  if(arguments.contains("--warm-pair"))
+  if(!resumeModules && arguments.contains("--warm-pair"))
   {
     if(!run(ids[0], "prepare-warm", 0, [&] { controller.selectImage(ids[0]); })) return 5;
     QElapsedTimer warm;
@@ -228,21 +256,29 @@ int main(int argc, char **argv)
       if(!run(id, "warm-switch", i, [&] { controller.selectImage(id); })) return 5;
     }
   }
-  for(int i = 0; i < 20; ++i)
+  if(resumeModules)
+  {
+    if(!run(ids[1], "seed-exposure", 0, [&] { controller.setParameter("exposure", 0.25, true, "exposure"); })
+       || !run(ids[1], "seed-agx", 0, [&] { controller.setParameter("look_saturation", 1.0, true, "agx"); })) return 6;
+  }
+  for(int i = 0; !resumeModules && i < 20; ++i)
     if(!run(controller.imageId(), "exposure", i, [&] { controller.setParameter("exposure", i % 2 ? 0.25 : 0.5, true, "exposure"); })) return 6;
   if(arguments.contains("--heavy"))
     for(const auto &edit : {QStringList{"agx", "look_saturation"}, QStringList{"lens", "scale"},
                             QStringList{"denoiseprofile", "strength"}})
     {
+      if(resumeModules && edit[0] == "agx") continue;
       controller.selectTool(edit[0]);
       if(!waitFor([&] { return controller.values().contains(edit[1]); })) return 6;
-      const QString field = edit[0] == "lens" && controller.values().value("method").toInt() == 0
-        ? QStringLiteral("scale_md") : edit[1];
+      const QString field = edit[0] == "lens" ? lensField() : edit[1];
+      QTextStream(stderr) << "edit field: " << edit[0] << '.' << field << '\n';
       QByteArray previous;
       for(int i = 0; i < 20; ++i)
       {
         if(!run(controller.imageId(), edit[0] + "-edit", i, [&] {
-          controller.setParameter(field, i % 2 ? 1.0 : 1.2, true, edit[0]);
+          const double value = field == "v_strength" ? (i % 2 ? 0.5 : 0.25)
+            : edit[0] == "lens" ? (i % 2 ? 1.0 : 1.05) : (i % 2 ? 1.0 : 1.2);
+          controller.setParameter(field, value, true, edit[0]);
         })) return 6;
         const auto hash = samples.last().toObject().value("rgb_sha256").toString().toLatin1();
         if(hash == previous)
@@ -286,7 +322,7 @@ int main(int argc, char **argv)
   QFile output(option("--output", "build/touch-performance.json"));
   if(!output.open(QIODevice::WriteOnly)) return 7;
   output.write(QJsonDocument(QJsonObject{{"opencl_requested", arguments.contains("--opencl")},
-    {"heavy_modules", arguments.contains("--heavy")}, {"gpu_rounding_diagnostic", rounding},
+    {"heavy_modules", arguments.contains("--heavy")}, {"gpu_rounding_diagnostic", rounding}, {"resume_module_edits", resumeModules},
     {"rounds", rounds}, {"idle_ms", idle}, {"samples", samples}}).toJson());
   controller.shutdown();
   if(!waitFor([&] { return controller.canClose(); })) return 8;

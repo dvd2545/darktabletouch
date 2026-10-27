@@ -56,19 +56,67 @@ struct dt_touch_render_t
   GMutex mutex;
   dt_dev_pixelpipe_t *pipe;
   gboolean canceled;
+  GCond input_ready;
+  GQueue inputs;
+  GThread *input_thread;
+  int input_image;
+  gboolean stopping;
 };
 
 static char *_history_token(dt_touch_editor_t *source);
+
+static gpointer _prefetch_inputs(gpointer data)
+{
+  dt_touch_render_t *render = data;
+  g_mutex_lock(&render->mutex);
+  while(!render->stopping)
+  {
+    while(g_queue_is_empty(&render->inputs) && !render->stopping)
+      g_cond_wait(&render->input_ready, &render->mutex);
+    if(render->stopping) break;
+    const int image = GPOINTER_TO_INT(g_queue_pop_head(&render->inputs));
+    render->input_image = image;
+    g_mutex_unlock(&render->mutex);
+    if(dt_touch_memory_available() >= (UINT64_C(2) << 30))
+    {
+      dt_mipmap_buffer_t input = { 0 };
+      dt_mipmap_cache_get(&input, image, DT_MIPMAP_FULL, DT_MIPMAP_BLOCKING, 'r');
+      dt_mipmap_cache_release(&input);
+    }
+    g_mutex_lock(&render->mutex);
+    render->input_image = 0;
+  }
+  g_mutex_unlock(&render->mutex);
+  return NULL;
+}
 
 dt_touch_render_t *dt_touch_render_new(void)
 {
   dt_touch_render_t *render = g_new0(dt_touch_render_t, 1);
   g_mutex_init(&render->mutex);
+  g_cond_init(&render->input_ready);
+  g_queue_init(&render->inputs);
+  // headless control jobs run synchronously (control/jobs.c:396)
+  render->input_thread = g_thread_new("touch raw preload", _prefetch_inputs, render);
   return render;
+}
+
+void dt_touch_render_stop_inputs(dt_touch_render_t *render)
+{
+  g_mutex_lock(&render->mutex);
+  render->stopping = TRUE;
+  g_queue_clear(&render->inputs);
+  GThread *thread = render->input_thread;
+  render->input_thread = NULL;
+  g_cond_signal(&render->input_ready);
+  g_mutex_unlock(&render->mutex);
+  if(thread) g_thread_join(thread);
 }
 
 void dt_touch_render_free(dt_touch_render_t *render)
 {
+  dt_touch_render_stop_inputs(render);
+  g_cond_clear(&render->input_ready);
   g_mutex_clear(&render->mutex);
   g_free(render);
 }
@@ -77,6 +125,7 @@ void dt_touch_render_cancel(dt_touch_render_t *render)
 {
   g_mutex_lock(&render->mutex);
   render->canceled = TRUE;
+  g_queue_clear(&render->inputs);
   // the stop request is also honored before process() marks the pipe as running
   if(render->pipe) dt_atomic_set_int(&render->pipe->shutdown, DT_DEV_PIXELPIPE_STOP_NODES);
   g_mutex_unlock(&render->mutex);
@@ -111,20 +160,32 @@ uint64_t dt_touch_memory_available(void)
   return available;
 }
 
-int dt_touch_image_prefetch(int image_id, int request)
+int dt_touch_image_prefetch(int image_id, int request, dt_touch_render_t *render)
 {
   dt_mipmap_buffer_t input = { 0 };
   dt_mipmap_cache_get(&input, image_id, DT_MIPMAP_FULL, DT_MIPMAP_TESTLOCK, 'r');
-  const gboolean ready = input.buf != NULL;
+  const gboolean ready = input.buf != NULL && input.width > 0 && input.height > 0;
   dt_mipmap_cache_release(&input);
-  if(!ready && request) dt_mipmap_cache_get(&input, image_id, DT_MIPMAP_F, DT_MIPMAP_PREFETCH, 'r');
+  if(!ready && request && render)
+  {
+    g_mutex_lock(&render->mutex);
+    gpointer image = GINT_TO_POINTER(image_id);
+    if(!render->stopping && !render->canceled && render->input_image != image_id
+       && g_queue_get_length(&render->inputs) < 4 && !g_queue_find(&render->inputs, image))
+    {
+      g_queue_push_tail(&render->inputs, image);
+      g_cond_signal(&render->input_ready);
+    }
+    g_mutex_unlock(&render->mutex);
+  }
   return ready;
 }
 
 void dt_touch_image_invalidate(int image_id)
 {
-  dt_mipmap_cache_remove_at_size(image_id, DT_MIPMAP_F);
-  dt_mipmap_cache_remove_at_size(image_id, DT_MIPMAP_FULL);
+  dt_mipmap_cache_remove(image_id);
+  dt_mipmap_cache_evict_at_size(image_id, DT_MIPMAP_F);
+  dt_mipmap_cache_evict_at_size(image_id, DT_MIPMAP_FULL);
 }
 
 char *dt_touch_image_stamp(int image_id)
@@ -1173,6 +1234,37 @@ int dt_touch_editor_history_select(dt_touch_editor_t *editor, int end, char **er
   return TRUE;
 }
 
+static void _lens_edit(dt_iop_module_t *module, const char *name,
+                       const dt_introspection_field_t *field, void *value)
+{
+  if(strcmp(module->op, "lens") || !strcmp(name, "method") || !strcmp(name, "has_been_set")) return;
+  gboolean *modified = module->get_p(module->params, "has_been_set");
+  if(!modified) return;
+  if(!*modified)
+  {
+    // materialize autodetection before the first edit, as in iop/lens.cc:4843
+    int *method = module->get_p(module->params, "method");
+    int selected = method ? *method : 0;
+    const dt_introspection_field_t *methods = module->get_f("method");
+    int embedded = -1, lensfun = -1;
+    for(const dt_introspection_type_enum_tuple_t *choice = methods ? methods->Enum.values : NULL;
+        choice && choice->name; choice++)
+    {
+      if(!strcmp(choice->name, "DT_IOP_LENS_METHOD_EMBEDDED_METADATA")) embedded = choice->value;
+      if(!strcmp(choice->name, "DT_IOP_LENS_METHOD_LENSFUN")) lensfun = choice->value;
+    }
+    if(selected == embedded && !module->dev->image_storage.exif_correction_type && lensfun >= 0)
+      selected = lensfun;
+    void *edited = g_malloc(field->header.size);
+    memcpy(edited, value, field->header.size);
+    memcpy(module->params, module->default_params, module->params_size);
+    if(method) *method = selected;
+    memcpy(value, edited, field->header.size);
+    g_free(edited);
+  }
+  *modified = TRUE;
+}
+
 int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
                         const char *name, const char *value_json, char **error)
 {
@@ -1247,6 +1339,7 @@ int dt_touch_editor_set(dt_touch_editor_t *editor, const char *operation,
   }
   g_object_unref(parser);
   if(!ok) return _error(error, N_("parameter value has an invalid type or is outside its limits"));
+  _lens_edit(module, name, field, value);
   module->enabled = TRUE;
   dt_dev_add_history_item_ext(&editor->dev, module, TRUE, TRUE);
   if(synchronized && strcmp(operation, "ashift")) editor->sync_top = module;

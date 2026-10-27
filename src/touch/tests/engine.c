@@ -8,6 +8,7 @@
 #include "common/touch_session.h"
 #include "common/image.h"
 #include "common/image_cache.h"
+#include "common/mipmap_cache.h"
 #include "common/exif.h"
 #include "common/collection.h"
 #include "common/database.h"
@@ -488,6 +489,32 @@ static void _persistent_write(void *data, int operation, const char *database,
   }
 }
 
+static void _test_input_prefetch(int image)
+{
+  if(dt_touch_memory_available() < (UINT64_C(2) << 30))
+  {
+    g_print("skipped: RAW prefetch while available memory is below 2 GiB\n");
+    return;
+  }
+  dt_mipmap_buffer_t input = { 0 };
+  dt_mipmap_cache_get(&input, image, DT_MIPMAP_F, DT_MIPMAP_BLOCKING, 'r');
+  g_assert_nonnull(input.buf);
+  dt_mipmap_cache_release(&input);
+  dt_mipmap_cache_evict_at_size(image, DT_MIPMAP_FULL);
+  dt_touch_render_t *render = dt_touch_render_new();
+  // input loading needs this metadata lock, so an inline decode cannot return
+  dt_image_t *metadata = dt_image_cache_get(image, 'w');
+  g_assert_false(dt_touch_image_prefetch(image, TRUE, render));
+  dt_image_cache_write_release(metadata, DT_IMAGE_CACHE_RELAXED);
+  const gint64 deadline = g_get_monotonic_time() + 15 * G_TIME_SPAN_SECOND;
+  while(!dt_touch_image_prefetch(image, FALSE, render) && g_get_monotonic_time() < deadline)
+    g_usleep(10000);
+  g_assert_true(dt_touch_image_prefetch(image, FALSE, render));
+  dt_touch_render_stop_inputs(render);
+  dt_touch_render_free(render);
+  g_print("passed: asynchronous RAW prefetch with an existing float mipmap\n");
+}
+
 static void _test_preload(int image)
 {
   char *error = NULL;
@@ -597,6 +624,7 @@ int main(int argc, char **argv)
   JsonArray *images = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "images");
   const int image_id = json_object_get_int_member(json_array_get_object_element(images, 0), "imgid");
   _test_preview_cache(image_id);
+  _test_input_prefetch(image_id);
   _test_preload(image_id);
   char *export_name = dt_touch_export_name(image_id, "$(FILE.NAME)_$(IMAGE.ID)_$(SEQUENCE[4,1])", 7, 1920, 1080, FALSE);
   char *expected_suffix = g_strdup_printf("_%d_0007", image_id);

@@ -78,9 +78,17 @@ change can synchronize the top history item; history replacement uses a full
 synchronization, and resizing an unchanged image only changes its ROI.
 Verified clean edits do not rewrite the catalog and sidecar on each switch.
 Explicit Retry Save still attempts the original sidecar again.
+Lens edits materialize native autodetected defaults and mark them as manually
+changed, matching the native GUI. A method-selector change alone keeps the
+native automatic behavior.
 
 After 200 ms without an editing command, Touch prefetches RAW inputs for the
-two neighbors on each side in filmstrip order. Full preview preparation
+two neighbors on each side in filmstrip order. A bounded input-loader thread
+reads native FULL mipmaps: the native control-job API runs synchronously in
+the headless engine. Input jobs release their RAW locks immediately; pending
+jobs are canceled on new editing requests, and the loader joins before engine
+cleanup. Develop contexts and GPU processing remain on the editor worker.
+Full preview preparation
 starts after 1.5 seconds of idle time, in the current navigation direction,
 so rapid browsing does not compete with speculative module processing.
 It retains up to five finished frames and three editor contexts. Parked
