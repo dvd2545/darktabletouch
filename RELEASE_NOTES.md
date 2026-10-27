@@ -349,6 +349,11 @@ changes (where available).
 
 ## Performance Improvements
 
+- Touch editing reuses intermediate module results, prepares neighboring
+  RAW images and edited previews while idle, and displays prepared frames
+  when switching photos. Background work yields to new edits, retained
+  caches are bounded, and clean edits avoid repeated sidecar writes.
+
 - The lighttable timeline no longer slows down quadratically with the
   number of collected images: with a 100,000-image collection it took
   about 15 minutes to draw, now a few seconds.
@@ -515,6 +520,8 @@ changes (where available).
   ready to splice into another invocation.
 
 ## Bug Fixes
+
+- Touch lens correction adjustments now take effect in previews and exports.
 
 - Fixed DarktableTouch thumbnail taps opening image actions through the
   right-click handler. Context menus require right-click or long-press,
