@@ -17,7 +17,7 @@ TouchDialog {
     anchors.centerIn: parent
     width: Math.min(800, parent.width - 32)
     height: Math.min(650, parent.height - 32)
-    padding: 16
+    padding: Math.round(16 * reviewMetrics.paddingScale)
     function selectAll(value) {
         const next = {}
         for(const item of candidates) if(!item.existing) next[item.path] = value
@@ -48,7 +48,7 @@ TouchDialog {
                 required property var modelData
                 required property int index
                 width: ListView.view.width; implicitHeight: reviewMetrics.touchHeight
-                padding: 8
+                padding: Math.round(8 * reviewMetrics.paddingScale)
                 text: modelData.filename
                 Accessible.name: modelData.filename
                 Accessible.description: modelData.path + (modelData.existing ? " - " + qsTr("already in library") : "")

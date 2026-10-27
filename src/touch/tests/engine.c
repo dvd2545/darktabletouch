@@ -51,6 +51,8 @@ static void _apply_collection(JsonObject *settings, int count)
   char *text = json_to_string(root, FALSE), *error = NULL;
   g_assert_true(dt_touch_collection_set(text, &error));
   g_assert_null(error);
+  if(_count("SELECT COUNT(*) FROM memory.collected_images") != count)
+    g_printerr("collection mismatch: %s\nquery: %s\n", text, dt_collection_get_query(darktable.collection));
   g_assert_cmpint(_count("SELECT COUNT(*) FROM memory.collected_images"), ==, count);
   g_free(text);
   json_node_free(root);
@@ -92,6 +94,18 @@ static void _test_library(const char *filename, const char *folder, int first)
   json_object_set_int_member(order, "item", DT_COLLECTION_SORT_ID);
   json_object_set_int_member(order, "order", 1);
   json_array_add_object_element(sort, order);
+  _apply_collection(settings, 2);
+  // rating choices exclude individual buckets while retaining the base collection
+  g_assert_true(dt_touch_image_action("reject", first, &error));
+  json_array_add_object_element(filters, _rule(DT_COLLECTION_PROP_RATING, "=-1", 2, 0));
+  _apply_collection(settings, 1);
+  g_assert_cmpint(_count("SELECT imgid FROM memory.collected_images"), ==, second);
+  json_array_remove_element(filters, 0);
+  json_array_add_object_element(filters, _rule(DT_COLLECTION_PROP_RATING, ">=0", 2, 0));
+  _apply_collection(settings, 1);
+  g_assert_cmpint(_count("SELECT imgid FROM memory.collected_images"), ==, first);
+  json_array_remove_element(filters, 0);
+  g_assert_true(dt_touch_image_action("unrate", first, &error));
   _apply_collection(settings, 2);
   const int properties[] = { DT_COLLECTION_PROP_CAMERA, DT_COLLECTION_PROP_LENS, DT_COLLECTION_PROP_ISO,
     DT_COLLECTION_PROP_APERTURE, DT_COLLECTION_PROP_EXPOSURE, DT_COLLECTION_PROP_DAY, DT_COLLECTION_PROP_HISTORY,
@@ -449,6 +463,7 @@ int main(int argc, char **argv)
   g_assert_no_error(error);
   JsonObject *metadata = json_node_get_object(json_parser_get_root(parser));
   g_assert_cmpint(json_object_get_int_member(metadata, "imgid"), ==, image_id);
+  const int source_extent = json_object_get_int_member(metadata, "preview_max_extent");
   g_assert_cmpstr(json_object_get_string_member(metadata, "filename"), ==, test_name);
   g_free(test_name);
   g_assert_nonnull(json_object_get_object_member(metadata, "camera"));
@@ -496,6 +511,18 @@ int main(int argc, char **argv)
   int width, height, w2, h2;
   g_assert_true(dt_touch_editor_preview(editor, 512, 512, &original, &width, &height, &message));
   g_assert_null(message);
+  if(source_extent > 4096)
+  {
+    uint8_t *detailed = NULL;
+    int detailed_width, detailed_height;
+    g_assert_true(dt_touch_editor_preview(editor, source_extent, source_extent,
+                                          &detailed, &detailed_width, &detailed_height, &message));
+    g_assert_null(message);
+    g_assert_cmpint(MAX(detailed_width, detailed_height), >, MAX(width, height));
+    g_assert_cmpint(MAX(detailed_width, detailed_height), <=, source_extent);
+    g_print("source-resolution RAW preview after crop: %d x %d\n", detailed_width, detailed_height);
+    dt_touch_free(detailed);
+  }
   uint8_t *thumbnail = NULL;
   int tw, th;
   g_assert_true(dt_touch_thumbnail(image_id, &thumbnail, &tw, &th, &message));
@@ -669,6 +696,21 @@ int main(int argc, char **argv)
   g_assert_null(message); g_assert_false(g_file_test(trash_path, G_FILE_TEST_EXISTS));
   g_assert_false(dt_touch_image_exists(trash_id));
   g_free(trash_path); g_free(png);
+  char *large_path = g_build_filename(folder, "large preview.png", NULL);
+  GdkPixbuf *large = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 5008, 128);
+  gdk_pixbuf_fill(large, 0x8090a0ff);
+  g_assert_true(gdk_pixbuf_save(large, large_path, "png", &error, NULL));
+  g_object_unref(large);
+  char *large_import = dt_touch_import(large_path, &message);
+  g_assert_nonnull(large_import); g_assert_null(message); g_free(large_import);
+  dt_touch_editor_t *large_editor = dt_touch_editor_new(dt_touch_import_candidate(large_path), &message);
+  g_assert_nonnull(large_editor); g_assert_null(message);
+  uint8_t *large_pixels = NULL;
+  int large_width, large_height;
+  g_assert_true(dt_touch_editor_preview(large_editor, 5008, 5008, &large_pixels, &large_width, &large_height, &message));
+  g_assert_cmpint(large_width, ==, 5008); g_assert_cmpint(large_height, ==, 128);
+  g_print("uncapped preview: %d x %d\n", large_width, large_height);
+  dt_touch_free(large_pixels); dt_touch_editor_free(large_editor); g_free(large_path);
   GString *long_path = g_string_new("C:/ผู้ใช้/");
   for(int i = 0; i < 100; i++) g_string_append(long_path, "ทดสอบ ภาพถ่าย/$#%");
   dt_conf_set_int("plugins/lighttable/collect/num_rules", 1);

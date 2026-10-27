@@ -73,7 +73,7 @@ ApplicationWindow {
     onViewZoomChanged: previewTimer.restart()
     function desiredPreviewExtent() {
         const base = Number(controller.uiOptions.preview_quality || 1280)
-        return viewZoom <= 1.01 ? base : Math.min(4096, Math.max(base, Math.ceil(Math.max(imageStage.width, imageStage.height) * viewZoom * window.Screen.devicePixelRatio / 128) * 128))
+        return viewZoom <= 1.01 ? base : Math.min(Number(controller.imageInformation.preview_max_extent || base), Math.max(base, Math.ceil(Math.max(imageStage.width, imageStage.height) * viewZoom * window.Screen.devicePixelRatio / 128) * 128))
     }
     Timer { id: previewTimer; interval: 250; onTriggered: if(controller.editorVisible) controller.requestPreview(window.desiredPreviewExtent()) }
     property int cropRatioN: 0
@@ -332,7 +332,7 @@ ApplicationWindow {
                 objectName: "libraryGrid"
                 reuseItems: true
                 boundsBehavior: Flickable.StopAtBounds
-                Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: Math.round(16 * ui.paddingScale); Layout.rightMargin: Math.round(16 * ui.paddingScale)
                 clip: true
                 cellWidth: Math.max(200, width / Math.max(1, Math.floor(width / 240)))
                 cellHeight: Math.min(cellWidth * 0.80, Math.max(64, height))
@@ -344,7 +344,7 @@ ApplicationWindow {
                     width: library.cellWidth; height: library.cellHeight
                     ThumbnailButton {
                         objectName: "thumbnail-" + modelData.imgid
-                        anchors.fill: parent; anchors.margins: 6; text: ""
+                        anchors.fill: parent; anchors.margins: Math.round(6 * ui.paddingScale); text: ""
                         enabled: controller.ready && !controller.busy
                         Accessible.name: modelData.filename
                         checked: window.selectionMode && window.selectedImages.indexOf(modelData.imgid) >= 0
@@ -380,7 +380,7 @@ ApplicationWindow {
                             }
                         }
                         ColumnLayout {
-                            anchors.fill: parent; anchors.margins: 10; spacing: 8
+                            anchors.fill: parent; anchors.margins: Math.round(10 * ui.paddingScale); spacing: 8
                             ThumbnailImage { Layout.fillWidth: true; Layout.fillHeight: true; imageId: modelData.imgid }
                             Label { text: modelData.filename; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: 14; color: ui.text }
                         }
@@ -526,7 +526,7 @@ ApplicationWindow {
                     Rectangle {
                         id: imageInformation
                         objectName: "imageInformation"
-                        anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 20; anchors.topMargin: ui.touchHeight + 2 * ui.inset
+                        anchors.left: parent.left; anchors.top: parent.top; anchors.margins: Math.round(20 * ui.paddingScale); anchors.topMargin: ui.touchHeight + 2 * ui.inset
                         width: Math.min(520, parent.width - 40); height: informationText.implicitHeight + 28
                         color: "#cf101619"; radius: 12
                         opacity: window.informationVisible && controller.imageId > 0 ? 1 : 0
@@ -534,7 +534,7 @@ ApplicationWindow {
                         Behavior on opacity { NumberAnimation { duration: 450 } }
                         Column {
                             id: informationText
-                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 14
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: Math.round(14 * ui.paddingScale)
                             spacing: 5
                             Label {
                                 width: parent.width; text: controller.imageInformation.filename || ""
@@ -545,20 +545,20 @@ ApplicationWindow {
                         }
                     }
                     Rectangle {
-                        anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20
+                        anchors.right: parent.right; anchors.top: parent.top; anchors.margins: Math.round(20 * ui.paddingScale)
                         width: 92; height: 36; radius: 8; color: "#cf101619"; visible: controller.before
                         Label { anchors.centerIn: parent; text: qsTr("before"); color: "#f0f4f5" }
                     }
                     Rectangle {
                         objectName: "statusOverlay"
                         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-                        anchors.leftMargin: 16; anchors.rightMargin: 16; anchors.bottomMargin: controller.cropEditing || window.distractionFree ? 16 : ui.touchHeight + 2 * ui.inset + 8
+                        anchors.leftMargin: Math.round(16 * ui.paddingScale); anchors.rightMargin: Math.round(16 * ui.paddingScale); anchors.bottomMargin: controller.cropEditing || window.distractionFree ? 16 : ui.touchHeight + 2 * ui.inset + 8
                         height: statusLine.implicitHeight + 20; radius: 10
                         color: controller.hasError ? "#ed532d29" : controller.saveIssue ? "#ed443a20" : "#d4101619"
                         visible: controller.busy || controller.hasError || !!controller.saveIssue || window.statusVisible
                         ColumnLayout {
                             id: statusLine
-                            anchors.fill: parent; anchors.margins: 10; spacing: 8
+                            anchors.fill: parent; anchors.margins: Math.round(10 * ui.paddingScale); spacing: 8
                             RowLayout {
                                 Layout.fillWidth: true
                                 BusyIndicator { running: controller.busy; visible: running; implicitWidth: 24; implicitHeight: 24 }
@@ -597,7 +597,7 @@ ApplicationWindow {
                         id: filmstrip
                         objectName: "filmstrip"
                         anchors.left: parent.left; anchors.right: parent.right
-                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 4; anchors.topMargin: ui.resizeGutter
+                        anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: Math.round(4 * ui.paddingScale); anchors.topMargin: ui.resizeGutter
                         orientation: ListView.Horizontal; spacing: 10; clip: true
                         boundsBehavior: Flickable.StopAtBounds
                         model: controller.images; cacheBuffer: 200
@@ -608,7 +608,7 @@ ApplicationWindow {
                             required property var modelData
                             required property int index
                             width: Math.max(112, filmstrip.height * 1.6); height: filmstrip.height
-                            text: ""; padding: 4; checked: window.filmstripSelection ? window.selectedImages.indexOf(Number(modelData.imgid)) >= 0 : controller.imageId === modelData.imgid
+                            text: ""; padding: Math.round(4 * ui.paddingScale); checked: window.filmstripSelection ? window.selectedImages.indexOf(Number(modelData.imgid)) >= 0 : controller.imageId === modelData.imgid
                             Accessible.name: modelData.filename
                             onClicked: { if(window.filmstripSelection) controller.libraryCommand("toggle", {}, modelData.imgid); else if(controller.imageId !== modelData.imgid) { viewZoom = 1; controller.selectImage(modelData.imgid) } else showImageInformation() }
                             onPressAndHold: window.showImageActions(modelData)
@@ -617,9 +617,9 @@ ApplicationWindow {
                             ToolTip.visible: hovered; ToolTip.text: modelData.filename
                             ThumbnailImage {
                                 objectName: "filmThumbnail-" + modelData.imgid
-                                anchors.fill: parent; anchors.margins: 4; imageId: modelData.imgid
+                                anchors.fill: parent; anchors.margins: Math.round(4 * ui.paddingScale); imageId: modelData.imgid
                             }
-                            Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4; width: 24; height: 24; radius: 12; color: ui.accent; visible: window.filmstripSelection && parent.checked; Icon { anchors.centerIn: parent; width: 18; height: 18; name: "check"; color: ui.canvas } }
+                            Rectangle { anchors.right: parent.right; anchors.top: parent.top; anchors.margins: Math.round(4 * ui.paddingScale); width: 24; height: 24; radius: 12; color: ui.accent; visible: window.filmstripSelection && parent.checked; Icon { anchors.centerIn: parent; width: 18; height: 18; name: "check"; color: ui.canvas } }
 
                             background: Rectangle {
                                 radius: 8; color: "#182126"
@@ -694,7 +694,7 @@ ApplicationWindow {
                                             }
                                             background: Rectangle { radius: 12; color: parent.down || parent.hovered ? "#263438" : "transparent"; border.width: parent.activeFocus ? 2 : 0; border.color: "#00dbe5" }
                                             RowLayout {
-                                                anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                                                anchors.fill: parent; anchors.leftMargin: Math.round(12 * ui.paddingScale); anchors.rightMargin: Math.round(12 * ui.paddingScale); spacing: 8
                                                 Icon { visible: toolCard.modelData.operation !== "lens"; name: toolCard.expanded ? "chevron-down" : "chevron-right"; color: "#9aafb6"; Layout.preferredWidth: 18; Layout.preferredHeight: 18 }
                                                 Label { text: toolCard.modelData.label; color: toolCard.expanded ? "#00dbe5" : "#e5ecef"; font.pixelSize: 17; Layout.fillWidth: true; wrapMode: Text.Wrap }
                                             }
@@ -702,7 +702,7 @@ ApplicationWindow {
                                         TouchButton {
                                             objectName: "moduleReset-" + toolCard.modelData.operation
                                             text: qsTr("reset %1").arg(toolCard.modelData.label); iconName: "reset"; showLabel: false; flat: true
-                                            implicitWidth: ui.touchHeight; padding: 6
+                                            implicitWidth: ui.touchHeight; padding: Math.round(6 * ui.paddingScale)
                                             enabled: !controller.busy && !controller.cropEditing
                                             onClicked: window.resetModule(toolCard.modelData.operation)
                                         }
@@ -744,13 +744,13 @@ ApplicationWindow {
                 visible: !window.distractionFree
                 Layout.preferredWidth: ui.touchHeight + 8; Layout.fillHeight: true; color: ui.panel
                 ColumnLayout {
-                    anchors.fill: parent; anchors.margins: 4; spacing: ui.gap
+                    anchors.fill: parent; anchors.margins: Math.round(4 * ui.paddingScale); spacing: ui.gap
                     Repeater {
                         model: window.toolGroups
                         TouchButton {
                             required property var modelData
                             objectName: "category-" + modelData.key
-                            text: modelData.label; iconName: modelData.icon; stacked: true; flat: true; padding: 6
+                            text: modelData.label; iconName: modelData.icon; stacked: true; flat: true; padding: Math.round(6 * ui.paddingScale)
                             Layout.fillWidth: true; font.pixelSize: ui.captionSize
                             checked: window.toolsOpen && window.toolCategory === modelData.key
                             enabled: controller.imageId > 0 && !controller.busy
@@ -758,7 +758,7 @@ ApplicationWindow {
                         }
                     }
                     Item { Layout.fillHeight: true }
-                    TouchButton { objectName: "allToolsButton"; text: qsTr("all modules"); iconName: "more"; showLabel: false; flat: true; padding: 6; Layout.fillWidth: true; font.pixelSize: ui.captionSize; checked: window.toolsOpen && window.toolCategory === "all"; onClicked: { window.distractionFree = false; window.toolsOpen = !checked; window.toolCategory = "all" } }
+                    TouchButton { objectName: "allToolsButton"; text: qsTr("all modules"); iconName: "more"; showLabel: false; flat: true; padding: Math.round(6 * ui.paddingScale); Layout.fillWidth: true; font.pixelSize: ui.captionSize; checked: window.toolsOpen && window.toolCategory === "all"; onClicked: { window.distractionFree = false; window.toolsOpen = !checked; window.toolCategory = "all" } }
                 }
             }
         }
@@ -825,6 +825,7 @@ ApplicationWindow {
                 }
                 TouchButton { objectName: "editorLibraryButton"; text: controller.editorVisible ? qsTr("library") : qsTr("editor"); iconName: "grid"; Layout.fillWidth: true; enabled: !controller.exportRunning; onClicked: { navigationDrawer.close(); controller.editorVisible = !controller.editorVisible } }
                 TouchButton { objectName: "libraryFilterButton"; text: qsTr("collections and filters"); iconName: "filter"; Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); collectionDialog.open() } }
+                RatingFilter { objectName: "menuRatingFilter"; photoController: controller; Layout.fillWidth: true }
                 TouchButton { text: qsTr("import images"); iconName: "import"; Layout.fillWidth: true; enabled: controller.ready && !controller.busy; onClicked: { navigationDrawer.close(); importSource.open() } }
                 TouchButton { objectName: "editorExportButton"; text: qsTr("export"); iconName: "export"; Layout.fillWidth: true; visible: controller.editorVisible; enabled: controller.imageId > 0 && !controller.busy && !controller.cropEditing; onClicked: { navigationDrawer.close(); batchExportDialog.scope = "current"; batchExportDialog.open() } }
                 TouchButton { text: qsTr("settings"); iconName: "gear"; Layout.fillWidth: true; onClicked: { navigationDrawer.close(); quickSettings.open() } }
@@ -838,7 +839,7 @@ ApplicationWindow {
             width: parent.width; spacing: 2
             ColumnLayout {
                 visible: controller.operation === "crop"
-                Layout.fillWidth: true; Layout.margins: 16
+                Layout.fillWidth: true; Layout.margins: Math.round(16 * ui.paddingScale)
                 TouchComboBox {
                     id: cropAspectControl
                     visible: controller.cropEditing
@@ -861,9 +862,9 @@ ApplicationWindow {
                 TouchButton { visible: controller.cropEditing; text: qsTr("auto crop borders"); Layout.fillWidth: true; enabled: controller.cropEditing && !controller.busy; onClicked: controller.cropCommand("auto", {aspect: cropOverlay.aspect || photo.paintedWidth/photo.paintedHeight}) }
                 RowLayout {
                     visible: controller.cropEditing
-                    TouchButton { Layout.fillWidth: true; stacked: true; padding: 8; text: qsTr("reset frame"); iconName: "reset"; enabled: controller.cropEditing; onClicked: { cropOverlay.setBounds([0,0,1,1]); cropOverlay.fitRatio() } }
-                    TouchButton { Layout.fillWidth: true; stacked: true; padding: 8; text: qsTr("cancel"); iconName: "close"; enabled: controller.cropEditing; onClicked: controller.cropCommand("cancel") }
-                    TouchButton { Layout.fillWidth: true; stacked: true; padding: 8; text: qsTr("apply"); iconName: "check"; enabled: controller.cropEditing && !controller.busy && ((window.cropRatioN === 0 && window.cropRatioD === 0) || (window.cropRatioN > 0 && window.cropRatioD > 0)); onClicked: controller.cropCommand("apply", {bounds: cropOverlay.bounds, ratio_n: window.cropRatioN, ratio_d: window.cropRatioD}) }
+                    TouchButton { Layout.fillWidth: true; stacked: true; padding: Math.round(8 * ui.paddingScale); text: qsTr("reset frame"); iconName: "reset"; enabled: controller.cropEditing; onClicked: { cropOverlay.setBounds([0,0,1,1]); cropOverlay.fitRatio() } }
+                    TouchButton { Layout.fillWidth: true; stacked: true; padding: Math.round(8 * ui.paddingScale); text: qsTr("cancel"); iconName: "close"; enabled: controller.cropEditing; onClicked: controller.cropCommand("cancel") }
+                    TouchButton { Layout.fillWidth: true; stacked: true; padding: Math.round(8 * ui.paddingScale); text: qsTr("apply"); iconName: "check"; enabled: controller.cropEditing && !controller.busy && ((window.cropRatioN === 0 && window.cropRatioD === 0) || (window.cropRatioN > 0 && window.cropRatioD > 0)); onClicked: controller.cropCommand("apply", {bounds: cropOverlay.bounds, ratio_n: window.cropRatioN, ratio_d: window.cropRatioD}) }
                 }
             }
             Repeater {
@@ -909,7 +910,7 @@ ApplicationWindow {
         height: controller.exportRunning ? 72 : controller.editorVisible ? 0 : 32
         visible: !controller.editorVisible || controller.exportRunning; color: "#101619"
         RowLayout {
-            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
+            anchors.fill: parent; anchors.leftMargin: Math.round(16 * ui.paddingScale); anchors.rightMargin: Math.round(16 * ui.paddingScale)
             BusyIndicator { running: controller.busy; implicitWidth: 24; implicitHeight: 24; visible: running }
             Label { text: controller.message; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideMiddle; color: controller.hasError ? "#ffa99e" : "#a8b0bc"; font.pixelSize: 12 }
             TouchButton { text: qsTr("cancel export"); iconName: "close"; showLabel: true; visible: controller.exportRunning; onClicked: controller.cancelExport() }
@@ -923,7 +924,7 @@ ApplicationWindow {
         objectName: "imageActions"
         anchors.centerIn: parent; width: Math.min(500, window.width - 32)
         height: Math.min(600, window.height - 32)
-        padding: 20; modal: true; focus: true
+        padding: Math.round(20 * ui.paddingScale); modal: true; focus: true
         background: Rectangle { color: ui.panel; radius: ui.radius; border.color: "#334249" }
         contentItem: ScrollView {
             id: imageActionScroll
@@ -958,7 +959,7 @@ ApplicationWindow {
         objectName: "confirmImageAction"
         title: window.pendingImageAction === "trash" ? qsTr("delete from disk") : qsTr("remove from collection")
         anchors.centerIn: parent; width: Math.min(560, window.width - 32)
-        padding: 20; modal: true; focus: true
+        padding: Math.round(20 * ui.paddingScale); modal: true; focus: true
         background: Rectangle { color: ui.panel; radius: ui.radius; border.color: "#334249" }
         contentItem: ColumnLayout {
             spacing: 16
@@ -994,7 +995,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Repeater {
                         model: [qsTr("interface"), qsTr("library"), qsTr("editor")]
-                        TouchButton { required property string modelData; required property int index; text: modelData; checked: quickSettings.category === index; Layout.fillWidth: true; onClicked: quickSettings.category = index }
+                        TouchButton { Layout.preferredWidth: 1; required property string modelData; required property int index; text: modelData; checked: quickSettings.category === index; Layout.fillWidth: true; onClicked: quickSettings.category = index }
                     }
                 }
                 ColumnLayout {
@@ -1009,7 +1010,7 @@ ApplicationWindow {
                 }
                 ColumnLayout {
                     visible: quickSettings.category === 1; Layout.fillWidth: true
-                    TouchSwitch { text: qsTr("show rejected images"); checked: controller.showRejected; Layout.fillWidth: true; onToggled: controller.showRejected = checked }
+                    RatingFilter { photoController: controller; Layout.fillWidth: true }
                 }
                 ColumnLayout {
                     visible: quickSettings.category === 2; Layout.fillWidth: true
@@ -1028,7 +1029,7 @@ ApplicationWindow {
                         currentIndex: Math.max(0, sizes.indexOf(Number(controller.uiOptions.preview_quality || 1280)))
                         onActivated: controller.setUiOption("preview_quality", sizes[currentIndex])
                     }
-                    Label { text: qsTr("zooming renders more detail, up to a 4096 px edge; zoom out to restore the selected quality"); color: ui.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    Label { text: qsTr("zooming renders detail up to the original image resolution; zoom out to restore the selected quality"); color: ui.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
                 }
                 TouchButton { objectName: "settingsClassicButton"; text: qsTr("switch to classic"); iconName: "grid"; Layout.fillWidth: true; visible: managedSession; enabled: controller.ready && !controller.busy; onClicked: { quickSettings.close(); saveView(); controller.switchInterface("classic") } }
             }
@@ -1064,7 +1065,7 @@ ApplicationWindow {
     TouchDialog {
         id: importSource
         modal: true; focus: true; anchors.centerIn: parent; title: qsTr("add to library")
-        width: Math.min(480, window.width - 32); height: Math.min(600, window.height - 32); padding: 20
+        width: Math.min(480, window.width - 32); height: Math.min(600, window.height - 32); padding: Math.round(20 * ui.paddingScale)
         background: Rectangle { color: ui.panel; radius: ui.radius; border.color: "#334249" }
         contentItem: ScrollView {
             contentWidth: availableWidth; clip: true
@@ -1138,7 +1139,7 @@ ApplicationWindow {
         id: historyDialog
         anchors.centerIn: parent
         width: Math.min(560, window.width - 48); height: Math.min(600, window.height - 48)
-        padding: 20; modal: true; focus: true
+        padding: Math.round(20 * ui.paddingScale); modal: true; focus: true
         background: Rectangle { color: ui.panel; radius: ui.radius; border.color: "#334249" }
         onOpened: {
             historySteps.currentIndex = controller.historyEnd

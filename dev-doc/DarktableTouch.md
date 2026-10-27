@@ -114,7 +114,7 @@ Quick actions opens above its lower-left trigger. Its selection action enables
 multi-image filmstrip selection without switching the active preview. Holding
 a selected thumbnail opens actions for the selected images; the menu and
 destructive confirmation show the target count. All and invert operate on the
-visible Touch images, including its rejected-image visibility preference.
+visible Touch images after native collection and rating filters.
 Settings can enable persistent quick reject and quick delete buttons at the
 lower right. Quick delete first chooses disk or collection removal, then
 requires confirmation. Both shortcuts start hidden. Operations lasting more
@@ -131,8 +131,8 @@ dark shadow for contrast over bright images.
 
 Fitted preview quality offers maximum edges from 640 to 4096 pixels. After a
 250 ms zoom pause, the worker renders at the displayed size and screen pixel
-ratio, bounded by the existing 4096-pixel preview limit and original image
-dimensions. Returning to fit requests the configured quality again. Edits keep
+ratio, up to the original image dimensions. The former 4096-pixel zoom
+limit no longer applies. Returning to fit requests the configured quality again. Edits keep
 the current detailed extent, with temporary 640-pixel frames during adjustment.
 This changes preview request sizing, not the native processing algorithms.
 
@@ -241,10 +241,17 @@ It is separate from the active editor image. Export still targets that active
 image when using the direct export API. The export settings dialog supports
 selected photos, the visible collection, or the current image.
 
-Settings default to hiding rejected images while showing unrated and
-one-to-five-star images. They also offer an optional next-image action after
-rejecting. These Touch preferences persist in DarktableTouch configuration; self-tests
-use isolated configuration directories.
+The menu panel and Library settings offer independent rating choices for
+rejected, unrated, and one-to-five-star images. These update native rating
+filters without changing the base collection or other filter properties.
+All ratings are visible unless a native filter excludes them; the separate
+show-rejected preference has been removed. Settings retain an optional
+next-image action after rejecting. Self-tests use isolated catalogs.
+
+Dialog overlays consume outside taps until release, then dismiss without
+activating controls underneath. Settings categories share equal widths.
+Shared padding and explicit content insets are reduced by 15%, preserving
+minimum touch targets.
 
 Collection rows can remove an imported folder and its subfolders from the
 catalog, including photos outside current filters. The collection removal

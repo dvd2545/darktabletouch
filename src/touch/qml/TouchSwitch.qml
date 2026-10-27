@@ -6,7 +6,7 @@ Switch {
     UiMetrics { id: metrics; pixelDensity: control.Screen.pixelDensity; pixelRatio: control.Screen.devicePixelRatio }
     implicitHeight: metrics.touchHeight
     implicitWidth: Math.max(metrics.touchHeight, contentItem.implicitWidth + leftPadding + rightPadding)
-    padding: 4; spacing: metrics.gap
+    padding: Math.round(4 * metrics.paddingScale); spacing: metrics.gap
     font.pixelSize: metrics.bodySize
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.55

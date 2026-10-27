@@ -139,7 +139,6 @@ class TouchController final : public QObject
   Q_PROPERTY(QSize cropOriginalSize READ cropOriginalSize NOTIFY cropChanged)
   Q_PROPERTY(QVariantList cropBounds READ cropBounds NOTIFY cropChanged)
   Q_PROPERTY(QVariantMap moduleStates READ moduleStates NOTIFY moduleChanged)
-  Q_PROPERTY(bool showRejected READ showRejected WRITE setShowRejected NOTIFY stateChanged)
   Q_PROPERTY(bool advanceAfterReject READ advanceAfterReject WRITE setAdvanceAfterReject NOTIFY stateChanged)
   Q_PROPERTY(bool quickReject READ quickReject WRITE setQuickReject NOTIFY stateChanged)
   Q_PROPERTY(bool quickDelete READ quickDelete WRITE setQuickDelete NOTIFY stateChanged)
@@ -184,13 +183,11 @@ public:
   QVariantList cropBounds() const { return m_cropBounds; }
   QVariantMap moduleStates() const { return m_moduleStates; }
   Q_INVOKABLE void cropCommand(const QString &action, const QVariantMap &settings = {});
-  bool showRejected() const { return m_showRejected; }
   bool advanceAfterReject() const { return m_advanceAfterReject; }
   bool quickReject() const { return m_quickReject; }
   bool quickDelete() const { return m_quickDelete; }
   void setQuickReject(bool value);
   void setQuickDelete(bool value);
-  void setShowRejected(bool value);
   void setAdvanceAfterReject(bool value);
   Q_INVOKABLE void rememberParameter(const QString &name, const QString &operation, double step);
   Q_INVOKABLE void adjustLastParameter(int direction);
@@ -297,7 +294,7 @@ private:
   QTimer m_editTimer;
   QVariantList m_allImages;
   bool m_touchSettingsLoaded = false;
-  bool m_showRejected = false, m_advanceAfterReject = false;
+  bool m_advanceAfterReject = false;
   bool m_quickReject = false, m_quickDelete = false;
   int m_rejectNext = 0;
   QString m_lastName, m_lastOperation;

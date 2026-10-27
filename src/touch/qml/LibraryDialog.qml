@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 TouchDialog {
     id: libraryDialog
+    UiMetrics { id: libraryMetrics }
     required property var photoController
     property int page: 0
     property int browseProperty: 1
@@ -29,7 +30,7 @@ TouchDialog {
     modal: true; focus: true
     title: qsTr("collections and filters")
     width: Math.min(880, parent.width - 32); height: Math.min(700, parent.height - 32)
-    anchors.centerIn: parent; padding: 16
+    anchors.centerIn: parent; padding: Math.round(16 * libraryMetrics.paddingScale)
 
     function propertyIndex(item) {
         for(let i = 0; i < properties.length; ++i) if(properties[i].item === item) return i
@@ -197,7 +198,7 @@ TouchDialog {
                         Item { visible: libraryDialog.folderMode; Layout.preferredWidth: Math.min(6, modelData.depth || 0) * 18 }
                         TouchButton {
                             visible: libraryDialog.folderMode && !!modelData.children
-                            text: libraryDialog.expanded[modelData.key] === false ? qsTr("expand") : qsTr("collapse"); stacked: true; padding: 6; font.pixelSize: 12; iconName: libraryDialog.expanded[modelData.key] === false ? "chevron-right" : "chevron-down"
+                            text: libraryDialog.expanded[modelData.key] === false ? qsTr("expand") : qsTr("collapse"); stacked: true; padding: Math.round(6 * libraryMetrics.paddingScale); font.pixelSize: 12; iconName: libraryDialog.expanded[modelData.key] === false ? "chevron-right" : "chevron-down"
                             enabled: !!modelData.children; opacity: modelData.children ? 1 : 0; implicitWidth: 80
                             Accessible.name: qsTr("expand or collapse %1").arg(modelData.label || "")
                             onClicked: { const next = Object.assign({}, libraryDialog.expanded); next[modelData.key] = next[modelData.key] === false; libraryDialog.expanded = next }
@@ -218,7 +219,7 @@ TouchDialog {
                         }
                         TouchButton {
                             visible: libraryDialog.folderMode
-                            iconName: "trash"; text: qsTr("remove"); Accessible.name: qsTr("remove folder from catalog"); stacked: true; implicitWidth: 80; padding: 6; font.pixelSize: 12
+                            iconName: "trash"; text: qsTr("remove"); Accessible.name: qsTr("remove folder from catalog"); stacked: true; implicitWidth: 80; padding: Math.round(6 * libraryMetrics.paddingScale); font.pixelSize: 12
                             onClicked: { libraryDialog.removePath = modelData.key; removeDialog.open() }
                         }
                     }

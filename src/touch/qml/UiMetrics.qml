@@ -10,9 +10,10 @@ QtObject {
     readonly property real userScale: typeof controller !== "undefined" && controller.uiOptions && controller.uiOptions.scale_override ? Math.max(0.75, Math.min(1.5, controller.uiOptions.scale / 100)) : 1
     readonly property int touchHeight: Math.round(targetSize(pixelDensity, pixelRatio) * userScale)
     readonly property int parameterHeight: Math.max(44, Math.round(touchHeight * 0.75))
-    readonly property int parameterInset: Math.round(touchHeight * 0.09)
-    readonly property int gap: Math.round(touchHeight * 0.22)
-    readonly property int inset: Math.round(touchHeight * 0.22)
+    readonly property real paddingScale: 0.85
+    readonly property int parameterInset: Math.round(touchHeight * 0.09 * paddingScale)
+    readonly property int gap: Math.round(touchHeight * 0.22 * paddingScale)
+    readonly property int inset: Math.round(touchHeight * 0.22 * paddingScale)
     readonly property int bodySize: Math.round(15 * touchHeight / 64)
     readonly property int captionSize: Math.round(bodySize * 0.87)
     readonly property int titleSize: Math.round(bodySize * 1.4)

@@ -190,7 +190,6 @@ int main(int argc, char **argv)
       case 2:
         if(selected != 0) { fail("invert did not clear the selected collection"); return; }
         controller.libraryCommand(QStringLiteral("single"), {}, controller.imageId());
-        controller.setShowRejected(controller.showRejected());
         break;
       case 3:
         if(selected != 1) { fail("single selection did not select the image"); return; }
@@ -375,7 +374,6 @@ int main(int argc, char **argv)
         if(!libraryScreenshot(QStringLiteral("-remove-confirmation"))) { fail("confirmation screenshot failed"); return; }
         if(auto confirmation = window->findChild<QObject *>(QStringLiteral("confirmImageAction"))) QMetaObject::invokeMethod(confirmation, "close");
         if(controller.images().size() != 2) { fail("canceling image removal changed the collection"); return; }
-        controller.setShowRejected(true);
         historyWait = 0;
         controller.libraryCommand(QStringLiteral("reject"), {}, controller.imageId());
         break;
@@ -388,9 +386,8 @@ int main(int argc, char **argv)
           if(!controller.hasError() && ++historyWait < 10) return;
           fail("reject did not advance to the next image"); return;
         }
-        controller.setShowRejected(false);
-        if(controller.images().size() != 1) { fail("quick rejected filter did not hide the image"); return; }
-        controller.setShowRejected(true); controller.setAdvanceAfterReject(false);
+        if(controller.images().size() != 2) { fail("rating visibility unexpectedly hid the rejected image"); return; }
+        controller.setAdvanceAfterReject(false);
         controller.libraryCommand(QStringLiteral("unrate"), {}, rejectedTestId);
         libraryStage = 39;
         break;
@@ -1009,12 +1006,10 @@ int main(int argc, char **argv)
         break;
       case 145:
         if(controller.hasError()) { fail("batch reject failed"); return; }
-        controller.setShowRejected(true);
         controller.libraryCommand(QStringLiteral("unrate"), {{QStringLiteral("images"), controller.library().value(QStringLiteral("selected"))}}, 0);
         break;
       case 146:
         if(controller.hasError() || controller.images().size() != 2) { fail("batch unreject did not restore the visible images"); return; }
-        controller.setShowRejected(false);
         QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("selectionMoreActionsButton")), "clicked");
         libraryStage = 149;
         break;
@@ -1032,7 +1027,7 @@ int main(int argc, char **argv)
         const QImage frame = store->requestImage(QStringLiteral("current"), nullptr, QSize());
         fittedPreviewEdge = qMax(frame.width(), frame.height());
         if(fittedPreviewEdge > 640) return;
-        window->setProperty("viewZoom", 2);
+        window->setProperty("viewZoom", 16);
         break;
       }
       case 152:

@@ -8,6 +8,8 @@ TestCase {
     name: "LibraryCollections"
     width: 960; height: 540
     visible: true; when: windowShown
+    property int backgroundClicks: 0
+    Button { width: 35; height: 100; onClicked: tests.backgroundClicks++ }
     QtObject {
         id: mock
         property var library: ({folders: [
@@ -88,5 +90,16 @@ TestCase {
         compare(dialog.folderState("C:/Users/person/Pictures/trip"), Qt.Checked)
         dialog.browseProperty = 0
         compare(dialog.folderState("D:/archive/trip"), Qt.Checked)
+    }
+    function test_outsideTapDismissesWithoutClickThrough() {
+        const dialog = createDialog()
+        backgroundClicks = 0
+        dialog.open()
+        tryCompare(dialog, "opened", true)
+        mouseClick(tests, 15, 40)
+        tryCompare(dialog, "visible", false)
+        compare(backgroundClicks, 0)
+        mouseClick(tests, 15, 40)
+        compare(backgroundClicks, 1)
     }
 }

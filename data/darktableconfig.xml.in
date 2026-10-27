@@ -61,12 +61,6 @@
     <shortdescription>touch fitted preview maximum edge in pixels</shortdescription>
   </dtconfig>
   <dtconfig>
-    <name>touch/show_rejected</name>
-    <type>bool</type>
-    <default>false</default>
-    <shortdescription>show rejected images in touch</shortdescription>
-  </dtconfig>
-  <dtconfig>
     <name>touch/advance_after_reject</name>
     <type>bool</type>
     <default>false</default>

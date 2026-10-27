@@ -28,7 +28,7 @@ ComboBox {
         onClosed: gamepad.choicesOpen = Math.max(0, gamepad.choicesOpen - 1)
         y: control.height; width: control.width
         implicitHeight: Math.min(contentItem.implicitHeight + topPadding + bottomPadding, 360)
-        padding: 6
+        padding: Math.round(6 * metrics.paddingScale)
         contentItem: ListView {
             objectName: "choicePopupList"
             clip: true; implicitHeight: contentHeight

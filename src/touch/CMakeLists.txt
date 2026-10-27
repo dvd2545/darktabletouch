@@ -28,6 +28,7 @@ set_target_properties(darktable-touch PROPERTIES
   AUTOMOC ON
   RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
 
+set_source_files_properties(qml/RatingFilter.qml PROPERTIES QT_RESOURCE_ALIAS RatingFilter.qml)
 set_source_files_properties(qml/UiMetrics.qml PROPERTIES QT_RESOURCE_ALIAS UiMetrics.qml)
 set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
 set_source_files_properties(qml/NamePatternEditor.qml PROPERTIES QT_RESOURCE_ALIAS NamePatternEditor.qml)
@@ -52,7 +53,7 @@ qt_add_qml_module(darktable-touch
   URI DarktableTouch
   VERSION 1.0
   RESOURCE_PREFIX /qt/qml
-  QML_FILES qml/NamePatternEditor.qml qml/TouchSwitch.qml qml/UiMetrics.qml qml/HistoryPasteDialog.qml qml/ThumbnailButton.qml qml/ThumbnailImage.qml qml/ChoiceDelegate.qml qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
+  QML_FILES qml/RatingFilter.qml qml/NamePatternEditor.qml qml/TouchSwitch.qml qml/UiMetrics.qml qml/HistoryPasteDialog.qml qml/ThumbnailButton.qml qml/ThumbnailImage.qml qml/ChoiceDelegate.qml qml/TouchComboBox.qml qml/ExportDialog.qml qml/CropOverlay.qml qml/Icon.qml qml/TouchDialog.qml qml/TouchPopup.qml qml/Main.qml qml/TouchButton.qml qml/FieldControl.qml qml/PanelHandle.qml qml/LibraryDialog.qml qml/RuleEditor.qml qml/ImportReview.qml)
 
 qt_add_executable(darktabletouch launcher.cpp)
 if(WIN32)

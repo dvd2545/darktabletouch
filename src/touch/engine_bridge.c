@@ -169,6 +169,8 @@ char *dt_touch_library(void)
   JsonObject *library = json_object_new();
   json_object_set_array_member(library, "collection", _library_rules("plugins/lighttable/collect", FALSE));
   json_object_set_array_member(library, "filtering", _library_rules("plugins/lighttable/filtering", FALSE));
+  json_object_set_int_member(library, "rating_property", DT_COLLECTION_PROP_RATING);
+  json_object_set_int_member(library, "rating_range_property", DT_COLLECTION_PROP_RATING_RANGE);
   json_object_set_array_member(library, "sort", _library_rules("plugins/lighttable/filtering", TRUE));
   JsonArray *properties = json_array_new();
   for(int i = 0; i < DT_COLLECTION_PROP_LAST; i++)
@@ -223,7 +225,6 @@ char *dt_touch_library(void)
   g_list_free(ids);
   json_object_set_array_member(library, "selected", selected);
   JsonObject *settings = json_object_new();
-  json_object_set_boolean_member(settings, "show_rejected", dt_conf_get_bool("touch/show_rejected"));
   json_object_set_boolean_member(settings, "advance_after_reject", dt_conf_get_bool("touch/advance_after_reject"));
   json_object_set_boolean_member(settings, "quick_reject", dt_conf_get_bool("touch/quick_reject"));
   json_object_set_boolean_member(settings, "quick_delete", dt_conf_get_bool("touch/quick_delete"));
@@ -402,6 +403,17 @@ int dt_touch_collection_set(const char *json, char **error)
   {
     const char *prefix = group == 0 ? "plugins/lighttable/collect" : "plugins/lighttable/filtering";
     JsonArray *rules = json_object_get_array_member(settings, groups[group]);
+    // native filtering preferences require at least one rule, including when cleared
+    if(group == 1 && json_array_get_length(rules) == 0)
+    {
+      JsonObject *empty = json_object_new();
+      json_object_set_int_member(empty, "item", DT_COLLECTION_PROP_RATING);
+      json_object_set_int_member(empty, "mode", 0);
+      json_object_set_int_member(empty, "off", 1);
+      json_object_set_int_member(empty, "top", 0);
+      json_object_set_string_member(empty, "string", "");
+      json_array_add_object_element(rules, empty);
+    }
     char key[160];
     g_snprintf(key, sizeof(key), "%s/num_%s", prefix, group == 2 ? "sort" : "rules");
     dt_conf_set_int(key, json_array_get_length(rules));
@@ -485,6 +497,8 @@ char *dt_touch_editor_information(dt_touch_editor_t *editor, char **error)
   json_parser_load_from_data(parser, text, -1, NULL);
   const char *recovery = _recovery_sidecars ? g_hash_table_lookup(_recovery_sidecars, GINT_TO_POINTER(editor->dev.image_storage.id)) : NULL;
   json_object_set_string_member(json_node_get_object(json_parser_get_root(parser)), "recovery_sidecar", recovery ? recovery : "");
+  json_object_set_int_member(json_node_get_object(json_parser_get_root(parser)), "preview_max_extent",
+                             MAX(editor->dev.image_storage.width, editor->dev.image_storage.height));
   g_free(text);
   text = json_to_string(json_parser_get_root(parser), FALSE);
   g_object_unref(parser);
@@ -1234,7 +1248,7 @@ void dt_touch_state_free(dt_touch_state_t *state)
 static int _preview(dt_touch_editor_t *editor, int max_width, int max_height,
                       uint8_t **pixels, int *width, int *height, char **error)
 {
-  if(!editor || max_width < 1 || max_height < 1 || max_width > 4096 || max_height > 4096)
+  if(!editor || max_width < 1 || max_height < 1)
     return _error(error, N_("invalid preview request"));
   if(!editor->input_ready)
   {
@@ -1249,7 +1263,9 @@ static int _preview(dt_touch_editor_t *editor, int max_width, int max_height,
   }
   if(!editor->pipe_ready)
   {
-    editor->pipe_ready = dt_dev_pixelpipe_init_export(&editor->pipe, max_width, max_height,
+    editor->pipe_ready = dt_dev_pixelpipe_init_export(&editor->pipe,
+                                                      MIN(max_width, editor->input.width),
+                                                      MIN(max_height, editor->input.height),
                                                       IMAGEIO_RGB | IMAGEIO_INT8, FALSE);
     if(!editor->pipe_ready) return _error(error, N_("could not allocate the preview pipeline"));
     dt_dev_pixelpipe_set_input(&editor->pipe, &editor->dev, (float *)editor->input.buf,
@@ -1358,7 +1374,7 @@ char *dt_touch_image_path(int image_id)
 
 void dt_touch_settings_set(int show_rejected, int advance_after_reject)
 {
-  dt_conf_set_bool("touch/show_rejected", show_rejected);
+  (void)show_rejected;
   dt_conf_set_bool("touch/advance_after_reject", advance_after_reject);
 }
 

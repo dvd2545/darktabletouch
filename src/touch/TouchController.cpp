@@ -246,7 +246,7 @@ void EngineWorker::libraryCommand(QString action, QJsonObject settings, int imag
       settings.value(QStringLiteral("swipe_images")).toBool(), settings.value(QStringLiteral("preview_quality")).toInt(1280)); return;
   }
   if(action == QStringLiteral("touch-settings")) {
-    dt_touch_settings_set(settings.value(QStringLiteral("show_rejected")).toBool(), settings.value(QStringLiteral("advance_after_reject")).toBool()); return;
+    dt_touch_settings_set(false, settings.value(QStringLiteral("advance_after_reject")).toBool()); return;
   }
   if(action == QStringLiteral("quick-actions-settings")) {
     dt_touch_quick_actions_set(settings.value(QStringLiteral("reject")).toBool(), settings.value(QStringLiteral("delete")).toBool()); return;
@@ -537,7 +537,7 @@ bool EngineWorker::render(quint64 revision, int extent)
 
 void EngineWorker::updatePreview(int extent, quint64 revision)
 {
-  m_previewExtent = std::clamp(extent, 640, 4096);
+  m_previewExtent = std::max(extent, 640);
   render(revision);
 }
 
@@ -627,7 +627,6 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
     m_library = library.toVariantMap();
     if(!m_touchSettingsLoaded) {
       const auto settings = library.value(QStringLiteral("touch_settings")).toObject();
-      m_showRejected = settings.value(QStringLiteral("show_rejected")).toBool();
       m_advanceAfterReject = settings.value(QStringLiteral("advance_after_reject")).toBool();
       m_quickReject = settings.value(QStringLiteral("quick_reject")).toBool();
       m_quickDelete = settings.value(QStringLiteral("quick_delete")).toBool();
@@ -826,7 +825,7 @@ void TouchController::setUiOption(const QString &name, const QVariant &value)
 void TouchController::requestPreview(int extent)
 {
   if(!m_ready || !m_imageId || m_busy || m_cropEditing) return;
-  extent = std::clamp(extent, 640, 4096);
+  extent = std::clamp(extent, 640, std::max(640, m_imageInformation.value(QStringLiteral("preview_max_extent")).toInt()));
   if(extent == m_previewExtent) return;
   m_previewExtent = extent;
   m_busy = true; m_waitingFrame = true; emit stateChanged();
@@ -836,9 +835,7 @@ void TouchController::requestPreview(int extent)
 void TouchController::updateImages(const QJsonArray &images)
 {
   m_allImages = images.toVariantList();
-  QVariantList visibleImages;
-  for(const auto &image : m_allImages)
-    if(m_showRejected || !image.toMap().value(QStringLiteral("rejected")).toBool()) visibleImages.append(image);
+  QVariantList visibleImages = m_allImages;
   for(auto &item : visibleImages)
   {
     auto map = item.toMap();
@@ -1041,13 +1038,6 @@ void TouchController::switchInterface(const QString &mode)
   emit switchRequested(mode);
 }
 
-void TouchController::setShowRejected(bool value)
-{
-  m_showRejected = value;
-  emit libraryRequested(QStringLiteral("touch-settings"), QJsonObject{{QStringLiteral("show_rejected"), m_showRejected}, {QStringLiteral("advance_after_reject"), m_advanceAfterReject}}, 0);
-  updateImages(QJsonArray::fromVariantList(m_allImages));
-}
-
 void TouchController::setQuickReject(bool value)
 {
   if(m_quickReject == value) return;
@@ -1066,7 +1056,7 @@ void TouchController::setQuickDelete(bool value)
 void TouchController::setAdvanceAfterReject(bool value)
 {
   m_advanceAfterReject = value;
-  emit libraryRequested(QStringLiteral("touch-settings"), QJsonObject{{QStringLiteral("show_rejected"), m_showRejected}, {QStringLiteral("advance_after_reject"), m_advanceAfterReject}}, 0);
+  emit libraryRequested(QStringLiteral("touch-settings"), QJsonObject{{QStringLiteral("advance_after_reject"), m_advanceAfterReject}}, 0);
   emit stateChanged();
 }
 void TouchController::rememberParameter(const QString &name, const QString &operation, double step)
