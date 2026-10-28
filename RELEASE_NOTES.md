@@ -523,6 +523,9 @@ changes (where available).
 
 - Touch lens correction adjustments now take effect in previews and exports.
 
+- Touch sliders now show a lower resolution preview while dragging, then
+  refine the image after release while keeping the final adjustment.
+
 - Fixed DarktableTouch thumbnail taps opening image actions through the
   right-click handler. Context menus require right-click or long-press,
   editor properties close when returning to Library, and modal popups block
