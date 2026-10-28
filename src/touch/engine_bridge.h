@@ -86,6 +86,9 @@ void dt_touch_render_reset(dt_touch_render_t *render);
 int dt_touch_editor_render(dt_touch_editor_t *editor, int max_width, int max_height,
                            uint8_t **pixels, int *width, int *height,
                            dt_touch_render_t *render, char **error);
+int dt_touch_editor_interactive(dt_touch_editor_t *editor, int extent,
+                                uint8_t **pixels, int *width, int *height,
+                                dt_touch_render_t *render, char **error);
 int dt_touch_editor_draft(dt_touch_editor_t *editor, uint8_t **pixels, int *width, int *height,
                           dt_touch_render_t *render);
 dt_touch_state_t *dt_touch_editor_capture(dt_touch_editor_t *editor);

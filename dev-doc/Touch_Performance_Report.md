@@ -78,7 +78,10 @@ no-more-than-5% cold regression is therefore not established on CPU.
 Original-history initial opens improved by 6.77%.
 
 Exposure and AgX CPU medians improved by more than 99%, exceeding the 25%
-repeat-processing target for those modules. CPU denoise did not improve.
+repeat-processing target for those modules in the alternating two-value
+test. Those measurements revisit previously rendered values and can reuse
+entire cached outputs; they do not measure dragging through unique values.
+CPU denoise did not improve.
 The first cache-building edit and occasional pipeline reconstruction still
 produce long tails, as the Exposure p95 demonstrates. AMD OpenCL greatly
 reduced heavy-workload processing, but its strict repeat-equality result
@@ -184,7 +187,68 @@ The temporary geometry-cache trial was discarded because it did not show
 a benefit. Its partial benchmark is not included in the tables. The final
 full Release build restored the measured `168ca1595` implementation.
 
+## Continuous Exposure follow-up, October 28
+
+The user reported that continuous Exposure dragging behaved like jumping
+between values. A new probe sends changing values every 16 ms for two
+seconds, rather than alternating only two already cached values. The
+first full-input trial published no frames during that interval. Keeping
+the export-style input for intermediate renders was insufficient when
+the full pipeline cache was trimmed under memory pressure.
+
+Interactive updates now use a separate native preview pipe with reduced
+float mipmap input, while release uses the existing full-input final pipe.
+The controller allows an interactive frame to finish, then sends the newest
+pending value. Intermediate frames do not refresh the module schema, enter
+the finished-frame cache, or change the final viewport resolution. All
+retained pipeline buffers still count toward the same 2 GiB cache budget.
+Low memory continues to pause neighboring preload and discard neighboring
+frames before trimming the active pipelines to that budget.
+
+With AgX, lens correction, and profiled denoise enabled, the final CPU probe
+accepted 106 input changes and published 18 visibly different frames during
+the two-second gesture. The first appeared after 332.42 ms; this is a
+single diagnostic trace, not a median/p95 claim. Release preserved Exposure
+0.75 and restored the 1280x853 final frame. One Undo returned to the value
+before the entire gesture; Redo restored exactly the same final pixels.
+A second gesture committed 0.9 and immediately switched images; reopening
+confirmed that 0.9 was retained.
+
+Native tests separately compared full-quality output after interactive
+previews against a full-input-only reference, with exact pixel equality.
+They also passed crop, export, history, reload, cancellation, eviction,
+and sidecar recovery checks. QML tests passed 50/50. The pinned Exposure
+integration case passed with maximum CIEDE2000 0.93148 and mean 0.00003.
+Full offscreen workflows passed at 960x540 and 1280x720, including layout,
+numeric input/reset, controller increments, history copy/paste, export,
+and recovery. Both screenshots were inspected. The harness now waits for
+popup transitions instead of assuming they finish within its 180 ms tick,
+and allows 300 seconds for the complete workflow's full-quality renders.
+Repeating the continuous-value probe with the available-memory policy
+artificially capped at 1 GiB also passed: 111 input changes, 17 visibly
+different intermediate frames, and 336.82 ms to the first frame. Final
+resolution, Undo/Redo parity, and the immediate-switch saved value passed
+again. This exercises the low-memory branch without limiting actual OS RAM;
+its log is `build/slider-low-memory.log`.
+These checks do not qualify AMD OpenCL or establish physical touchscreen
+latency. The earlier twenty-pass navigation tables were not rerun for this
+follow-up and retain their original implementation provenance.
+
+Evidence: `build/slider-final-probe.log`, `build/slider-final-probe.json`,
+its `.interactive.png` and `.final.png` images, `build/slider-native.log`,
+`build/slider-qml.txt`, and `build/slider-integration-deltae.log`.
+Full workflow logs are `build/slider-ui-960-final.log` and
+`build/slider-ui-1280-final.log`; the final full build is recorded in
+`build/slider-final-release-build.log`.
+
+```sh
+test-touch-performance --root '/path/to/photos' --rounds 0 --idle-ms 0 \
+  --slider-probe --heavy --output build/slider-probe.json
+```
+
 ## Reproduction
+
+### Twenty-pass benchmark
 
 Build with the checkout's MSYS2 UCRT64 Release configuration, then run with
 the matching Qt plugins and native module/data directories available:

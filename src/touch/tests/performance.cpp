@@ -228,7 +228,7 @@ int main(int argc, char **argv)
     return waitFor([&] { return controller.canClose(); }) ? 0 : 9;
   }
   if(arguments.contains("--heavy"))
-    for(int id : resumeModules ? QVector<int>{ids[1]} : ids)
+    for(int id : resumeModules || arguments.contains("--slider-probe") ? QVector<int>{ids[1]} : ids)
     {
       if(!run(id, "setup", 0, [&] { controller.selectImage(id); })) return 9;
       for(const QString &module : {QStringLiteral("agx"), QStringLiteral("lens"), QStringLiteral("denoiseprofile")})
@@ -237,6 +237,70 @@ int main(int argc, char **argv)
         if(!controller.moduleStates().value(module).toBool()) return 9;
       }
     }
+  if(arguments.contains("--slider-probe"))
+  {
+    const int id = ids[1];
+    if(!run(id, "slider-open", 0, [&] { controller.selectImage(id); })) return 10;
+    controller.selectTool("exposure");
+    if(!waitFor([&] { return controller.values().contains("exposure"); })) return 10;
+    for(double value : {0.25, 0.0})
+      if(!run(id, "slider-seed", 0, [&] { controller.setParameter("exposure", value, true); })) return 10;
+    const QSize expectedSize = store.requestImage("current", nullptr, {}).size();
+    QElapsedTimer drag;
+    QTimer producer;
+    producer.setInterval(16);
+    int changes = 0, frames = 0, changingFrames = 0;
+    QImage previousPixels;
+    double firstFrame = -1, previousFrame = 0, maximumGap = 0;
+    bool released = false, finalFrame = false;
+    const auto updates = QObject::connect(&controller, &TouchController::previewChanged, &app, [&] {
+      if(released) { finalFrame = true; return; }
+      const double now = drag.nsecsElapsed() / 1e6;
+      if(firstFrame < 0) firstFrame = now;
+      maximumGap = std::max(maximumGap, now - previousFrame);
+      previousFrame = now;
+      ++frames;
+      const QImage pixels = store.requestImage("current", nullptr, {});
+      if(pixels != previousPixels) { ++changingFrames; previousPixels = pixels; }
+    });
+    QObject::connect(&producer, &QTimer::timeout, &app, [&] {
+      if(drag.elapsed() >= 2000)
+      {
+        producer.stop();
+        released = true;
+        controller.setParameter("exposure", 0.75, true);
+      }
+      else controller.setParameter("exposure", 0.01 * (++changes % 70), false);
+    });
+    drag.start(); producer.start();
+    if(!waitFor([&] { return released && finalFrame && !controller.busy(); })) return 10;
+    QObject::disconnect(updates);
+    const QImage finalPixels = store.requestImage("current", nullptr, {});
+    const QString framePath = option("--output", "build/touch-performance.json");
+    if(!previousPixels.save(framePath + ".interactive.png")
+       || !finalPixels.save(framePath + ".final.png")) return 10;
+    QTextStream(stderr) << "slider probe: changes=" << changes << " frames_while_dragging=" << frames
+      << " changing_frames=" << changingFrames
+      << " first_ms=" << firstFrame << " max_gap_ms=" << maximumGap
+      << " final=" << finalPixels.width() << 'x' << finalPixels.height() << '\n';
+    if(changingFrames < 3 || finalPixels.size() != expectedSize
+       || std::abs(controller.values().value("exposure").toDouble() - 0.75) > 0.0001) return 10;
+    if(!run(id, "slider-undo", 0, [&] { controller.undo(); })
+       || std::abs(controller.values().value("exposure").toDouble()) > 0.0001) return 10;
+    if(!run(id, "slider-redo", 0, [&] { controller.redo(); })
+       || store.requestImage("current", nullptr, {}) != finalPixels) return 10;
+    if(!run(ids[0], "slider-switch", 0, [&] {
+      controller.setParameter("exposure", 0.6, false);
+      QTimer::singleShot(60, &controller, [&] {
+        controller.setParameter("exposure", 0.9, true);
+        controller.selectImage(ids[0]);
+      });
+    })) return 10;
+    if(!run(id, "slider-reopen", 0, [&] { controller.selectImage(id); })
+       || std::abs(controller.values().value("exposure").toDouble() - 0.9) > 0.0001) return 10;
+    controller.shutdown();
+    return waitFor([&] { return controller.canClose(); }) ? 0 : 10;
+  }
   for(int round = 0; !resumeModules && round <= rounds; ++round)
   {
     auto sequence = ids;

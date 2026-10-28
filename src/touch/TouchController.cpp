@@ -601,8 +601,8 @@ void EngineWorker::setParameter(int image, QString operation, QString name, QVar
   if(!dt_touch_editor_set(m_editor, operation.toUtf8().constData(), name.toUtf8().constData(),
                            scalar.constData(), &error)) { report(error); return; }
   if(commit) commitEdit();
-  loadModule(m_operation, revision);
-  render(revision, commit ? 0 : 640);
+  if(commit) loadModule(m_operation, revision);
+  render(revision, commit ? 0 : 640, commit);
 }
 
 void EngineWorker::changeEnabled(QString operation, bool enabled, quint64 revision)
@@ -683,7 +683,19 @@ bool EngineWorker::render(quint64 revision, int extent, bool final)
   if(!m_editor || revision != m_revision->load()) return false;
   if(extent == 0) extent = m_previewExtent;
   const quint64 generation = m_prepared->generation();
-  const QImage frame = renderImage(m_editor, extent, revision);
+  QImage frame;
+  if(!final)
+  {
+    dt_touch_render_reset(m_render.get());
+    uint8_t *pixels = nullptr;
+    int width = 0, height = 0;
+    char *error = nullptr;
+    if(dt_touch_editor_interactive(m_editor, extent, &pixels, &width, &height, m_render.get(), &error))
+      frame = takePixels(pixels, width, height);
+    else if(error && revision == m_revision->load()) report(error);
+    else dt_touch_free(error);
+  }
+  else frame = renderImage(m_editor, extent, revision);
   if(frame.isNull() || revision != m_revision->load()) return false;
   emit frameReady(frame, m_imageId, revision, extent, final);
   if(final && !m_cropBefore && !m_before)
@@ -786,7 +798,8 @@ void EngineWorker::trimPreload()
   }
   const quint64 total = bytes(), active = dt_touch_editor_cache_bytes(m_editor);
   const quint64 other = total - active;
-  dt_touch_editor_trim(m_editor, low ? 0 : other < budget ? budget - other : 0);
+  // low memory pauses speculative work; do not discard the active slider cache
+  dt_touch_editor_trim(m_editor, other < budget ? budget - other : 0);
 }
 
 void EngineWorker::preload()
@@ -1092,13 +1105,18 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
     m_store->setFrame(image);
     ++m_frameSerial;
     if(final && m_needBefore) { m_store->setFrame(image, true); m_needBefore = false; }
-    m_waitingFrame = !final;
+    if(final || m_openingImage) m_waitingFrame = !final;
     if(final) m_openingImage = false;
     if(final) m_previewExtent = extent;
     if(final) m_previousFrame = {};
     if(final) m_frameRevision = revision;
     if(final && !m_deferredModule.isEmpty()) { const auto module = m_deferredModule; m_deferredModule = {}; applyModule(module); }
     m_busy = m_exportRunning || m_waitingFrame;
+    if(m_parameterRendering)
+    {
+      m_parameterRendering = false;
+      if(m_parameterDirty) m_editTimer.start(0);
+    }
     if(!m_failed) m_message = tr("edits are saved when an adjustment finishes");
     emit previewChanged();
     emit stateChanged();
@@ -1126,6 +1144,7 @@ TouchController::TouchController(PreviewStore *store, QObject *parent)
     emit historyChanged();
   });
   connect(m_worker, &EngineWorker::failed, this, [this](const QString &message) {
+    m_parameterRendering = false;
     if(!m_deferredModule.isEmpty()) { const auto module = m_deferredModule; m_deferredModule = {}; applyModule(module); }
     m_waitingFrame = false; m_rejectNext = 0; m_failed = true; m_message = message; m_busy = false; emit stateChanged();
   });
@@ -1160,6 +1179,7 @@ TouchController::~TouchController()
 void TouchController::initialize(const QStringList &arguments) { emit boot(arguments); }
 quint64 TouchController::advance()
 {
+  m_parameterRendering = false;
   if(!m_openingImage) m_prepared->remove(m_imageId);
   const auto revision = ++(*m_revision);
   dt_touch_render_cancel(m_render.get());
@@ -1337,6 +1357,7 @@ void TouchController::setParameter(const QString &name, const QVariant &value, b
   m_pendingName = name;
   m_pendingOperation = target;
   m_pendingValue = value;
+  m_parameterDirty = true;
   for(int i = 0; i < m_fields.rowCount(); ++i) {
     const auto field = m_fields.data(m_fields.index(i), Qt::UserRole + 1).toMap();
     if(field.value(QStringLiteral("name")).toString() == name && field.value(QStringLiteral("operation"), m_operation).toString() == target) {
@@ -1345,15 +1366,25 @@ void TouchController::setParameter(const QString &name, const QVariant &value, b
   }
   if(name == m_lastName && target == m_lastOperation) m_lastField.insert(QStringLiteral("value"), value);
   if(commit) flush(true);
-  else if(!m_editTimer.isActive()) m_editTimer.start();
+  else if(!m_editTimer.isActive()) m_editTimer.start(50);
 }
 
 void TouchController::flush(bool commit)
 {
   if(m_pendingName.isEmpty()) return;
+  // let an interactive frame finish instead of canceling it every 50 ms
+  if(!commit && (m_parameterRendering || !m_parameterDirty)) return;
   m_editTimer.stop();
-  emit parameterRequested(m_imageId, m_pendingOperation, m_pendingName, m_pendingValue, commit, advance());
+  const QString name = m_pendingName, operation = m_pendingOperation;
+  const QVariant value = m_pendingValue;
+  const int image = m_imageId;
   if(commit) { m_pendingName.clear(); m_pendingOperation.clear(); }
+  const auto revision = advance();
+  m_parameterRendering = true;
+  m_parameterDirty = false;
+  if(commit) { m_waitingFrame = true; m_busy = true; }
+  emit parameterRequested(image, operation, name, value, commit, revision);
+  if(commit) emit stateChanged();
 }
 
 void TouchController::setEnabled(bool enabled)
@@ -1460,7 +1491,8 @@ void TouchController::rememberParameter(const QString &name, const QString &oper
 }
 void TouchController::adjustLastParameter(int direction)
 {
-  if(m_lastName.isEmpty() || !m_imageId || m_cropEditing || m_waitingFrame) return;
+  if(m_lastName.isEmpty() || !editorReady() || m_cropEditing
+     || (m_waitingFrame && !m_parameterRendering)) return;
   const double value = qBound(m_lastField.value(QStringLiteral("min"), -1e9).toDouble(),
     m_lastField.value(QStringLiteral("value")).toDouble() + direction * m_lastStep,
     m_lastField.value(QStringLiteral("max"), 1e9).toDouble());

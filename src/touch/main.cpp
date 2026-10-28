@@ -152,6 +152,10 @@ int main(int argc, char **argv)
   };
   QObject::connect(&libraryTest, &QTimer::timeout, &app, [&] {
     if(controller.busy()) return;
+    // software-rendered popup animations can outlast the test's 180 ms tick
+    for(auto object : window->findChildren<QObject *>())
+      if(object->property("opened").isValid() && object->property("visible").toBool()
+         && !object->property("opened").toBool()) return;
     const auto fail = [&](const char *message) {
       QTextStream(stderr) << message << ": " << controller.message() << '\n'; libraryTest.stop(); controller.shutdown();
     };
@@ -1361,7 +1365,7 @@ int main(int argc, char **argv)
     }
   });
   if(!selfTest.isEmpty())
-    QTimer::singleShot(150000, &app, [&] {
+    QTimer::singleShot(300000, &app, [&] {
       if(!finished) { QTextStream(stderr) << "Touch workflow self-test timed out: stage=" << stage << " library=" << libraryStage << " busy=" << controller.busy() << " " << controller.message() << '\n'; controller.shutdown(); }
     });
   else if(!screenshot.isEmpty())

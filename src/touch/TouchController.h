@@ -340,6 +340,7 @@ private:
   std::shared_ptr<std::atomic<quint64>> m_revision;
   std::shared_ptr<dt_touch_render_t> m_render;
   QTimer m_editTimer;
+  bool m_parameterRendering = false, m_parameterDirty = false;
   QVariantList m_allImages;
   bool m_touchSettingsLoaded = false;
   bool m_advanceAfterReject = false;

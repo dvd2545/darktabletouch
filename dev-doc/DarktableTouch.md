@@ -71,6 +71,19 @@ new edits. Slider changes are coalesced and one completed gesture records
 one undo entry. Preview processing releases the full-resolution input lock
 before thumbnail generation or export. The preview pipeline remains cached.
 
+During a slider gesture, a separate native preview pipe uses the reduced
+float mipmap input. These 640-pixel frames are temporary; release commits
+the latest value and renders the full-quality viewport through the existing
+full-input pipe. Interactive frames do not change the requested viewport
+resolution or populate the finished-frame cache. The controller lets one
+interactive render finish before sending the newest pending value, rather
+than canceling every frame at the 50 ms coalescing interval. Module schemas
+are refreshed after commitment, not on every intermediate value.
+Both pipelines count toward the retained-cache budget and are released on
+parking, reload, and shutdown. Low memory pauses neighboring preload and
+evicts neighboring frames first; it does not unconditionally empty the
+active slider cache.
+
 After the first render, Touch previews retain up to twelve native pixelpipe
 cache lines. The initial render keeps the original two-buffer allocation.
 A parameter

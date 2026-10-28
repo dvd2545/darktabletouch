@@ -405,6 +405,7 @@ static void _test_preview_cache(int image)
   g_assert_null(error);
   g_assert_nonnull(reference);
   g_assert_nonnull(cached);
+  dt_touch_render_t *interactive = dt_touch_render_new();
   for(int step = 0; step < 4; step++)
   {
     const char *value = step % 2 ? "0.5" : "-0.5";
@@ -412,6 +413,10 @@ static void _test_preview_cache(int image)
     g_assert_true(dt_touch_editor_set(cached, "exposure", "exposure", value, &error));
     uint8_t *expected = NULL, *actual = NULL;
     int ew, eh, aw, ah;
+    g_assert_true(dt_touch_editor_interactive(cached, 640, &actual, &aw, &ah, interactive, &error));
+    g_assert_cmpint(MAX(aw, ah), <=, 640);
+    g_assert_cmpint(MIN(aw, ah), >, 0);
+    dt_touch_free(actual); actual = NULL;
     g_setenv("DARKTABLETOUCH_DISABLE_PIPE_CACHE", "1", TRUE);
     g_assert_true(dt_touch_editor_preview(reference, 1280, 1280, &expected, &ew, &eh, &error));
     g_unsetenv("DARKTABLETOUCH_DISABLE_PIPE_CACHE");
@@ -434,6 +439,7 @@ static void _test_preview_cache(int image)
     dt_touch_free(expected);
     dt_touch_free(actual);
   }
+  dt_touch_render_free(interactive);
   g_assert_true(dt_touch_editor_set(reference, "exposure", "exposure", "0.75", &error));
   g_assert_true(dt_touch_editor_set(cached, "exposure", "exposure", "0.75", &error));
   dt_touch_editor_park(cached);
