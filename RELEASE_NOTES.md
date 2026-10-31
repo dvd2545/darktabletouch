@@ -119,6 +119,16 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Touch library and editor now each have one top bar where every action
+  lives, replacing the left menu and the buttons that floated over the
+  photo. The editor bar shows the file name and position with library,
+  undo, redo, before, export, and a menu for history, copy and paste,
+  selection, and settings. Selecting photos turns the bar into a selection
+  bar instead of opening a scrolling toolbar. The photo strip and module
+  panel now stay visible by default, the panel names its category and can
+  be closed from its header, and crop offers aspect ratio buttons with
+  cancel and apply always visible.
+
 - DarktableTouch offers independent rejected and zero-to-five-star rating
   filters in collections and filters, replacing the separate rejected visibility
   preference. Zoomed previews can reach original image resolution. Settings
