@@ -176,21 +176,41 @@ int main(int argc, char **argv)
         break;
       case 200:
       {
-        auto all = findItem(window->contentItem(), QStringLiteral("selectAllButton"));
-        if(!all || !all->isVisible()) { fail("select all is not available in selection mode"); return; }
+        auto choice = findItem(window->contentItem(), QStringLiteral("selectionChoiceButton"));
+        if(!choice || !choice->isVisible()) { fail("selection choices are not available in selection mode"); return; }
+        const QPointF point = choice->mapToScene(QPointF(choice->width() / 2, choice->height() / 2));
+        pointer(QEvent::MouseButtonPress, point); pointer(QEvent::MouseButtonRelease, point);
+        break;
+      }
+      case 201:
+      {
+        auto all = window->findChild<QQuickItem *>(QStringLiteral("selectAllButton"));
+        if(!all || !all->isVisible()) { fail("select all is not available in the selection menu"); return; }
         const QPointF point = all->mapToScene(QPointF(all->width() / 2, all->height() / 2));
         pointer(QEvent::MouseButtonPress, point); pointer(QEvent::MouseButtonRelease, point);
         libraryStage = 0;
         break;
       }
       case 1:
+      {
         if(selected != 2) { fail("select all did not select the collection"); return; }
         if(!libraryScreenshot(QStringLiteral("-library"))) { fail("library screenshot failed"); return; }
-        if(auto invert = findItem(window->contentItem(), QStringLiteral("selectInvertButton"))) {
-          const QPointF point = invert->mapToScene(QPointF(invert->width() / 2, invert->height() / 2));
-          pointer(QEvent::MouseButtonPress, point); pointer(QEvent::MouseButtonRelease, point);
-        }
+        auto choice = findItem(window->contentItem(), QStringLiteral("selectionChoiceButton"));
+        if(!choice) { fail("selection choices are unavailable"); return; }
+        const QPointF point = choice->mapToScene(QPointF(choice->width() / 2, choice->height() / 2));
+        pointer(QEvent::MouseButtonPress, point); pointer(QEvent::MouseButtonRelease, point);
+        libraryStage = 201;
         break;
+      }
+      case 202:
+      {
+        auto invert = window->findChild<QQuickItem *>(QStringLiteral("selectInvertButton"));
+        if(!invert || !invert->isVisible()) { fail("invert is not available in the selection menu"); return; }
+        const QPointF point = invert->mapToScene(QPointF(invert->width() / 2, invert->height() / 2));
+        pointer(QEvent::MouseButtonPress, point); pointer(QEvent::MouseButtonRelease, point);
+        libraryStage = 1;
+        break;
+      }
       case 2:
         if(selected != 0) { fail("invert did not clear the selected collection"); return; }
         controller.libraryCommand(QStringLiteral("single"), {}, controller.imageId());
@@ -600,24 +620,29 @@ int main(int argc, char **argv)
       case 80:
       {
         auto bar = window->findChild<QQuickItem *>(QStringLiteral("editorActionBar"));
-        auto history = window->findChild<QQuickItem *>(QStringLiteral("editorHistoryBar"));
-        if(!bar || !bar->isVisible() || !history || !history->isVisible() || bar->height() < 48)
-        { fail("editor toolbar or floating history actions are unavailable"); return; }
-        auto menu = window->findChild<QQuickItem *>(QStringLiteral("editorNavigationButton"));
-        auto toggle = window->findChild<QQuickItem *>(QStringLiteral("photoStripToggle"));
-        auto actions = window->findChild<QQuickItem *>(QStringLiteral("editorQuickActionsButton"));
         auto canvas = window->findChild<QQuickItem *>(QStringLiteral("imageStage"));
-        if(!menu || !menu->isVisible() || !toggle || !toggle->isVisible()
-           || !actions || !actions->isVisible() || actions->property("showLabel").toBool()
-           || canvas->mapToScene(QPointF()).y() != 0
-           || window->findChild<QObject *>(QStringLiteral("filmstripStateButton")))
-        { fail("floating editor navigation did not preserve a full-height canvas"); return; }
-        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("navigationDrawer")), "open");
+        auto strip = window->findChild<QQuickItem *>(QStringLiteral("filmstripBar"));
+        auto panel = window->findChild<QQuickItem *>(QStringLiteral("toolPanel"));
+        if(!bar || !bar->isVisible() || bar->height() < 48 || !canvas || !strip || !panel)
+        { fail("the editor top bar is unavailable"); return; }
+        // every editor action lives in an opaque bar; none may float over the photo
+        for(const auto &name : {"editorLibraryButton", "editorUndoButton", "editorRedoButton", "editorTitleButton",
+                                "editorCompareButton", "editorExportButton", "editorQuickActionsButton"})
+        {
+          auto item = window->findChild<QQuickItem *>(QString::fromLatin1(name));
+          if(!item || !item->isVisible() || !bar->mapRectToScene(bar->boundingRect()).contains(item->mapRectToScene(item->boundingRect())))
+          { QTextStream(stderr) << name << '\n'; fail("an editor action is missing from the top bar"); return; }
+        }
+        auto toggle = window->findChild<QQuickItem *>(QStringLiteral("photoStripToggle"));
+        if(!toggle || !toggle->isVisible() || !strip->mapRectToScene(strip->boundingRect()).contains(toggle->mapRectToScene(toggle->boundingRect()))
+           || canvas->mapToScene(QPointF()).y() < bar->mapToScene(QPointF(0, bar->height())).y() - 1
+           || bar->mapToScene(QPointF(bar->width(), 0)).x() > panel->mapToScene(QPointF()).x() + 1
+           || window->findChild<QObject *>(QStringLiteral("editorHistoryBar"))
+           || window->findChild<QObject *>(QStringLiteral("navigationDrawer")))
+        { fail("editor controls must sit in the top bar and photo strip, beside the module panel"); return; }
         break;
       }
       case 81:
-        if(!window->findChild<QObject *>(QStringLiteral("navigationDrawer"))->property("visible").toBool())
-        { fail("the left navigation drawer did not open"); return; }
         QMetaObject::invokeMethod(window, "showImageInformation");
         QMetaObject::invokeMethod(window, "showImageActions", Q_ARG(QVariant, controller.images().first()));
         if(window->property("blockingPopups").toInt() < 1
@@ -640,14 +665,17 @@ int main(int argc, char **argv)
         if(grid->size() != gridSize || grid->property("contentY") != scrollPosition)
         { fail("selection mode moved the photo grid"); return; }
         if(!libraryScreenshot(QStringLiteral("-selection"))) { fail("selection screenshot failed"); return; }
-        auto paste = window->findChild<QObject *>(QStringLiteral("pasteSelectedButton"));
-        auto reset = window->findChild<QObject *>(QStringLiteral("resetSelectedButton"));
-        if(!paste || !reset) { fail("selection actions are unavailable"); return; }
+        auto paste = findItem(window->contentItem(), QStringLiteral("pasteSelectedButton"));
+        auto reset = window->findChild<QObject *>(QStringLiteral("imageActionReset"));
+        if(!paste || !paste->isVisible() || !reset) { fail("selection actions are unavailable"); return; }
         QMetaObject::invokeMethod(paste, "clicked");
         auto pasteDialog = window->findChild<QObject *>(QStringLiteral("historyPasteDialog"));
         if(pasteDialog->property("scope").toString() != QStringLiteral("selected"))
         { fail("selection paste did not retain its target scope"); return; }
         QMetaObject::invokeMethod(pasteDialog, "close");
+        // a selection's reset is offered through its more-actions menu
+        QMetaObject::invokeMethod(window, "showImageActions", Q_ARG(QVariant, controller.images().first()));
+        window->setProperty("actionSelection", true);
         QMetaObject::invokeMethod(reset, "clicked");
         auto resetDialog = window->findChild<QObject *>(QStringLiteral("resetHistoryDialog"));
         if(resetDialog->property("scope").toString() != QStringLiteral("selected"))
@@ -754,7 +782,7 @@ int main(int argc, char **argv)
         numeric->forceActiveFocus();
         numeric->setProperty("text", QStringLiteral("9999999"));
         numeric->setProperty("edited", true);
-        auto next = window->findChild<QQuickItem *>(QStringLiteral("editorNavigationButton"));
+        auto next = window->findChild<QQuickItem *>(QStringLiteral("editorLibraryButton"));
         if(!next) { fail("numeric blur target is unavailable"); return; }
         next->forceActiveFocus();
         break;
@@ -858,9 +886,13 @@ int main(int argc, char **argv)
       case 99:
       {
         auto sheet = window->findChild<QObject *>(QStringLiteral("quickMenu"));
-        if(!sheet->property("visible").toBool() || sheet->property("width").toDouble() > 420
-           || sheet->property("height").toDouble() > 440 || !libraryScreenshot(QStringLiteral("-actions")))
-        { fail("quick actions did not open as a compact sheet"); return; }
+        auto sheetItem = sheet->property("contentItem").value<QQuickItem *>();
+        auto bar = window->findChild<QQuickItem *>(QStringLiteral("editorActionBar"));
+        if(!sheet->property("visible").toBool() || sheet->property("width").toDouble() > 340 || !sheetItem
+           || sheetItem->mapToScene(QPointF()).y() < bar->mapToScene(QPointF(0, bar->height())).y()
+           || sheetItem->mapToScene(QPointF(0, sheetItem->height())).y() > window->height()
+           || !libraryScreenshot(QStringLiteral("-actions")))
+        { fail("the more menu did not drop down below the top bar"); return; }
         historyWait = 0;
         QMetaObject::invokeMethod(sheet, "close");
         QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("category-color")), "clicked");
@@ -1019,7 +1051,7 @@ int main(int argc, char **argv)
       case 149:
         if(!window->property("filmstripSelection").toBool() || !findItem(window->contentItem(), QStringLiteral("selectionToolbar"))->isVisible())
         { fail("filmstrip selection mode is unavailable"); return; }
-        QMetaObject::invokeMethod(findItem(window->contentItem(), QStringLiteral("selectAllButton")), "clicked");
+        QMetaObject::invokeMethod(window->findChild<QObject *>(QStringLiteral("selectAllButton")), "clicked");
         libraryStage = 143;
         break;
       case 144:
@@ -1145,8 +1177,7 @@ int main(int argc, char **argv)
            || thumb->property("status").toInt() != 1 || thumb->width() <= 0 || thumb->height() <= 0
            || controller.imageInformation().value(QStringLiteral("filename")).toString() != QFileInfo(testPhoto).fileName()
            || menu->height() < 56 || menu->width() < 56
-           || menu->mapToScene(QPointF()).y() < imageStage->mapToScene(QPointF()).y()
-           || menu->mapToScene(QPointF(0, menu->height())).y() > imageStage->mapToScene(QPointF(0, imageStage->height())).y() + 1
+           || !strip->mapRectToScene(strip->boundingRect()).contains(menu->mapRectToScene(menu->boundingRect()))
            || strip->mapToScene(QPointF(strip->width(), 0)).x() > panel->mapToScene(QPointF()).x() + 1)
         { QTextStream(stderr) << "editor layout or image information is invalid\n"; controller.shutdown(); return; }
         auto imageCanvas = window->findChild<QQuickItem *>(QStringLiteral("imageCanvas"));
@@ -1195,11 +1226,9 @@ int main(int argc, char **argv)
           QMetaObject::invokeMethod(filmHandle, "adjusted", Q_ARG(double, 10000));
           QMetaObject::invokeMethod(moduleHandle, "adjusted", Q_ARG(double, 10000));
           QTimer::singleShot(150, &app, [&, strip, panel, filmHandle, moduleHandle, imageStage, menu] {
-            auto history = window->findChild<QQuickItem *>(QStringLiteral("editorHistoryBar"));
             if(imageStage->width() < 319 || strip->height() > window->height() * 0.45 + 1
-               || history->mapRectToItem(imageStage, history->boundingRect()).intersects(menu->mapRectToItem(imageStage, menu->boundingRect()))
-               || menu->mapToScene(QPointF(0, menu->height())).y() > imageStage->mapToScene(QPointF(0, imageStage->height())).y() + 1)
-            { QTextStream(stderr) << "resizing covered the image or moved the menu into the viewport\n"; controller.shutdown(); return; }
+               || !strip->mapRectToScene(strip->boundingRect()).contains(menu->mapRectToScene(menu->boundingRect())))
+            { QTextStream(stderr) << "resizing covered the image or moved the photo strip toggle out of the strip\n"; controller.shutdown(); return; }
             if(!screenshot.isEmpty())
             {
               const QFileInfo file(screenshot);

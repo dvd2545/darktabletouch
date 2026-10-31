@@ -19,7 +19,9 @@ QtObject {
     readonly property int titleSize: Math.round(bodySize * 1.4)
     readonly property int panelWidth: Math.max(360, Math.round(touchHeight * 5.8))
     readonly property int resizeGutter: 16
-    readonly property int compactFilmstrip: touchHeight + resizeGutter + 12
+    readonly property int barHeight: touchHeight + 8
+    // thumbnails need roughly a third more height than a button to stay recognizable
+    readonly property int compactFilmstrip: Math.round(touchHeight * 1.4) + resizeGutter
     readonly property int expandedFilmstrip: Math.round(touchHeight * 2.5)
     readonly property int radius: 8
     readonly property color canvas: "#090d0f"

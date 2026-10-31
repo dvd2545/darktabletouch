@@ -9,6 +9,7 @@ Button {
     property bool showLabel: true
     property bool stacked: false
     property bool imageOverlay: false
+    property int labelAlignment: Text.AlignHCenter
     UiMetrics { id: metrics; pixelDensity: control.Screen.pixelDensity; pixelRatio: control.Screen.devicePixelRatio }
     Accessible.name: text
     ToolTip.visible: (hovered || activeFocus) && !!iconName
@@ -34,7 +35,7 @@ Button {
             style: control.imageOverlay ? Text.Raised : Text.Normal; styleColor: "#a0000000"
             color: control.imageOverlay ? (control.checked ? "#00dbe5" : "#ffffff") : control.checked ? "#07191b" : "#e6eef0"
             font.family: control.font.family; font.pixelSize: control.font.pixelSize; font.weight: control.checked ? Font.DemiBold : Font.Normal
-            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+            horizontalAlignment: control.stacked ? Text.AlignHCenter : control.labelAlignment; verticalAlignment: Text.AlignVCenter
             wrapMode: Text.WordWrap
         }
     }

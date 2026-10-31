@@ -25,6 +25,8 @@ Canvas {
         else if(name === "fit") { line([3,9,3,3,9,3]); line([15,3,21,3,21,9]); line([21,15,21,21,15,21]); line([9,21,3,21,3,15]) }
         else if(name === "history") { c.beginPath(); c.arc(12,12,9,0,Math.PI*2); c.stroke(); line([12,6,12,12,16,14]) }
         else if(name === "chevron-right") line([9,5,16,12,9,19])
+        else if(name === "chevron-left") line([15,5,8,12,15,19])
+        else if(name === "info") { c.beginPath(); c.arc(12,12,9,0,Math.PI*2); c.stroke(); line([12,11,12,17]); c.beginPath(); c.arc(12,7.5,1.2,0,Math.PI*2); c.fill() }
         else if(name === "chevron-up") line([5,15,12,8,19,15])
         else if(name === "chevron-down") line([5,9,12,16,19,9])
         else if(name === "menu") { line([4,6,20,6]); line([4,12,20,12]); line([4,18,20,18]) }

@@ -175,37 +175,49 @@ editor includes native scalar/enum controls, reset, undo/redo, numeric
 entry, before/after, pan/zoom, and export. UI text uses Qt's `qsTr`/`tr`
 markers; native strings use gettext. Fonts retain Thai shaping and fallback.
 
-The left hamburger menu offers Library from the editor, or Editor from the
-image library, collections and
-filters, import sources, export, and settings. Camera ingestion remains
-available in Classic. Library selection uses a floating lower-right action bar without
-resizing or repositioning the grid. Export appears there after photos are
-selected. All, none, invert, same film roll, untouched, and history operations
-remain available in the horizontally scrollable action row.
+Each view has one opaque top bar, and every action has a single home in it;
+no buttons float over the photo. The library bar holds import, collections,
+select, and settings. Camera ingestion remains available in Classic. While
+photos are selected, the bar of the current view becomes a selection bar:
+done, the selected count, a "select" menu (all, none, invert, same film roll,
+untouched), export, reject, paste edits, and more actions. Narrow bars stack
+icon and label and leave reject and paste edits to more actions. Selection
+does not resize or reposition the grid.
 
-The editor opens with a photo strip and a narrow category rail. Light, Color,
-Detail, and Crop open contextual tool drawers. Tapping the canvas toggles
-focus mode; double-tapping controls zoom. Undo and redo float at the lower
-left beside the icon-only quick actions button and hide during crop editing.
-The image reaches the top of the window;
-navigation and history buttons float without filled backgrounds and use
-white icons with shadows. Export lives in the left menu. One bottom chevron
-toggles the photo strip; its height can still be adjusted with its handle. Swipe upward on the fitted canvas to restore the strip.
-Settings control automatic hiding, with switch to Classic as the last option.
-Image information is available through the current image context menu.
+The editor bar spans only the image column, so the module panel keeps the
+full window height. From the left it holds library, undo, redo, the file name
+with its position in the collection, before, export, and more. Tapping the
+file name shows image information. Undo and export are disabled while a crop
+is being edited. The more menu drops down from its button with edit history,
+copy and paste edits, photo selection, image information, fit to screen
+(only while zoomed), settings, and a separated reset. Tapping the canvas
+toggles focus mode, which hides both bars, the strip, and the panel;
+double-tapping controls zoom. Status messages appear as a short toast at the
+top of the image; save problems stay until they are resolved.
+
+The photo strip stays visible unless the user hides it, and automatic hiding
+is an opt-in setting. The chevron at its left end hides it; a "photos" tab at
+the bottom of the image, or an upward swipe on the fitted canvas, restores it.
+Its height can still be adjusted with its handle.
 A normal filmstrip tap selects an image without opening its information or
 actions. Right-click and long-press open image actions; returning to Library
 closes editor information and contextual menus.
 
-Quick actions opens above its lower-left trigger. Its selection action enables
-multi-image filmstrip selection without switching the active preview. Holding
-a selected thumbnail opens actions for the selected images; the menu and
-destructive confirmation show the target count. All and invert operate on the
-visible Touch images after native collection and rating filters.
+The module panel is open when the editor starts. Its header names the
+current category and has a button that hides the panel; the category rail
+on the right edge reopens it. The rail's last entry, "all", lists every
+module. Crop shows its aspect ratios as buttons, and keeps cancel and apply
+pinned to the bottom of the panel while the frame is being edited.
+
+The select photos action enables multi-image filmstrip selection without
+switching the active preview. Holding a selected thumbnail opens actions for
+the selected images; the menu and destructive confirmation show the target
+count. All and invert operate on the visible Touch images after native
+collection and rating filters.
 Settings can enable persistent quick reject and quick delete buttons at the
-lower right. Quick delete first chooses disk or collection removal, then
-requires confirmation. Both shortcuts start hidden. Operations lasting more
-than 150 ms show a centered animated loading indicator.
+lower right of the image. Quick delete first chooses disk or collection
+removal, then requires confirmation. Both shortcuts start hidden. Operations
+lasting more than 150 ms show a centered animated loading indicator.
 
 Settings separate interface, library, and editor options. Interface sizing
 can override automatic system-density sizing from 75% to 150%; the multiplier
@@ -213,8 +225,7 @@ applies once to shared logical metrics. The override, multiplier, editor swipe
 navigation, and fitted preview quality persist in the native configuration.
 Horizontal canvas swipes navigate only at fit, outside crop and selection;
 zoomed images keep pan gestures. Filmstrip and module-panel visibility animate
-without delaying manual resize gestures. Floating editor controls use a shared
-dark shadow for contrast over bright images.
+without delaying manual resize gestures.
 
 Fitted preview quality offers maximum edges from 640 to 4096 pixels. After a
 250 ms zoom pause, the worker renders at the displayed size and screen pixel
@@ -226,7 +237,9 @@ This changes preview request sizing, not the native processing algorithms.
 `UiMetrics.qml` converts reported physical screen density into a 9.5 mm
 touch target, divided by the device pixel ratio. Targets are bounded to
 56-80 logical pixels; missing or implausible density uses 64. Shared spacing,
-fonts, surfaces, drawer width, and strip sizes derive from these tokens.
+fonts, surfaces, top-bar height, drawer width, and strip sizes derive from
+these tokens; the default strip is 1.4 targets tall so thumbnails stay
+recognizable.
 Qt applies Windows scaling to logical coordinates. Reported physical
 sizes can be inaccurate, so physical touch and Windows scaling still need
 hardware validation; simulated scale factors do not establish that.
@@ -237,9 +250,9 @@ a 44-pixel minimum, reducing empty padding between controls.
 Long names can wrap without obscuring numeric entries. Changed scalar, enum,
 and boolean values expose direct resets using their native defaults.
 Each module header has its own reset beside its enable switch, including
-collapsed modules. The all-modules icon opens the complete side panel
+collapsed modules. The rail's "all" entry opens the complete side panel
 without a second popup and keeps that view while parameters change;
-whole-image reset requires confirmation through the separate quick actions.
+whole-image reset requires confirmation through the editor's more menu.
 Numeric drafts preserve precision and validate before committing. Popups and
 dialogs share dark surfaces with inset focus and close controls.
 Exposure's additional controls use an accessible, padding-free chevron.
@@ -296,7 +309,7 @@ as Classic. History and quick-action panels scroll at smaller window sizes.
 
 ### Library collections and import
 
-The collections and filters entry in the left menu opens collections,
+The collections button in the library bar opens collections,
 filters, and sort priorities in one dialog. Filter rules appear above the
 checkable collection list; empty default filters start collapsed. Film rolls and
 folders show imported folder names, nesting beneath their nearest imported
@@ -526,7 +539,9 @@ thumbnail generation while an editor exists, session round-trips, and
 release of database handles. It checks history selection and out-of-range
 step rejection. Touch self-tests select original history and verify that
 Undo restores the edited preview exactly. Screenshots include the editor,
-history panel, and quick actions at 1280x720 and 960x540. Launcher probes
+history panel, and more menu at 1280x720 and 960x540. They also check that
+editor actions sit inside the top bar beside the module panel and that the
+strip toggle stays inside the strip. Launcher probes
 check Unicode executable and
 argument paths, selection persistence, handoffs, failed children, and old
 requests. Package tests remove the developer toolchain from child-process
