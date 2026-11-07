@@ -7,6 +7,7 @@
 #include "touch/engine_bridge.h"
 #include "common/touch_session.h"
 #include "common/image.h"
+#include "common/ratings.h"
 #include "common/image_cache.h"
 #include "common/mipmap_cache.h"
 #include "common/exif.h"
@@ -183,6 +184,131 @@ static void _test_library(const char *filename, const char *folder, int first)
   _apply_collection(settings, 2);
   json_object_unref(settings);
   g_free(other_folder); g_free(other);
+}
+
+static void _test_photos_page(int thai_image)
+{
+  char *error = NULL;
+  char *json = dt_touch_images(&error);
+  g_assert_null(error); g_assert_nonnull(json);
+  JsonParser *parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, json, -1, NULL));
+  JsonArray *images = json_node_get_array(json_parser_get_root(parser));
+  const int expected = json_array_get_length(images);
+  g_assert_cmpint(expected, >=, 2);
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(dt_database_get(darktable.db),
+    "SELECT imgid FROM memory.collected_images ORDER BY rowid", -1, &stmt, NULL), ==, SQLITE_OK);
+  GArray *ids = g_array_new(FALSE, FALSE, sizeof(int));
+  while(sqlite3_step(stmt) == SQLITE_ROW)
+  {
+    const int id = sqlite3_column_int(stmt, 0);
+    g_array_append_val(ids, id);
+  }
+  sqlite3_finalize(stmt);
+  g_assert_cmpuint(ids->len, ==, expected);
+  gboolean found_thai = FALSE;
+  for(int size = 1; size <= 2; size++)
+  {
+    for(int offset = 0; offset < expected; offset += size)
+    {
+      dt_touch_photo_t *page = NULL;
+      int total = 0;
+      const int n = dt_touch_photos_page(offset, size, &page, &total, &error);
+      g_assert_null(error); g_assert_cmpint(total, ==, expected);
+      g_assert_cmpint(n, ==, MIN(size, expected - offset));
+      for(int i = 0; i < n; i++)
+      {
+        g_assert_cmpint(page[i].id, ==, g_array_index(ids, int, offset + i));
+        g_assert_cmpint(page[i].id, ==, json_object_get_int_member(
+          json_array_get_object_element(images, offset + i), "imgid"));
+        g_assert_cmpint(page[i].reserved, ==, 0);
+        if(page[i].id == thai_image) found_thai = TRUE;
+      }
+      dt_touch_free(page);
+    }
+  }
+  g_array_free(ids, TRUE);
+  g_assert_true(found_thai);
+  dt_touch_photo_t *page = NULL;
+  int total = 0;
+  g_assert_cmpint(dt_touch_photos_page(expected + 1, 2, &page, &total, &error), ==, 0);
+  g_assert_cmpint(total, ==, expected); dt_touch_free(page);
+  g_assert_cmpint(dt_touch_photos_page(-1, 2, &page, &total, &error), ==, -1);
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_cmpint(dt_touch_photos_page(0, -1, &page, &total, &error), ==, -1);
+  g_assert_nonnull(error); g_clear_pointer(&error, g_free);
+  g_assert_cmpint(dt_touch_photos_page(0, expected, &page, &total, &error), ==, expected);
+  uint64_t before = 0;
+  int original_rating = 0;
+  for(int i = 0; i < expected; i++) if(page[i].id == thai_image)
+  { before = page[i].stamp; original_rating = page[i].rating; }
+  g_assert_cmpuint(before, !=, 0);
+  dt_touch_free(page);
+  char *path = dt_touch_image_path(thai_image);
+  char *xmp = g_strconcat(path, ".xmp", NULL);
+  char *original = NULL;
+  gsize original_size = 0;
+  const gboolean existed = g_file_get_contents(xmp, &original, &original_size, NULL);
+  char *stamp_before = dt_touch_image_stamp(thai_image);
+  char *contents = g_strnfill(original_size + 17, 'x');
+  g_assert_true(g_file_set_contents(xmp, contents, original_size + 17, NULL));
+  char *stamp_after = dt_touch_image_stamp(thai_image);
+  g_assert_cmpstr(stamp_before, !=, stamp_after);
+  g_assert_cmpint(dt_touch_photos_page(0, expected, &page, &total, &error), ==, expected);
+  for(int i = 0; i < expected; i++) if(page[i].id == thai_image) g_assert_cmpuint(page[i].stamp, !=, before);
+  dt_touch_free(page);
+  if(existed) g_assert_true(g_file_set_contents(xmp, original, original_size, NULL));
+  else g_assert_cmpint(g_remove(xmp), ==, 0);
+  g_free(contents); g_free(original); g_free(xmp); g_free(path);
+  dt_touch_free(stamp_before); dt_touch_free(stamp_after);
+  dt_ratings_apply_on_image(thai_image, 4, FALSE, FALSE, FALSE);
+  g_assert_cmpint(dt_touch_image_action("reject", thai_image, &error), ==, TRUE);
+  g_assert_null(error);
+  const int n = dt_touch_photos_page(0, expected, &page, &total, &error);
+  g_assert_null(error); g_assert_cmpint(n, ==, expected);
+  found_thai = FALSE;
+  for(int i = 0; i < n; i++) if(page[i].id == thai_image)
+  { found_thai = TRUE; g_assert_cmpint(page[i].rating, ==, 4); g_assert_cmpint(page[i].rejected, ==, 1); }
+  g_assert_true(found_thai);
+  dt_touch_free(page);
+  JsonObject *settings = json_object_new();
+  JsonArray *rules = json_array_new(), *filters = json_array_new(), *sort = json_array_new();
+  json_object_set_array_member(settings, "collection", rules);
+  json_object_set_array_member(settings, "filtering", filters);
+  json_object_set_array_member(settings, "sort", sort);
+  json_array_add_object_element(rules, _rule(DT_COLLECTION_PROP_FILMROLL, "%", 0, 0));
+  JsonObject *order = json_object_new();
+  json_object_set_int_member(order, "item", DT_COLLECTION_SORT_ID);
+  json_object_set_int_member(order, "order", 1);
+  json_array_add_object_element(sort, order);
+  json_array_add_object_element(filters, _rule(DT_COLLECTION_PROP_RATING, "=-1", 2, 0));
+  _apply_collection(settings, expected - 1);
+  const int filtered = dt_touch_photos_page(0, expected, &page, &total, &error);
+  g_assert_null(error); g_assert_cmpint(filtered, ==, expected - 1);
+  for(int i = 0; i < filtered; i++) g_assert_cmpint(page[i].id, !=, thai_image);
+  dt_touch_free(page);
+  json_array_remove_element(filters, 0);
+  g_assert_cmpint(dt_touch_image_action("unrate", thai_image, &error), ==, TRUE);
+  g_assert_null(error);
+  dt_ratings_apply_on_image(thai_image, original_rating, FALSE, FALSE, FALSE);
+  // paging never reloads, so the unrejected image stays filtered out until a refresh
+  g_assert_cmpint(dt_touch_photos_page(0, expected, &page, &total, &error), ==, expected - 1);
+  dt_touch_free(page);
+  dt_touch_collection_refresh();
+  g_assert_cmpint(dt_touch_photos_page(0, expected, &page, &total, &error), ==, expected);
+  g_assert_cmpint(total, ==, expected);
+  dt_touch_free(page);
+  _apply_collection(settings, expected);
+  const int restored = dt_touch_photos_page(0, expected, &page, &total, &error);
+  g_assert_null(error); g_assert_cmpint(restored, ==, expected);
+  found_thai = FALSE;
+  for(int i = 0; i < restored; i++) if(page[i].id == thai_image)
+  { found_thai = TRUE; g_assert_cmpint(page[i].rating, ==, original_rating); g_assert_cmpint(page[i].rejected, ==, 0); }
+  g_assert_true(found_thai);
+  dt_touch_free(page);
+  json_object_unref(settings);
+  g_object_unref(parser); g_free(json);
 }
 
 static double _exposure(dt_touch_editor_t *editor)
@@ -638,6 +764,7 @@ int main(int argc, char **argv)
   g_assert_true(g_str_has_suffix(export_name, expected_suffix));
   g_free(export_name); g_free(expected_suffix);
   _test_library(filename, folder, image_id);
+  _test_photos_page(image_id);
   char truncated[4] = "bad";
   gboolean cached = FALSE;
   dt_image_full_path(image_id, truncated, sizeof(truncated), &cached);

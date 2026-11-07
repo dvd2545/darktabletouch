@@ -12,6 +12,9 @@
 #include "common/undo.h"
 #include "common/filepath.h"
 #include "common/image.h"
+#include "common/ratings.h"
+#include "common/database.h"
+#include "common/debug.h"
 #include "common/mipmap_cache.h"
 #include "common/touch_session.h"
 #include "common/collection.h"
@@ -352,6 +355,63 @@ char *dt_touch_images(char **error)
   g_hash_table_unref(index);
   g_object_unref(parser);
   return result;
+}
+
+void dt_touch_collection_refresh(void)
+{
+  dt_collection_update_query(darktable.collection, DT_COLLECTION_CHANGE_RELOAD, DT_COLLECTION_PROP_UNDEF, NULL);
+}
+
+int dt_touch_photos_page(int offset, int count, dt_touch_photo_t **photos, int *total, char **error)
+{
+  if(photos) *photos = NULL;
+  if(total) *total = 0;
+  if(offset < 0 || count < 0 || !photos || !total)
+  { _error(error, N_("invalid photo page arguments")); return -1; }
+  sqlite3 *db = dt_database_get(darktable.db);
+  sqlite3_stmt *stmt = NULL;
+  DT_DEBUG_SQLITE3_PREPARE_V2(db, "SELECT COUNT(*) FROM memory.collected_images", -1, &stmt, NULL);
+  if(!stmt) goto failure;
+  if(sqlite3_step(stmt) != SQLITE_ROW) goto failure;
+  *total = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt); stmt = NULL;
+  DT_DEBUG_SQLITE3_PREPARE_V2(db, "SELECT i.id, i.flags"
+                              " FROM memory.collected_images c JOIN main.images i ON i.id = c.imgid"
+                              " ORDER BY c.rowid LIMIT ?1 OFFSET ?2", -1, &stmt, NULL);
+  if(!stmt) goto failure;
+  if(sqlite3_bind_int(stmt, 1, count) != SQLITE_OK || sqlite3_bind_int(stmt, 2, offset) != SQLITE_OK)
+    goto failure;
+  const int capacity = offset < *total ? MIN(count, *total - offset) : 0;
+  dt_touch_photo_t *result = capacity ? g_malloc0_n(capacity, sizeof(*result)) : NULL;
+  int written = 0, status;
+  while((status = sqlite3_step(stmt)) == SQLITE_ROW)
+  {
+    if(written >= capacity) { g_free(result); goto failure; }
+    dt_touch_photo_t *photo = &result[written++];
+    photo->id = sqlite3_column_int(stmt, 0);
+    const int flags = sqlite3_column_int(stmt, 1);
+    photo->rating = flags & DT_VIEW_RATINGS_MASK;
+    photo->rejected = (flags & DT_IMAGE_REJECTED) != 0;
+    char *stamp = dt_touch_image_stamp(photo->id);
+    if(stamp)
+    {
+      uint64_t hash = UINT64_C(14695981039346656037);
+      for(const unsigned char *p = (const unsigned char *)stamp; *p; p++)
+        hash = (hash ^ *p) * UINT64_C(1099511628211);
+      photo->stamp = hash ? hash : 1;
+      dt_touch_free(stamp);
+    }
+  }
+  if(status != SQLITE_DONE) { g_free(result); goto failure; }
+  sqlite3_finalize(stmt);
+  *photos = result;
+  return written;
+
+failure:
+  sqlite3_finalize(stmt);
+  *total = 0;
+  _error(error, N_("could not read the photo collection"));
+  return -1;
 }
 
 char *dt_touch_modules(void)

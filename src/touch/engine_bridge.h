@@ -23,6 +23,22 @@ const char *dt_touch_version(void);
 void dt_touch_shutdown(void);
 void dt_touch_free(void *data);
 char *dt_touch_images(char **error);
+typedef struct dt_touch_photo_t
+{
+  int32_t id;
+  int32_t rating;
+  int32_t rejected;
+  int32_t reserved;
+  uint64_t stamp;
+} dt_touch_photo_t;
+
+/* re-runs the collection query; rating, reject and import do not, so call it once after
+   them and before paging, rather than paying for a reload on every page */
+void dt_touch_collection_refresh(void);
+/* fills photos in collection order from offset, up to count; total is the collection size
+   as of the last refresh. stamp 0 means the image file is missing or unreadable
+   returns the number written, or -1 on error; free photos with dt_touch_free */
+int dt_touch_photos_page(int offset, int count, dt_touch_photo_t **photos, int *total, char **error);
 char *dt_touch_library(void);
 char *dt_touch_collection_values(int property);
 int dt_touch_image_action(const char *action, int image_id, char **error);
