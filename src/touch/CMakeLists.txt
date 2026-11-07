@@ -80,6 +80,17 @@ qt_add_executable(test-touch-launcher-child tests/launcher_child.cpp)
 target_link_libraries(test-touch-launcher-child PRIVATE Qt6::Core)
 set_target_properties(test-touch-launcher-child PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
 
+qt_add_executable(test-touch-baseline tests/baseline.cpp TouchController.cpp TouchController.h Gamepad.cpp Gamepad.h)
+target_link_libraries(test-touch-baseline PRIVATE dt_touch_engine Qt6::Quick Qt6::QuickControls2)
+set_target_properties(test-touch-baseline PROPERTIES AUTOMOC ON RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
+get_target_property(touch_qml_files darktable-touch QT_QML_MODULE_QML_FILES)
+qt_add_qml_module(test-touch-baseline
+  URI DarktableTouch
+  VERSION 1.0
+  OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/baseline/DarktableTouch"
+  RESOURCE_PREFIX /qt/qml
+  QML_FILES ${touch_qml_files})
+
 install(TARGETS darktabletouch darktable-touch RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT DTApplication)
 
 if(WIN32 AND NOT BUILD_MSYS2_INSTALL)

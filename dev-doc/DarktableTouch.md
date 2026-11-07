@@ -156,6 +156,64 @@ without it the test uses CPU processing.
 bytes. `DARKTABLETOUCH_DISABLE_PIPE_CACHE=1` and
 `DARKTABLETOUCH_DISABLE_PRELOAD=1` provide diagnostic comparison paths.
 
+### Qt performance baseline for the Rust Touch
+
+The committed reference is `dev-doc/baselines/qt-touch-windows.json`.
+
+`tools/touch_baseline.py` runs `test-touch-baseline`, which loads the same
+compiled QML module, controller, image provider, and Engine as Touch in a
+native fullscreen window. Set the screen to 1280x720 logical pixels (the
+Ally's 1920x1080 at 150% scaling). Use a Release build with the MSYS2 UCRT64
+runtime on `PATH`, with Qt's native platform plugin and GPU scene-graph
+renderer:
+
+```sh
+cmake --build build-agent -j3
+python tools/touch_baseline.py --build build-agent \
+  --fixture build-fixtures/images/mire1.cr2 \
+  --fixture build-fixtures/Canon-EOS-M50.CR3 --rounds 5 \
+  --output build/qt-touch-baseline.json
+```
+
+The runner copies each fixture 24 times into its own temporary catalog,
+without XMP sidecars, and imports before measurement. OpenCL is disabled;
+the scene graph still uses the GPU. Each round starts a fresh process,
+retaining that fixture's thumbnail cache. OS file caches are not flushed.
+Neither the user's catalog nor the original photos are modified. Keep the
+window exposed and the machine idle; screen refresh rate, device pixel
+ratio, Qt version, graphics API, CPU, RAM, and GPU drivers are recorded.
+
+The five measurements have explicit boundaries:
+
+- Launch: the Python runner starts the process and receives a flushed
+  marker after the first swapped Library frame with its persisted collection
+  populated. It includes process loading and observer scheduling, excluding
+  launcher handoff and first-time import; thumbnails may still be loading.
+  The time from benchmark `main()` is also retained for diagnosis.
+- Scroll: intervals between 120 successive presented frames while moving
+  across the entire grid, including thumbnail loading. This is an automated
+  traversal, not physical-touch fling recognition.
+- First picture: synthetic thumbnail press/release to a swapped frame
+  with the current QML Image ready.
+- Render: the same tap through the last ready image frame, including the
+  viewport refinement scheduled by QML. The Viewer hides its controls to
+  use the image column at full window size; fixtures have no user edits.
+  This uses the existing default 1280-pixel preview quality, not a native
+  screen-resolution render. Each round records the actual render size.
+- Prefetched swipe: the navigation command used after QML recognizes a
+  swipe, through the first ready image frame. The harness first opens the
+  neighbor, returns, and waits until that neighbor has a prepared frame.
+  Gesture recognition time is excluded.
+
+Frame swaps measure Qt presentation, not physical display scanout. The
+JSON retains each round and every scroll interval, fixture sizes and SHA-256
+hashes, median and worst case, and nominal targets. A median or worst case
+that already beats its target becomes the corresponding comparison limit
+for the Rust Touch. Compare on the same machine, fixtures, window, renderer,
+and cache protocol. Do not treat these results as physical touch acceptance
+or a cold operating-system boot measurement. Run logs are written beside
+the output; a failed round leaves no new baseline.
+
 When an adjacent XMP cannot be saved, Touch verifies the catalog history and
 writes a validated recovery XMP under the configuration directory's
 `recovery-sidecars/<catalog hash>/image-<id>.xmp`. Atomic replacement preserves
